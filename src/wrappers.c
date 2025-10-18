@@ -180,20 +180,6 @@ int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
     if (!strncmp("_airplay._tcp", type, strlen("_airplay._tcp"))) {
-        DPRINTF(E_DBG, L_MAIN, "mdns_browse called for %s\n", type);
-        DPRINTF(E_DBG, L_MAIN, 
-            "Our airplay device info: name=%s, type=%s, domain=%s, hostname=%s, family=%d, address=%s, port=%d\n",
-            ap2_device_info.name,
-            ap2_device_info.type,
-            ap2_device_info.domain,
-            ap2_device_info.hostname,
-            ap2_device_info.family,
-            ap2_device_info.address,
-            ap2_device_info.port);
-        DPRINTF(E_DBG, L_MAIN, "Head name:%s, value:%s\n", 
-            ap2_device_info.txt->head->name, 
-            ap2_device_info.txt->head->value);
-            
         cb(ap2_device_info.name,
            ap2_device_info.type,
            ap2_device_info.domain,

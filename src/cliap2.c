@@ -63,6 +63,7 @@
 #include "misc.h"
 #include "player.h"
 #include "worker.h"
+#include "outputs/rtp_common.h"
 #include "wrappers.h"
 #include "cliap2.h"
 
@@ -71,6 +72,52 @@ struct event_base *evbase_main;
 static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
+
+// NTP timestamp definitions
+#define FRAC             4294967296. // 2^32 as a double
+#define NTP_EPOCH_DELTA  0x83aa7e80  // 2208988800 - that's 1970 - 1900 in seconds
+
+
+static inline void
+timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
+{
+  /* Seconds since NTP Epoch (1900-01-01) */
+  ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
+
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
+}
+
+static inline int
+timing_get_clock_ntp(struct ntp_timestamp *ns)
+{
+  struct timespec ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
+
+      return -1;
+    }
+
+  timespec_to_ntp(&ts, ns);
+
+  return 0;
+}
+
+static void
+ntptime(void)
+{
+  struct ntp_timestamp ns;
+  uint64_t t;
+
+  timing_get_clock_ntp(&ns);
+  t = ((uint64_t)ns.sec << 32) | ns.frac;
+
+  DPRINTF(E_INFO, L_MAIN, "NTP time: %u.%u\n", ns.sec, ns.frac);
+  printf("%" PRIu64 "\n", t);
+}
 
 static void
 version(void)
@@ -96,6 +143,7 @@ usage(char *program)
   printf("  --address <address>           IP address to bind to for AirPlay 2 service\n");
   printf("  --port <port>                 Port number to bind to for AirPlay 2 service\n");
   printf("  --txt <txt>                   txt keyvals returned in mDNS for AirPlay 2 service\n");
+  printf("  --ntp                         Print current NTP time\n");
   printf("  -v, --version                 Display version information\n");
   printf("\n\n");
   printf("Available log domains:\n");
@@ -312,103 +360,105 @@ main(int argc, char **argv)
     { "address",       1, NULL, 'a' },
     { "port",          1, NULL, 'p' },
     { "txt",           1, NULL, 'k' },
+    { "ntp",           0, NULL, 's' },
     { "version",       0, NULL, 'v' },
     { "testrun",       0, NULL, 't' }, // Used for CI, not documented to user
 
     { NULL,            0, NULL, 0   }
   };
 
-  while ((option = getopt_long(argc, argv, "D:d:c:P:ftb:vw:s:", option_map, NULL)) != -1)
-    {
-      switch (option)
-	{
-	  case 't':
-	    testrun = true;
-	    break;
+  while ((option = getopt_long(argc, argv, "D:d:c:P:ftb:vw:s:", option_map, NULL)) != -1) {
+      switch (option) {
+      case 't':
+        testrun = true;
+        break;
 
-	  case 'd':
-	    ret = safe_atoi32(optarg, &option);
-	    if (ret < 0)
-	      fprintf(stderr, "Error: loglevel must be an integer in '-d, --debug %s'\n", optarg);
-	    else
-	      loglevel = option;
-	    break;
+      case 'd':
+        ret = safe_atoi32(optarg, &option);
+        if (ret < 0)
+          fprintf(stderr, "Error: loglevel must be an integer in '-d, --debug %s'\n", optarg);
+        else
+          loglevel = option;
+        break;
 
-	  case 'D':
-	    logdomains = optarg;
-	    break;
+      case 'D':
+        logdomains = optarg;
+        break;
 
-	  case 'c':
-	    configfile = optarg;
-	    break;
+      case 'c':
+        configfile = optarg;
+        break;
 
-	  case 'v':
-	    version();
-	    return EXIT_SUCCESS;
-	    break;
+      case 'v':
+        version();
+        return EXIT_SUCCESS;
+        break;
 
-    case 'n':
-      name = optarg;
-      break;
+      case 'n':
+        name = optarg;
+        break;
 
-    case 'y':
-      type = optarg;
-      break;
+      case 'y':
+        type = optarg;
+        break;
 
-    case 'o':
-      domain = optarg;
-      break;
+      case 'o':
+        domain = optarg;
+        break;
 
-    case 'h':
-      hostname = optarg;
-      break;
+      case 'h':
+        hostname = optarg;
+        break;
 
-    case 'f':
-	    ret = safe_atoi32(optarg, &option);
-	    if (ret < 0)
-	      fprintf(stderr, "Error: family must be an integer in '--family %s'\n", optarg);
-	    else
-	      family = option;
-	    break;
+      case 'f':
+        ret = safe_atoi32(optarg, &option);
+        if (ret < 0)
+          fprintf(stderr, "Error: family must be an integer in '--family %s'\n", optarg);
+        else
+          family = option;
+        break;
 
-    case 'a':
-      address = optarg;
-      break;
+      case 'a':
+        address = optarg;
+        break;
 
-    case 'p':
-	    if (ret < 0)
-	      fprintf(stderr, "Error: port must be an integer in '--port %s'\n", optarg);
-	    else
-	      port = option;
-	    break;
+      case 'p':
+        if (ret < 0)
+          fprintf(stderr, "Error: port must be an integer in '--port %s'\n", optarg);
+        else
+          port = option;
+        break;
 
-    case 'k':
-      txt = optarg;
-      break;
+      case 'k':
+        txt = optarg;
+        break;
 
-	  default:
-	    usage(argv[0]);
-	    return EXIT_FAILURE;
-	    break;
-	}
-    }
+      case 's':
+        // output ntp time to stdout and exit
+        ntptime();
+        return EXIT_SUCCESS;
+
+      default:
+        usage(argv[0]);
+        return EXIT_FAILURE;
+        break;
+	  }
+  }
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
-  if (ret != 0)
-    {
-      fprintf(stderr, "Could not initialize log facility\n");
+  if (ret != 0) {
+    fprintf(stderr, "Could not initialize log facility\n");
 
-      return EXIT_FAILURE;
-    }
+    return EXIT_FAILURE;
+  }
 
   ret = conffile_load(configfile);
-  if (ret != 0)
-    {
-      DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
+  if (ret != 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
 
-      logger_deinit();
-      return EXIT_FAILURE;
-    }
+    logger_deinit();
+    return EXIT_FAILURE;
+  }
 
   logger_deinit();
 
@@ -420,35 +470,32 @@ main(int argc, char **argv)
   logfile = cfg_getstr(cfg_getsec(cfg, "general"), "logfile");
 
   ret = logger_init(logfile, logdomains, loglevel, logformat);
-  if (ret != 0)
-    {
-      fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
+  if (ret != 0) {
+    fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
 
-      conffile_unload();
-      return EXIT_FAILURE;
-    }
+    conffile_unload();
+    return EXIT_FAILURE;
+  }
 
-  CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
+  if (!testrun) {
+    CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
 
-  ret = parse_keyval(txt, txt_kv);
-  if (ret != 0)
-    {
+    ret = parse_keyval(txt, txt_kv);
+    if (ret != 0){
       DPRINTF(E_FATAL, L_MAIN, 
         "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n", 
         txt);
       goto txt_fail;
     }
-  ap2_device_info.name = name;
-  ap2_device_info.type = type;
-  ap2_device_info.domain = domain;
-  ap2_device_info.hostname = hostname;
-  ap2_device_info.family = family;
-  ap2_device_info.address = address;
-  ap2_device_info.port = port;
-  ap2_device_info.txt = txt_kv;
-  DPRINTF(E_DBG, L_MAIN, "Head name:%s, value:%s\n", 
-      txt_kv->head->name, 
-      txt_kv->head->value);
+    ap2_device_info.name = name;
+    ap2_device_info.type = type;
+    ap2_device_info.domain = domain;
+    ap2_device_info.hostname = hostname;
+    ap2_device_info.family = family;
+    ap2_device_info.address = address;
+    ap2_device_info.port = port;
+    ap2_device_info.txt = txt_kv;
+  }
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
@@ -617,7 +664,7 @@ main(int argc, char **argv)
   ret = EXIT_SUCCESS;
 
  txt_fail:
-  keyval_clear(txt_kv);
+  if (txt_kv) keyval_clear(txt_kv);
 
   event_free(sig_event);
 
