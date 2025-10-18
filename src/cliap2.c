@@ -115,7 +115,6 @@ ntptime(void)
   timing_get_clock_ntp(&ns);
   t = ((uint64_t)ns.sec << 32) | ns.frac;
 
-  DPRINTF(E_INFO, L_MAIN, "NTP time: %u.%u\n", ns.sec, ns.frac);
   printf("%" PRIu64 "\n", t);
 }
 
@@ -451,6 +450,7 @@ main(int argc, char **argv)
 
     return EXIT_FAILURE;
   }
+  logger_detach();  // Eliminate logging to stderr
 
   ret = conffile_load(configfile);
   if (ret != 0) {
