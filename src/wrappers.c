@@ -16,10 +16,17 @@
 # include <config.h>
 #endif
 
+#include <string.h>
+
 #include "wrappers.h"
+#include "cliap2.h"
+
+#include "logger.h"
 #include "db.h"
 #include "outputs.h"
 #include "listener.h"
+
+extern ap2_device_info_t ap2_device_info;
 
 /*
  * Wrappers for db.c
@@ -136,6 +143,24 @@ db_speaker_get(struct output_device *device, uint64_t id)
     return 0;
 }
 
+int
+db_query_start(struct query_params *qp)
+{
+    return 0;
+}
+
+void
+db_query_end(struct query_params *qp)
+{
+    return;
+}
+
+int
+db_query_fetch_file(struct db_media_file_info *dbmfi, struct query_params *qp)
+{
+    return 0;
+}
+
 void
 free_mfi(struct media_file_info *mfi, int content_only)
 {
@@ -154,23 +179,30 @@ free_queue_item(struct db_queue_item *qi, int content_only)
 int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
-    return 0;
-}
-int
-db_query_start(struct query_params *qp)
-{
-    return 0;
-}
-
-void
-db_query_end(struct query_params *qp)
-{
-    return;
-}
-
-int
-db_query_fetch_file(struct db_media_file_info *dbmfi, struct query_params *qp)
-{
+    if (!strncmp("_airplay._tcp", type, strlen("_airplay._tcp"))) {
+        DPRINTF(E_DBG, L_MAIN, "mdns_browse called for %s\n", type);
+        DPRINTF(E_DBG, L_MAIN, 
+            "Our airplay device info: name=%s, type=%s, domain=%s, hostname=%s, family=%d, address=%s, port=%d\n",
+            ap2_device_info.name,
+            ap2_device_info.type,
+            ap2_device_info.domain,
+            ap2_device_info.hostname,
+            ap2_device_info.family,
+            ap2_device_info.address,
+            ap2_device_info.port);
+        DPRINTF(E_DBG, L_MAIN, "Head name:%s, value:%s\n", 
+            ap2_device_info.txt->head->name, 
+            ap2_device_info.txt->head->value);
+            
+        cb(ap2_device_info.name,
+           ap2_device_info.type,
+           ap2_device_info.domain,
+           ap2_device_info.hostname,
+           ap2_device_info.family,
+           ap2_device_info.address,
+           ap2_device_info.port,
+           ap2_device_info.txt);
+    }
     return 0;
 }
 

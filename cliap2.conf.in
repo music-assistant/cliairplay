@@ -19,7 +19,6 @@ general {
 	# Log file and level
 	# Available levels: fatal, log, warning, info, debug, spam
 #	logfile = "@localstatedir@/log/@PACKAGE@.log"
-	logfile = /dev/stderr
 	loglevel = log
 
 	# Admin password for the web interface

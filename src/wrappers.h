@@ -2,6 +2,7 @@
 #define __WRAPPERS_H__
 
 #include "misc.h"
+#include "cliap2.h"
 
 /*
  * Wrappers for db.c
@@ -29,15 +30,6 @@ enum mdns_options
 
 typedef void (* mdns_browse_cb)(const char *name, const char *type, const char *domain, const char *hostname, int family, const char *address, int port, struct keyval *txt);
 
-/*
- * Start a service browser, a callback will be made when the service changes state
- * Call only from the main thread!
- *
- * @in  type     Type of service to look for, e.g. "_raop._tcp"
- * @in  flags    See mdns_options (only supported by Avahi implementation)
- * @in  cb       Callback when service state changes (e.g. appears/disappears)
- * @return       0 on success, -1 on error
- */
 int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags);
 

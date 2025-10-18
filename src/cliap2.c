@@ -59,31 +59,18 @@
 #include <gcrypt.h>
 
 #include "conffile.h"
-// #include "db.h"
 #include "logger.h"
 #include "misc.h"
-// #include "cache.h"
-// #include "httpd.h"
-// #include "mpd.h"
-// #include "mdns.h"
-// #include "remote_pairing.h"
 #include "player.h"
 #include "worker.h"
-// #include "library.h"
-// #ifdef LASTFM
-// # include "lastfm.h"
-// #endif
-// #include "listenbrainz.h"
 #include "wrappers.h"
-
-// #define PIDFILE          STATEDIR "/run/" PACKAGE ".pid"
-// #define WEB_ROOT         DATADIR "/htdocs"
-// #define SQLITE_EXT_PATH  PKGLIBDIR "/" PACKAGE_NAME "-sqlext.so"
+#include "cliap2.h"
 
 struct event_base *evbase_main;
 
 static struct event *sig_event;
 static int main_exit;
+ap2_device_info_t ap2_device_info;
 
 static void
 version(void)
@@ -98,19 +85,18 @@ usage(char *program)
   printf("\n");
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
-  printf("  -d <number>     Log level (0-5)\n");
-  printf("  -D <dom,dom..>  Log domains\n");
-  printf("  -c <file>       Use <file> as the configuration file\n");
-  printf("  -P <file>       Write PID to specified file\n");
-  printf("  -f              Run in foreground\n");
-  printf("  -b <id>         ffid to be broadcast\n");
-  printf("  -v              Display version information\n");
-  // printf("  -w <directory>  Use <directory> as the web root directory for serving static files\n");
-  // printf("  --mdns-no-rsp   Don't announce RSP service via mDNS\n");
-  // printf("  --mdns-no-daap  Don't announce DAAP service via mDNS\n");
-  // printf("  --mdns-no-cname Don't register owntone.local as CNAME via mDNS\n");
-  // printf("  --mdns-no-web   Don't announce web interface via mDNS\n");
-  // printf("  -s <path>      Use <path> as the path for the OwnTone sqlite extension (owntone-sqlext.so)\n");
+  printf("  -d, --debug <number>          Log level (0-5)\n");
+  printf("  -D, --logdomains <dom,dom..>  Log domains\n");
+  printf("  -c, --config <file>           Use <file> as the configuration file\n");
+  printf("  --name <name>                 Name of the airplay 2 device\n");
+  printf("  --type <type>                 MDNS Service Discovery Type (e.g. _airplay._tcp)\n");
+  printf("  --domain <domain>             MDNS Service Discovery Domain (e.g. local)\n");
+  printf("  --hostname <hostname>         Hostname of AirPlay 2 device\n");
+  printf("  --family <family>             IP protocol family for AirPlay 2 service (inet=2 or inet6=10)\n");
+  printf("  --address <address>           IP address to bind to for AirPlay 2 service\n");
+  printf("  --port <port>                 Port number to bind to for AirPlay 2 service\n");
+  printf("  --txt <txt>                   txt keyvals returned in mDNS for AirPlay 2 service\n");
+  printf("  -v, --version                 Display version information\n");
   printf("\n\n");
   printf("Available log domains:\n");
   logger_domains();
@@ -237,6 +223,53 @@ ffmpeg_lockmgr(void **pmutex, enum AVLockOp op)
 }
 #endif
 
+// Parses a string of "key=value" "key=value" into a keyval struct
+static int
+parse_keyval(const char *str, struct keyval *kv)
+{
+  char *key;
+  char *value;
+  char *s;
+  char *outer_token, *inner_token;
+  char *outer_saveptr, *inner_saveptr;
+
+  s = (char *)str;
+  if (*s != '"') {
+    DPRINTF(E_FATAL, L_MAIN, "Keyval string must start with a double quote (\"), not with %c\n", *s);
+    return -1;
+  }
+  s++; // Skip opening quote
+
+  // Tokenize the main string by double quotes
+  outer_token = strtok_r(s, "\"", &outer_saveptr);
+  while (outer_token != NULL) {
+    DPRINTF(E_SPAM, L_MAIN, "keyval pair: %s\n", outer_token);
+    // For each keyval pair, tokenize by =
+    inner_token = strtok_r(outer_token, "=", &inner_saveptr);
+    for (int i=0; inner_token != NULL; i++) {
+      DPRINTF(E_SPAM, L_MAIN, "  item[%d]: %s\n", i, inner_token);
+      switch (i) {
+        case 0:
+          key = inner_token;
+          break;
+        case 1:
+          value = inner_token;
+          DPRINTF(E_DBG, L_MAIN, "Adding keyval: %s=%s\n", key, value);
+          keyval_add(kv, key, value);
+          break;
+        default:
+          DPRINTF(E_FATAL, L_MAIN, "Keyval pair '%s' has too many '=' characters\n", outer_token);
+          return -1;        
+      }
+      inner_token = strtok_r(NULL, "=", &inner_saveptr);
+    }
+    outer_token = strtok_r(NULL, "\"", &outer_saveptr);
+    outer_token = strtok_r(NULL, "\"", &outer_saveptr);
+  }
+
+  return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -253,7 +286,6 @@ main(int argc, char **argv)
   char *logdomains = NULL;
   char *logfile = NULL;
   char *logformat = NULL;
-  char *ffid = NULL;
   char **buildopts;
   const char *av_version;
   const char *gcry_version;
@@ -264,16 +296,24 @@ main(int argc, char **argv)
 #endif
   int i;
   int ret;
+  int family, port = -1;
+  const char *name, *type, *domain, *hostname, *address, *txt = NULL;
+  struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
-    { "ffid",          1, NULL, 'b' },
     { "debug",         1, NULL, 'd' },
     { "logdomains",    1, NULL, 'D' },
     { "config",        1, NULL, 'c' },
+    { "name",          1, NULL, 'n' },
+    { "type",          1, NULL, 'y' },
+    { "domain",        1, NULL, 'o' },
+    { "hostname",      1, NULL, 'h' },
+    { "family",        1, NULL, 'f' },
+    { "address",       1, NULL, 'a' },
+    { "port",          1, NULL, 'p' },
+    { "txt",           1, NULL, 'k' },
     { "version",       0, NULL, 'v' },
     { "testrun",       0, NULL, 't' }, // Used for CI, not documented to user
-
-    { "logformat",     1, NULL, 516 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -282,22 +322,14 @@ main(int argc, char **argv)
     {
       switch (option)
 	{
-	  case 516:
-	    logformat = optarg;
-	    break;
-
 	  case 't':
 	    testrun = true;
-	    break;
-
-	  case 'b':
-	    ffid = optarg;
 	    break;
 
 	  case 'd':
 	    ret = safe_atoi32(optarg, &option);
 	    if (ret < 0)
-	      fprintf(stderr, "Error: loglevel must be an integer in '-d %s'\n", optarg);
+	      fprintf(stderr, "Error: loglevel must be an integer in '-d, --debug %s'\n", optarg);
 	    else
 	      loglevel = option;
 	    break;
@@ -314,6 +346,45 @@ main(int argc, char **argv)
 	    version();
 	    return EXIT_SUCCESS;
 	    break;
+
+    case 'n':
+      name = optarg;
+      break;
+
+    case 'y':
+      type = optarg;
+      break;
+
+    case 'o':
+      domain = optarg;
+      break;
+
+    case 'h':
+      hostname = optarg;
+      break;
+
+    case 'f':
+	    ret = safe_atoi32(optarg, &option);
+	    if (ret < 0)
+	      fprintf(stderr, "Error: family must be an integer in '--family %s'\n", optarg);
+	    else
+	      family = option;
+	    break;
+
+    case 'a':
+      address = optarg;
+      break;
+
+    case 'p':
+	    if (ret < 0)
+	      fprintf(stderr, "Error: port must be an integer in '--port %s'\n", optarg);
+	    else
+	      port = option;
+	    break;
+
+    case 'k':
+      txt = optarg;
+      break;
 
 	  default:
 	    usage(argv[0]);
@@ -357,10 +428,32 @@ main(int argc, char **argv)
       return EXIT_FAILURE;
     }
 
+  CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
+
+  ret = parse_keyval(txt, txt_kv);
+  if (ret != 0)
+    {
+      DPRINTF(E_FATAL, L_MAIN, 
+        "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n", 
+        txt);
+      goto txt_fail;
+    }
+  ap2_device_info.name = name;
+  ap2_device_info.type = type;
+  ap2_device_info.domain = domain;
+  ap2_device_info.hostname = hostname;
+  ap2_device_info.family = family;
+  ap2_device_info.address = address;
+  ap2_device_info.port = port;
+  ap2_device_info.txt = txt_kv;
+  DPRINTF(E_DBG, L_MAIN, "Head name:%s, value:%s\n", 
+      txt_kv->head->name, 
+      txt_kv->head->value);
+
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
 
-  DPRINTF(E_LOG, L_MAIN, "OwnTone version %s taking off\n", VERSION);
+  DPRINTF(E_LOG, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
 
   DPRINTF(E_LOG, L_MAIN, "Built with:\n");
   buildopts = buildopts_get();
@@ -523,8 +616,10 @@ main(int argc, char **argv)
   DPRINTF(E_LOG, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;
 
-  event_free(sig_event);
+ txt_fail:
+  keyval_clear(txt_kv);
 
+  event_free(sig_event);
 
  sig_event_fail:
  signalfd_fail:
