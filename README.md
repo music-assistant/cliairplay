@@ -5,14 +5,14 @@ Based on [owntones](https://github.com/owntone/owntone-server) (all rights reser
 
 ## Debian build
 NOTE: This is in early stage development and will be subject to change.
-Install required tools and libraries:
+Install required tools and libraries - minimal list yet to be confirmed:
 ```
 sudo apt-get install \
   build-essential git autotools-dev autoconf automake libtool gettext gawk \
-  gperf bison flex libconfuse-dev libunistring-dev libsqlite3-dev \
+  libconfuse-dev libunistring-dev \
   libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
-  libasound2-dev libxml2-dev libgcrypt20-dev libavahi-client-dev zlib1g-dev \
-  libevent-dev libplist-dev libsodium-dev libjson-c-dev libwebsockets-dev \
+  libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
+  libevent-dev libplist-dev libsodium-dev libjson-c-dev \
   libcurl4-openssl-dev libprotobuf-c-dev
 ```
 
