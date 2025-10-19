@@ -4,13 +4,14 @@
 typedef struct ap2_device_info
 {
   const char *name;
-  const char *type;
-  const char *domain;
   const char *hostname;
-  int family;
   const char *address;
   int port;
   struct keyval *txt;
+  uint64_t ntpstart;
+  uint32_t wait;
+  uint32_t latency;
+  int volume;
 } ap2_device_info_t;
 
 #endif /* !__CLIAP2_H__ */
