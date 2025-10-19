@@ -142,7 +142,11 @@ usage(char *program)
   printf("  --address <address>           IP address to bind to for AirPlay 2 service\n");
   printf("  --port <port>                 Port number to bind to for AirPlay 2 service\n");
   printf("  --txt <txt>                   txt keyvals returned in mDNS for AirPlay 2 service\n");
-  printf("  --ntp                         Print current NTP time\n");
+  printf("  --ntp                         Print current NTP time and exit\n");
+  printf("  --ntpstart                    NTP time to start playback\n");
+  printf("  --wait                        Additional time to wait in additon to NTP time in ms??\n");
+  printf("  --latency                     Latency to apply in ms??\n");
+  printf("  --volume                      Initial volume\n");
   printf("  -v, --version                 Display version information\n");
   printf("\n\n");
   printf("Available log domains:\n");
@@ -343,8 +347,12 @@ main(int argc, char **argv)
 #endif
   int i;
   int ret;
-  int family, port = -1;
-  const char *name, *type, *domain, *hostname, *address, *txt = NULL;
+  int port = -1;
+  const char *name, *hostname, *address, *txt = NULL;
+  uint64_t ntpstart = 0;
+  uint32_t wait = 0;
+  uint32_t latency = 0;
+  int volume = 0;
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
@@ -352,21 +360,22 @@ main(int argc, char **argv)
     { "logdomains",    1, NULL, 'D' },
     { "config",        1, NULL, 'c' },
     { "name",          1, NULL, 'n' },
-    { "type",          1, NULL, 'y' },
-    { "domain",        1, NULL, 'o' },
     { "hostname",      1, NULL, 'h' },
-    { "family",        1, NULL, 'f' },
     { "address",       1, NULL, 'a' },
     { "port",          1, NULL, 'p' },
     { "txt",           1, NULL, 'k' },
     { "ntp",           0, NULL, 's' },
+    { "ntpstart",      1, NULL, 500 },
+    { "wait",          1, NULL, 501 },
+    { "latency",       1, NULL, 502 },
+    { "volume",        1, NULL, 503 },
     { "version",       0, NULL, 'v' },
     { "testrun",       0, NULL, 't' }, // Used for CI, not documented to user
 
     { NULL,            0, NULL, 0   }
   };
 
-  while ((option = getopt_long(argc, argv, "D:d:c:P:ftb:vw:s:", option_map, NULL)) != -1) {
+  while ((option = getopt_long(argc, argv, "D:d:c:v", option_map, NULL)) != -1) {
       switch (option) {
       case 't':
         testrun = true;
@@ -397,24 +406,8 @@ main(int argc, char **argv)
         name = optarg;
         break;
 
-      case 'y':
-        type = optarg;
-        break;
-
-      case 'o':
-        domain = optarg;
-        break;
-
       case 'h':
         hostname = optarg;
-        break;
-
-      case 'f':
-        ret = safe_atoi32(optarg, &option);
-        if (ret < 0)
-          fprintf(stderr, "Error: family must be an integer in '--family %s'\n", optarg);
-        else
-          family = option;
         break;
 
       case 'a':
@@ -422,6 +415,7 @@ main(int argc, char **argv)
         break;
 
       case 'p':
+        ret = safe_atoi32(optarg, &option);
         if (ret < 0)
           fprintf(stderr, "Error: port must be an integer in '--port %s'\n", optarg);
         else
@@ -436,6 +430,42 @@ main(int argc, char **argv)
         // output ntp time to stdout and exit
         ntptime();
         return EXIT_SUCCESS;
+
+      case 500:
+        // ntpstart
+        ret = safe_atou64(optarg, (uint64_t *)&ntpstart);
+        if (ret < 0) {
+          fprintf(stderr, "Error: ntpstart must be an unsigned 64-bit integer in '--ntpstart %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+      
+      case 501:
+        // wait
+        ret = safe_atou32(optarg, &wait);
+        if (ret < 0) {
+          fprintf(stderr, "Error: wait must be an integer in '--wait %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+
+      case 502:
+        // latency
+        ret = safe_atou32(optarg, &latency);
+        if (ret < 0) {
+          fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+      
+      case 503:
+        // volume
+        ret = safe_atoi32(optarg, &volume);
+        if (ret < 0) {
+          fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
 
       default:
         usage(argv[0]);
@@ -488,13 +518,14 @@ main(int argc, char **argv)
       goto txt_fail;
     }
     ap2_device_info.name = name;
-    ap2_device_info.type = type;
-    ap2_device_info.domain = domain;
     ap2_device_info.hostname = hostname;
-    ap2_device_info.family = family;
     ap2_device_info.address = address;
     ap2_device_info.port = port;
     ap2_device_info.txt = txt_kv;
+    ap2_device_info.ntpstart = ntpstart;
+    ap2_device_info.wait = wait;
+    ap2_device_info.latency = latency;
+    ap2_device_info.volume = volume;
   }
 
   /* Set up libevent logging callback */

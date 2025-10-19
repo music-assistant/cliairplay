@@ -26,6 +26,8 @@
 #include "outputs.h"
 #include "listener.h"
 
+#define AIRPLAY_SERVICE_TYPE "_airplay._tcp"
+
 extern ap2_device_info_t ap2_device_info;
 
 /*
@@ -179,12 +181,12 @@ free_queue_item(struct db_queue_item *qi, int content_only)
 int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
-    if (!strncmp("_airplay._tcp", type, strlen("_airplay._tcp"))) {
+    if (!strncmp(AIRPLAY_SERVICE_TYPE, type, strlen(AIRPLAY_SERVICE_TYPE))) {
         cb(ap2_device_info.name,
-           ap2_device_info.type,
-           ap2_device_info.domain,
+           AIRPLAY_SERVICE_TYPE,
+           "local",
            ap2_device_info.hostname,
-           ap2_device_info.family,
+           AF_INET,
            ap2_device_info.address,
            ap2_device_info.port,
            ap2_device_info.txt);
