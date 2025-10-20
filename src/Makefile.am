@@ -29,10 +29,9 @@ OWNTONE_SRC = \
     ../owntone-server/src/inputs/timer.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
-    ../owntone-server/src/inputs/pipe.c \
     ../owntone-server/src/transcode.c
 
-cliap2_SOURCES = cliap2.c wrappers.c conffile.c \
+cliap2_SOURCES = cliap2.c wrappers.c conffile.c mass.c \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
 

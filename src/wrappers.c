@@ -22,7 +22,6 @@
 #include "cliap2.h"
 
 #include "logger.h"
-#include "db.h"
 #include "outputs.h"
 #include "listener.h"
 
@@ -174,6 +173,32 @@ free_queue_item(struct db_queue_item *qi, int content_only)
 {
     return;
 }
+
+// const char *
+// db_scan_kind_label(enum scan_kind scan_kind) {
+//     const char *ret = "dummy";
+//     return ret;
+// }
+
+// int
+// db_admin_setint64(const char *key, int64_t value) {
+//     return 0;
+// }
+
+// void
+// db_purge_all(void) {
+//     return;
+// }
+
+// int
+// db_file_update(struct media_file_info *mfi) {
+//     return 0;
+// }
+
+// void
+// db_purge_cruft_bysource(time_t ref, enum scan_kind scan_kind) {
+//     return;
+// }
 
 /*
  * Wrappers for mdns.c

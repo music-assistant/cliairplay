@@ -16,6 +16,20 @@ db_perthread_init(void);
 void
 db_perthread_deinit(void);
 
+// const char *
+// db_scan_kind_label(enum scan_kind scan_kind);
+
+// int
+// db_admin_setint64(const char *key, int64_t value);
+
+// void
+// db_purge_all(void);
+
+// int
+// db_file_update(struct media_file_info *mfi);
+
+// void
+// db_purge_cruft_bysource(time_t ref, enum scan_kind scan_kind);
 
 /*
  * Wrappers for mdns.c

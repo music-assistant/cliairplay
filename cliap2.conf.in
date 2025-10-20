@@ -17,8 +17,10 @@ general {
 #	db_backup_path = "@localstatedir@/cache/@PACKAGE@/songs3.bak"
 
 	# Log file and level
+	# BK: Not sure how logfile will work when more than one instance of cliap2 running? Test it!
 	# Available levels: fatal, log, warning, info, debug, spam
 #	logfile = "@localstatedir@/log/@PACKAGE@.log"
+	logfile = "/var/log/@PACKAGE@.log"
 	loglevel = log
 
 	# Admin password for the web interface
@@ -62,6 +64,17 @@ general {
 	# unusual platform and experience audio drop-outs, you can try changing
 	# this option
 #	high_resolution_clock = yes
+}
+
+# Music Assistant integration settings
+mass {
+	# Automatically start playback when PCM data read on stdin
+#	autostart = yes
+
+	# PCM data quality 
+	# sample rate and bits per sample of the PCM data sent from Music Assistant
+#	pcm_sample_rate = 44100
+#	pcm_bits_per_sample = 16
 }
 
 # ALSA device settings

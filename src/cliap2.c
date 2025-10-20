@@ -59,6 +59,7 @@
 #include <gcrypt.h>
 
 #include "conffile.h"
+#include "library.h"
 #include "logger.h"
 #include "misc.h"
 #include "player.h"
@@ -66,6 +67,7 @@
 #include "outputs/rtp_common.h"
 #include "wrappers.h"
 #include "cliap2.h"
+#include "mass.h"
 
 struct event_base *evbase_main;
 
@@ -474,13 +476,27 @@ main(int argc, char **argv)
 	  }
   }
 
+  // Check that mandatory arguments have been supplied
+  if ( !testrun &&
+      (port == -1 ||
+      name == (char *)NULL ||
+      hostname == (char *)NULL ||
+      address == (char*)NULL ||
+      txt == (char*)NULL ||
+      ntpstart == 0
+      )
+     ) {
+      usage(argv[0]);
+      return EXIT_FAILURE;
+  }
+
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
     fprintf(stderr, "Could not initialize log facility\n");
 
     return EXIT_FAILURE;
   }
-  logger_detach();  // Eliminate logging to stderr
+  // logger_detach();  // Eliminate logging to stderr
 
   ret = conffile_load(configfile);
   if (ret != 0) {
@@ -506,6 +522,7 @@ main(int argc, char **argv)
     conffile_unload();
     return EXIT_FAILURE;
   }
+  // logger_detach();  // Eliminate logging to stderr
 
   if (!testrun) {
     CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
@@ -628,6 +645,15 @@ main(int argc, char **argv)
       goto worker_fail;
     }
 
+  /* Spawn Music Assistant integration (pipe) thread */
+  ret = mass_init();
+  if (ret != 0)
+    {
+      DPRINTF(E_FATAL, L_MAIN, "Music Assistant integration (pipe) thread failed to start\n");
+
+      ret = EXIT_FAILURE;
+      goto mass_fail;
+    }
 
   /* Spawn player thread */
   ret = player_init();
@@ -690,12 +716,11 @@ main(int argc, char **argv)
   /* Run the loop */
   if (!testrun)
     event_base_dispatch(evbase_main);
+  else
+    fprintf(stdout, "%s check\n", PACKAGE);
 
   DPRINTF(E_LOG, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;
-
- txt_fail:
-  if (txt_kv) keyval_clear(txt_kv);
 
   event_free(sig_event);
 
@@ -704,10 +729,14 @@ main(int argc, char **argv)
   DPRINTF(E_LOG, L_MAIN, "Player deinit\n");
   player_deinit();
 
+ player_fail:
+  DPRINTF(E_LOG, L_MAIN, "Music Assistant interface deinit\n");
+  mass_deinit();
+
+ mass_fail:
   DPRINTF(E_LOG, L_MAIN, "Worker deinit\n");
   worker_deinit();
 
- player_fail:
  worker_fail:
   event_base_free(evbase_main);
 
@@ -722,6 +751,9 @@ main(int argc, char **argv)
   av_lockmgr_register(NULL);
  ffmpeg_init_fail:
 #endif
+
+ txt_fail:
+  if (txt_kv) keyval_clear(txt_kv);
 
   DPRINTF(E_LOG, L_MAIN, "Exiting.\n");
   conffile_unload();
