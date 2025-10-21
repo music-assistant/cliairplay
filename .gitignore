@@ -112,3 +112,6 @@ m4/lt~obsolete.m4
 
 # Built package
 cliap2
+
+# Test harness
+test.sh

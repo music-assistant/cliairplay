@@ -73,6 +73,8 @@
 #include "commands.h"
 #include "mass.h"
 
+extern char* gnamed_pipe;
+
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
 // Max number of bytes to read from a pipe at a time
@@ -746,10 +748,11 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 
   player_playback_stop();
 
+  DPRINTF(E_DBG, L_PLAYER, "player_playback_start_byid(%d)\n", pipe->id);
   ret = player_playback_start_byid(pipe->id);
   if (ret < 0)
     {
-      DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed\n", pipe->path, fd);
+      DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed.\n", pipe->path, fd);
       return;
     }
 
@@ -985,8 +988,9 @@ pipelist_create(void)
   int ret;
 
   // All we should need to do here is to call pipe_create for stdin
+  DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", gnamed_pipe);
   head = NULL;
-  pipe = pipe_create("/dev/stdin", 1, PIPE_PCM, pipe_read_cb);
+  pipe = pipe_create(gnamed_pipe, 1, PIPE_PCM, pipe_read_cb);
   pipelist_add(&head, pipe);
 
   return head;
@@ -1141,6 +1145,7 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 int
 mass_init(void)
 {
+  DPRINTF(E_DBG, L_PLAYER, "mass_init()\n");
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;

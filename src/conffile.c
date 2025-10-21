@@ -66,7 +66,62 @@ static cfg_opt_t sec_general[] =
     CFG_END()
   };
 
-/* Music Assistant section structure */
+
+/* library section structure */
+static cfg_opt_t sec_library[] =
+  {
+    CFG_STR("name", "My Music on %h", CFGF_NONE),
+    CFG_INT("port", 3689, CFGF_NONE),
+    CFG_STR("password", NULL, CFGF_NONE),
+    CFG_STR_LIST("directories", NULL, CFGF_NONE),
+    CFG_BOOL("follow_symlinks", cfg_true, CFGF_NONE),
+    CFG_STR_LIST("podcasts", NULL, CFGF_NONE),
+    CFG_STR_LIST("audiobooks", NULL, CFGF_NONE),
+    CFG_STR_LIST("compilations", NULL, CFGF_NONE),
+    CFG_STR("compilation_artist", NULL, CFGF_NONE),
+    CFG_BOOL("hide_singles", cfg_false, CFGF_NONE),
+    CFG_BOOL("radio_playlists", cfg_false, CFGF_NONE),
+    CFG_STR("name_library", "Library", CFGF_NONE),
+    CFG_STR("name_music", "Music", CFGF_NONE),
+    CFG_STR("name_movies", "Movies", CFGF_NONE),
+    CFG_STR("name_tvshows", "TV Shows", CFGF_NONE),
+    CFG_STR("name_podcasts", "Podcasts", CFGF_NONE),
+    CFG_STR("name_audiobooks", "Audiobooks", CFGF_NONE),
+    CFG_STR("name_radio", "Radio", CFGF_NONE),
+    CFG_STR("name_unknown_title", "Unknown title", CFGF_NONE),
+    CFG_STR("name_unknown_artist", "Unknown artist", CFGF_NONE),
+    CFG_STR("name_unknown_album", "Unknown album", CFGF_NONE),
+    CFG_STR("name_unknown_genre", "Unknown genre", CFGF_NONE),
+    CFG_STR("name_unknown_composer", "Unknown composer", CFGF_NONE),
+    CFG_STR_LIST("artwork_basenames", "{artwork,cover,Folder}", CFGF_NONE),
+    CFG_BOOL("artwork_individual", cfg_false, CFGF_NONE),
+    CFG_STR_LIST("artwork_online_sources", NULL, CFGF_NONE),
+    CFG_STR_LIST("filetypes_ignore", "{.db,.ini,.db-journal,.pdf,.metadata}", CFGF_NONE),
+    CFG_STR_LIST("filepath_ignore", NULL, CFGF_NONE),
+    CFG_BOOL("filescan_disable", cfg_false, CFGF_NONE),
+    CFG_BOOL("m3u_overrides", cfg_false, CFGF_NONE),
+    CFG_BOOL("itunes_overrides", cfg_false, CFGF_NONE),
+    CFG_BOOL("itunes_smartpl", cfg_false, CFGF_NONE),
+    CFG_STR_LIST("no_decode", NULL, CFGF_NONE),
+    CFG_STR_LIST("force_decode", NULL, CFGF_NONE),
+    CFG_STR("prefer_format", NULL, CFGF_NONE),
+    CFG_BOOL("pipe_autostart", cfg_true, CFGF_NONE),
+    CFG_INT("pipe_sample_rate", 44100, CFGF_NONE),
+    CFG_INT("pipe_bits_per_sample", 16, CFGF_NONE),
+    CFG_BOOL("rating_updates", cfg_false, CFGF_NONE),
+    CFG_BOOL("read_rating", cfg_false, CFGF_NONE),
+    CFG_BOOL("write_rating", cfg_false, CFGF_NONE),
+    CFG_INT("max_rating", 100, CFGF_NONE),
+    CFG_BOOL("allow_modifying_stored_playlists", cfg_false, CFGF_NONE),
+    CFG_STR("default_playlist_directory", NULL, CFGF_NONE),
+    CFG_BOOL("clear_queue_on_stop_disable", cfg_false, CFGF_NONE),
+    CFG_BOOL("only_first_genre", cfg_false, CFGF_NONE),
+    CFG_STR_LIST("decode_audio_filters", NULL, CFGF_NONE),
+    CFG_STR_LIST("decode_video_filters", NULL, CFGF_NONE),
+    CFG_END()
+  };
+
+  /* Music Assistant section structure */
 static cfg_opt_t sec_mass[] =
   {
     CFG_BOOL("autostart", cfg_true, CFGF_NONE),
@@ -120,7 +175,7 @@ static cfg_opt_t toplvl_cfg[] =
   {
     CFG_SEC("general", sec_general, CFGF_NONE),
     CFG_SEC("mass", sec_mass, CFGF_NONE),
-    // CFG_SEC("library", sec_library, CFGF_NONE),
+    CFG_SEC("library", sec_library, CFGF_NONE),
     // CFG_SEC("audio", sec_audio, CFGF_NONE),
     // CFG_SEC("alsa", sec_alsa, CFGF_MULTI | CFGF_TITLE),
     CFG_SEC("airplay_shared", sec_airplay_shared, CFGF_NONE),

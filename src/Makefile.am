@@ -11,27 +11,32 @@ PAIR_AP_SRC = \
     ../owntone-server/src/pair_ap/pair.h
 
 OWNTONE_SRC = \
-    ../owntone-server/src/logger.c \
+    ../owntone-server/src/commands.c \
     ../owntone-server/src/evthr.c \
+    ../owntone-server/src/evrtsp/rtsp.c \
     ../owntone-server/src/http.c \
+    ../owntone-server/src/input.c \
+    ../owntone-server/src/inputs/file.c \
+    ../owntone-server/src/inputs/http.c \
+    ../owntone-server/src/inputs/timer.c \
+    ../owntone-server/src/listener.c \
+    ../owntone-server/src/logger.c \
     ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
-    ../owntone-server/src/worker.c \
-    ../owntone-server/src/player.c \
     ../owntone-server/src/outputs.c \
-    ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
-    ../owntone-server/src/evrtsp/rtsp.c \
-    ../owntone-server/src/commands.c \
-    ../owntone-server/src/input.c \
-    ../owntone-server/src/inputs/timer.c \
-    ../owntone-server/src/inputs/file.c \
-    ../owntone-server/src/inputs/http.c \
-    ../owntone-server/src/transcode.c
+    ../owntone-server/src/outputs/rtp_common.c \
+    ../owntone-server/src/player.c \
+    ../owntone-server/src/transcode.c \
+    ../owntone-server/src/worker.c
 
-cliap2_SOURCES = cliap2.c wrappers.c conffile.c mass.c \
+cliap2_SOURCES = \
+    conffile.c \
+    cliap2.c \
+    mass.c \
+    wrappers.c \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
 
