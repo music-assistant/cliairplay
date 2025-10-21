@@ -161,6 +161,18 @@ static cfg_opt_t sec_fifo[] =
     CFG_END()
   };
 
+/* MPD section structure */
+static cfg_opt_t sec_mpd[] =
+  {
+    CFG_INT("port", 6600, CFGF_NONE),
+    CFG_INT("http_port", 0, CFGF_NONE),
+    CFG_BOOL("enable_httpd_plugin", cfg_false, CFGF_NONE),
+    CFG_BOOL("clear_queue_on_stop_disable", cfg_false, CFGF_NODEFAULT | CFGF_DEPRECATED),
+    CFG_BOOL("allow_modifying_stored_playlists", cfg_false, CFGF_NODEFAULT | CFGF_DEPRECATED),
+    CFG_STR("default_playlist_directory", NULL, CFGF_NODEFAULT | CFGF_DEPRECATED),
+    CFG_END()
+  };
+
 /* streaming section structure */
 static cfg_opt_t sec_streaming[] =
   {
@@ -185,7 +197,7 @@ static cfg_opt_t toplvl_cfg[] =
     // CFG_SEC("rcp", sec_rcp, CFGF_MULTI | CFGF_TITLE),
     // CFG_SEC("spotify", sec_spotify, CFGF_NONE),
     // CFG_SEC("sqlite", sec_sqlite, CFGF_NONE),
-    // CFG_SEC("mpd", sec_mpd, CFGF_NONE),
+    CFG_SEC("mpd", sec_mpd, CFGF_NONE),
     CFG_SEC("streaming", sec_streaming, CFGF_NONE),
     CFG_END()
   };

@@ -69,17 +69,17 @@
 #include "cliap2.h"
 #include "mass.h"
 
-struct event_base *evbase_main;
-
-static struct event *sig_event;
-static int main_exit;
-ap2_device_info_t ap2_device_info;
-char* gnamed_pipe = NULL;
+#define TESTRUN_PIPE "/tmp/testrun.pipe"
 
 // NTP timestamp definitions
 #define FRAC             4294967296. // 2^32 as a double
 #define NTP_EPOCH_DELTA  0x83aa7e80  // 2208988800 - that's 1970 - 1900 in seconds
 
+struct event_base *evbase_main;
+static struct event *sig_event;
+static int main_exit;
+ap2_device_info_t ap2_device_info;
+char* gnamed_pipe = NULL;
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -322,11 +322,11 @@ parse_keyval(const char *str, struct keyval *kv)
   return 0;
 }
 
-// Check for valid named pipe(s).
-// @param name the filename of the audio streaming named pipe
+// Check for valid named pipe.
+// @param name the filename of the named pipe
 // @returns 0 on success, -1 on failure
 static
-int check_pipes(const char *pipe_path)
+int check_pipe(const char *pipe_path)
 {
   struct stat st;
 
@@ -334,25 +334,142 @@ int check_pipes(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_DBG, L_MAIN, "Named pipe '%s' exists.\n", pipe_path);
+          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
           return 0;
       } 
       else {
-          DPRINTF(E_FATAL, L_MAIN, "File '%s' exists, but it is not a named pipe.\n", pipe_path);
+          DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
           return -1;
       }
   } 
   else {
       // File does not exist or an error occurred
       if (errno == ENOENT) {
-          DPRINTF(E_FATAL, L_MAIN, "Named pipe '%s' does not exist.\n", pipe_path);
+          DPRINTF(E_FATAL, L_MAIN, "%s:Named pipe '%s' does not exist.\n", __func__, pipe_path);
       } 
       else {
-          DPRINTF(E_FATAL, L_MAIN, "Error checking for named pipe. %s", strerror(errno));
+          DPRINTF(E_FATAL, L_MAIN, "%s:Error checking for named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
       }
       return -1;
   }
 
+  return 0;
+}
+
+// Check for valid named pipe(s).
+// @param name the filename of the audio streaming named pipe
+// @returns 0 on success, -1 on failure
+static
+int check_pipes(const char *pipe_path)
+{
+  if (check_pipe(pipe_path) == 0) {
+    int ret;
+    char *metadata_path = NULL;
+
+    asprintf(&metadata_path, "%s.metadata", pipe_path);
+    ret = check_pipe(metadata_path);
+    free(metadata_path);
+    return ret;
+  }
+  return -1;
+}
+
+// Create named pipe.
+// @param name the filename of the named pipe
+// @returns 0 on success, -1 on failure
+static
+int create_pipe(const char *pipe_path)
+{
+  struct stat st;
+
+  // Check if the file exists and get its information
+  if (stat(pipe_path, &st) == 0) {
+      // File exists, now check if it's a FIFO (named pipe)
+      if (S_ISFIFO(st.st_mode)) {
+          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
+          return 0;
+      } 
+      else {
+          DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
+          return -1;
+      }
+  } 
+  else {
+      // File does not exist, so lets create it
+      if (mkfifo(pipe_path, 0666) < 0) {
+        DPRINTF(E_FATAL, L_MAIN, "%s:Error creating named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
+        return -1;
+      }
+  }
+
+  return 0;
+}
+
+// Create named pipe(s) for testrun purposes
+// @param name the filename of the audio streaming named pipe
+// @returns 0 on success, -1 on failure
+static
+int create_pipes(const char *pipe_path)
+{
+  if (create_pipe(pipe_path) == 0) {
+    int ret;
+    char *metadata_path = NULL;
+
+    asprintf(&metadata_path, "%s.metadata", pipe_path);
+    ret = create_pipe(metadata_path);
+    free(metadata_path);
+    return ret;
+  }
+  return -1;
+}
+
+// Remove named pipe.
+// @param name the filename of the named pipe
+// @returns 0 on success, -1 on failure
+static
+int remove_pipe(const char *pipe_path)
+{
+  struct stat st;
+  int ret;
+
+  // Check if the file exists and get its information
+  if (stat(pipe_path, &st) == 0) {
+      // File exists, now check if it's a FIFO (named pipe)
+      if (S_ISFIFO(st.st_mode)) {
+          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
+          ret = unlink(pipe_path);
+          if (ret != 0) {
+            DPRINTF(E_LOG, L_MAIN, "%s:Cannot removed named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
+            return ret;
+          }
+      } 
+      else {
+          DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
+          return -1;
+      }
+  } 
+
+  return 0;
+}
+
+// Remove named pipes created for testrun purposes
+// @param name the filename of the audio streaming named pipe
+// @returns 0 on success, -1 on failure
+static
+int remove_pipes(const char *pipe_path)
+{
+  int audio_error, metadata_error = 0;
+  char *metadata_path = NULL;
+
+  audio_error = remove_pipe(pipe_path);
+
+  asprintf(&metadata_path, "%s.metadata", pipe_path);
+  metadata_error = remove_pipe(metadata_path);
+  free(metadata_path);
+
+  if (audio_error < 0 || metadata_error < 0) {
+    return -1;
+  }
   return 0;
 }
 
@@ -514,12 +631,13 @@ main(int argc, char **argv)
   }
 
   // Check that mandatory arguments have been supplied
-  if ( !testrun &&
+  if (!testrun &&
       (port == -1 ||
       name == (char *)NULL ||
       hostname == (char *)NULL ||
       address == (char*)NULL ||
       txt == (char*)NULL ||
+      gnamed_pipe == (char*)NULL ||
       ntpstart == 0 ||
       volume == 0
       )
@@ -562,7 +680,15 @@ main(int argc, char **argv)
   }
   // logger_detach();  // Eliminate logging to stderr
 
-  if (!testrun) {
+  if (testrun) {
+    ret = create_pipes(TESTRUN_PIPE);
+    if (ret != 0) {
+      remove_pipes(TESTRUN_PIPE);
+      return EXIT_FAILURE;
+    }
+    gnamed_pipe = TESTRUN_PIPE;
+  }
+  else {
     // Check that named pipe exists for audio streaming. Metadata one too?
     ret = check_pipes(gnamed_pipe);
     if (ret < 0) {
@@ -750,8 +876,14 @@ main(int argc, char **argv)
   /* Run the loop */
   if (!testrun)
     event_base_dispatch(evbase_main);
-  else
-    fprintf(stdout, "%s check\n", PACKAGE);
+  else {
+    if (remove_pipes(TESTRUN_PIPE) == 0) {
+      fprintf(stdout, "%s check\n", PACKAGE);
+    }
+    else {
+      fprintf(stdout, "%s fail\n", PACKAGE);
+    }
+  }
 
   DPRINTF(E_LOG, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;

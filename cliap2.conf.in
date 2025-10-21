@@ -365,6 +365,23 @@ library {
 #	clear_on_close = false
 #}
 
+
+# MPD configuration (only have effect if MPD enabled - see README/INSTALL)
+mpd {
+	# TCP port to listen on for MPD client requests.
+	# Default port is 6600, set to 0 to disable MPD support.
+#	port = 6600
+
+	# HTTP port to listen for artwork requests (only supported by some MPD
+	# clients and will need additional configuration in the MPD client to
+	# work). Set to 0 to disable serving artwork over http.
+#	http_port = 0
+
+	# Whether to emit an output with plugin type "httpd" to tell clients
+	# that a stream is available for local playback.
+#	enable_httpd_plugin = false
+}
+
 # Streaming audio settings for remote connections (ie stream.mp3)
 streaming {
 	# Sample rate, typically 44100 or 48000

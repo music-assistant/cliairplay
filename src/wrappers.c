@@ -290,7 +290,7 @@ db_file_inc_playcount(int id)
 int
 db_perthread_init(void)
 {
-    DPRINTF(E_LOG, L_DB, "db_perthread_init() not yet fully implemented.\n");
+    // It has been tested that it ok to do nothing
     return 0;
 }
 
@@ -305,8 +305,7 @@ db_deinit(void)
 void
 db_perthread_deinit(void) 
 {
-
-    DPRINTF(E_LOG, L_DB, "db_perthread_deinit() not yet fully implemented.\n");
+    // It has been tested that it ok to do nothing
     return;
 }
 
