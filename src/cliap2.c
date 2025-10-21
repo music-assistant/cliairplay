@@ -59,6 +59,7 @@
 #include <gcrypt.h>
 
 #include "conffile.h"
+#include "library.h"
 #include "logger.h"
 #include "misc.h"
 #include "player.h"
@@ -66,12 +67,14 @@
 #include "outputs/rtp_common.h"
 #include "wrappers.h"
 #include "cliap2.h"
+#include "mass.h"
 
 struct event_base *evbase_main;
 
 static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
+char* gnamed_pipe = NULL;
 
 // NTP timestamp definitions
 #define FRAC             4294967296. // 2^32 as a double
@@ -131,23 +134,21 @@ usage(char *program)
   printf("\n");
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
-  printf("  -d, --debug <number>          Log level (0-5)\n");
-  printf("  -D, --logdomains <dom,dom..>  Log domains\n");
-  printf("  -c, --config <file>           Use <file> as the configuration file\n");
-  printf("  --name <name>                 Name of the airplay 2 device\n");
-  printf("  --type <type>                 MDNS Service Discovery Type (e.g. _airplay._tcp)\n");
-  printf("  --domain <domain>             MDNS Service Discovery Domain (e.g. local)\n");
-  printf("  --hostname <hostname>         Hostname of AirPlay 2 device\n");
-  printf("  --family <family>             IP protocol family for AirPlay 2 service (inet=2 or inet6=10)\n");
-  printf("  --address <address>           IP address to bind to for AirPlay 2 service\n");
-  printf("  --port <port>                 Port number to bind to for AirPlay 2 service\n");
-  printf("  --txt <txt>                   txt keyvals returned in mDNS for AirPlay 2 service\n");
-  printf("  --ntp                         Print current NTP time and exit\n");
-  printf("  --ntpstart                    NTP time to start playback\n");
-  printf("  --wait                        Additional time to wait in additon to NTP time in ms??\n");
-  printf("  --latency                     Latency to apply in ms??\n");
-  printf("  --volume                      Initial volume\n");
-  printf("  -v, --version                 Display version information\n");
+  printf("  --loglevel <number>       Log level (0-5)\n");
+  printf("  --logdomains <dom,dom..>  Log domains\n");
+  printf("  --config <file>           Use <file> as the configuration file\n");
+  printf("  --name <name>             Name of the airplay 2 device\n");
+  printf("  --hostname <hostname>     Hostname of AirPlay 2 device\n");
+  printf("  --address <address>       IP address to bind to for AirPlay 2 service\n");
+  printf("  --port <port>             Port number to bind to for AirPlay 2 service\n");
+  printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service\n");
+  printf("  --pipe                    filename of named pipe to read streamed audio\n");
+  printf("  --ntp                     Print current NTP time and exit\n");
+  printf("  --ntpstart                NTP time to start playback\n");
+  printf("  --wait                    Additional time to wait after NTP time in ms??\n");
+  printf("  --latency                 Latency to apply in ms??\n");
+  printf("  --volume                  Initial volume\n");
+  printf("  -v, --version             Display version information and exit\n");
   printf("\n\n");
   printf("Available log domains:\n");
   logger_domains();
@@ -286,7 +287,7 @@ parse_keyval(const char *str, struct keyval *kv)
 
   s = (char *)str;
   if (*s != '"') {
-    DPRINTF(E_FATAL, L_MAIN, "Keyval string must start with a double quote (\"), not with %c\n", *s);
+    DPRINTF(E_FATAL, L_MAIN, "Keyval string must start with a double quote (\"), not with '%c':%d\n", *s, *s);
     return -1;
   }
   s++; // Skip opening quote
@@ -321,6 +322,40 @@ parse_keyval(const char *str, struct keyval *kv)
   return 0;
 }
 
+// Check for valid named pipe(s).
+// @param name the filename of the audio streaming named pipe
+// @returns 0 on success, -1 on failure
+static
+int check_pipes(const char *pipe_path)
+{
+  struct stat st;
+
+  // Check if the file exists and get its information
+  if (stat(pipe_path, &st) == 0) {
+      // File exists, now check if it's a FIFO (named pipe)
+      if (S_ISFIFO(st.st_mode)) {
+          DPRINTF(E_DBG, L_MAIN, "Named pipe '%s' exists.\n", pipe_path);
+          return 0;
+      } 
+      else {
+          DPRINTF(E_FATAL, L_MAIN, "File '%s' exists, but it is not a named pipe.\n", pipe_path);
+          return -1;
+      }
+  } 
+  else {
+      // File does not exist or an error occurred
+      if (errno == ENOENT) {
+          DPRINTF(E_FATAL, L_MAIN, "Named pipe '%s' does not exist.\n", pipe_path);
+      } 
+      else {
+          DPRINTF(E_FATAL, L_MAIN, "Error checking for named pipe. %s", strerror(errno));
+      }
+      return -1;
+  }
+
+  return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -349,6 +384,7 @@ main(int argc, char **argv)
   int ret;
   int port = -1;
   const char *name, *hostname, *address, *txt = NULL;
+
   uint64_t ntpstart = 0;
   uint32_t wait = 0;
   uint32_t latency = 0;
@@ -356,65 +392,66 @@ main(int argc, char **argv)
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
-    { "debug",         1, NULL, 'd' },
-    { "logdomains",    1, NULL, 'D' },
-    { "config",        1, NULL, 'c' },
-    { "name",          1, NULL, 'n' },
-    { "hostname",      1, NULL, 'h' },
-    { "address",       1, NULL, 'a' },
-    { "port",          1, NULL, 'p' },
-    { "txt",           1, NULL, 'k' },
-    { "ntp",           0, NULL, 's' },
-    { "ntpstart",      1, NULL, 500 },
-    { "wait",          1, NULL, 501 },
-    { "latency",       1, NULL, 502 },
-    { "volume",        1, NULL, 503 },
-    { "version",       0, NULL, 'v' },
-    { "testrun",       0, NULL, 't' }, // Used for CI, not documented to user
+    { "loglevel",      1, NULL, 500 },
+    { "logdomains",    1, NULL, 501 },
+    { "config",        1, NULL, 502 },
+    { "name",          1, NULL, 503 },
+    { "hostname",      1, NULL, 504 },
+    { "address",       1, NULL, 505 },
+    { "port",          1, NULL, 506 },
+    { "txt",           1, NULL, 507 },
+    { "ntp",           0, NULL, 508 },
+    { "ntpstart",      1, NULL, 509 },
+    { "wait",          1, NULL, 510 },
+    { "latency",       1, NULL, 511 },
+    { "volume",        1, NULL, 512 },
+    { "version",       0, NULL, 513 },
+    { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
+    { "pipe",          1, NULL, 515 },
 
     { NULL,            0, NULL, 0   }
   };
 
-  while ((option = getopt_long(argc, argv, "D:d:c:v", option_map, NULL)) != -1) {
+  while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
-      case 't':
+      case 514: // testrun
         testrun = true;
         break;
 
-      case 'd':
+      case 500: // loglevel
         ret = safe_atoi32(optarg, &option);
         if (ret < 0)
-          fprintf(stderr, "Error: loglevel must be an integer in '-d, --debug %s'\n", optarg);
+          fprintf(stderr, "Error: loglevel must be an integer in '--loglevel %s'\n", optarg);
         else
           loglevel = option;
         break;
 
-      case 'D':
+      case 501: // logdomains
         logdomains = optarg;
         break;
 
-      case 'c':
+      case 502: //config
         configfile = optarg;
         break;
 
-      case 'v':
+      case 513: // version
         version();
         return EXIT_SUCCESS;
         break;
 
-      case 'n':
+      case 503: // name
         name = optarg;
         break;
 
-      case 'h':
+      case 504: // hostname
         hostname = optarg;
         break;
 
-      case 'a':
+      case 505:  // address
         address = optarg;
         break;
 
-      case 'p':
+      case 506: // port
         ret = safe_atoi32(optarg, &option);
         if (ret < 0)
           fprintf(stderr, "Error: port must be an integer in '--port %s'\n", optarg);
@@ -422,16 +459,16 @@ main(int argc, char **argv)
           port = option;
         break;
 
-      case 'k':
+      case 507: // txt
         txt = optarg;
         break;
 
-      case 's':
+      case 508: // ntp
         // output ntp time to stdout and exit
         ntptime();
         return EXIT_SUCCESS;
 
-      case 500:
+      case 509:
         // ntpstart
         ret = safe_atou64(optarg, (uint64_t *)&ntpstart);
         if (ret < 0) {
@@ -440,8 +477,7 @@ main(int argc, char **argv)
         }
         break;
       
-      case 501:
-        // wait
+      case 510: // wait
         ret = safe_atou32(optarg, &wait);
         if (ret < 0) {
           fprintf(stderr, "Error: wait must be an integer in '--wait %s'\n", optarg);
@@ -449,8 +485,7 @@ main(int argc, char **argv)
         }
         break;
 
-      case 502:
-        // latency
+      case 511: // latency
         ret = safe_atou32(optarg, &latency);
         if (ret < 0) {
           fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
@@ -458,8 +493,7 @@ main(int argc, char **argv)
         }
         break;
       
-      case 503:
-        // volume
+      case 512: // volume
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
@@ -467,11 +501,31 @@ main(int argc, char **argv)
         }
         break;
 
-      default:
+      case 515: // named pipe filename
+        gnamed_pipe = optarg;
+        break;
+
+        default:
+      case '?':
         usage(argv[0]);
         return EXIT_FAILURE;
         break;
 	  }
+  }
+
+  // Check that mandatory arguments have been supplied
+  if ( !testrun &&
+      (port == -1 ||
+      name == (char *)NULL ||
+      hostname == (char *)NULL ||
+      address == (char*)NULL ||
+      txt == (char*)NULL ||
+      ntpstart == 0 ||
+      volume == 0
+      )
+     ) {
+      usage(argv[0]);
+      return EXIT_FAILURE;
   }
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
@@ -480,7 +534,7 @@ main(int argc, char **argv)
 
     return EXIT_FAILURE;
   }
-  logger_detach();  // Eliminate logging to stderr
+  // logger_detach();  // Eliminate logging to stderr
 
   ret = conffile_load(configfile);
   if (ret != 0) {
@@ -506,8 +560,15 @@ main(int argc, char **argv)
     conffile_unload();
     return EXIT_FAILURE;
   }
+  // logger_detach();  // Eliminate logging to stderr
 
   if (!testrun) {
+    // Check that named pipe exists for audio streaming. Metadata one too?
+    ret = check_pipes(gnamed_pipe);
+    if (ret < 0) {
+      return EXIT_FAILURE;
+    }
+
     CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
 
     ret = parse_keyval(txt, txt_kv);
@@ -533,12 +594,12 @@ main(int argc, char **argv)
 
   DPRINTF(E_LOG, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
 
-  DPRINTF(E_LOG, L_MAIN, "Built with:\n");
-  buildopts = buildopts_get();
-  for (i = 0; buildopts[i]; i++)
-    {
-      DPRINTF(E_LOG, L_MAIN, "- %s\n", buildopts[i]);
-    }
+  // DPRINTF(E_LOG, L_MAIN, "Built with:\n");
+  // buildopts = buildopts_get();
+  // for (i = 0; buildopts[i]; i++)
+  //   {
+  //     DPRINTF(E_LOG, L_MAIN, "- %s\n", buildopts[i]);
+  //   }
 
 #if HAVE_DECL_AV_VERSION_INFO
   av_version = av_version_info();
@@ -628,7 +689,6 @@ main(int argc, char **argv)
       goto worker_fail;
     }
 
-
   /* Spawn player thread */
   ret = player_init();
   if (ret != 0)
@@ -690,12 +750,11 @@ main(int argc, char **argv)
   /* Run the loop */
   if (!testrun)
     event_base_dispatch(evbase_main);
+  else
+    fprintf(stdout, "%s check\n", PACKAGE);
 
   DPRINTF(E_LOG, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;
-
- txt_fail:
-  if (txt_kv) keyval_clear(txt_kv);
 
   event_free(sig_event);
 
@@ -704,11 +763,12 @@ main(int argc, char **argv)
   DPRINTF(E_LOG, L_MAIN, "Player deinit\n");
   player_deinit();
 
+ player_fail:
   DPRINTF(E_LOG, L_MAIN, "Worker deinit\n");
   worker_deinit();
 
- player_fail:
  worker_fail:
+  db_deinit();
   event_base_free(evbase_main);
 
  signal_block_fail:
@@ -722,6 +782,9 @@ main(int argc, char **argv)
   av_lockmgr_register(NULL);
  ffmpeg_init_fail:
 #endif
+
+ txt_fail:
+  if (txt_kv) keyval_clear(txt_kv);
 
   DPRINTF(E_LOG, L_MAIN, "Exiting.\n");
   conffile_unload();

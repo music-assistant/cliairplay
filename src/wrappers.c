@@ -16,27 +16,90 @@
 # include <config.h>
 #endif
 
+#include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "wrappers.h"
 #include "cliap2.h"
 
 #include "logger.h"
-#include "db.h"
 #include "outputs.h"
-#include "listener.h"
+#include "db.h"
+#include "conffile.h"
 
 #define AIRPLAY_SERVICE_TYPE "_airplay._tcp"
 
 extern ap2_device_info_t ap2_device_info;
+extern char* gnamed_pipe;
 
 /*
  * Wrappers for db.c
+ * We need to make these functions do something, because the data returned by them
+ * controls the behaviour of the calling functions.
  */
+
+// Emulate the db_queue database table with a memory bound linked list
+// Almost certainly this will have at most one member.
+typedef struct db_queue {
+    struct db_queue_item item;
+    struct db_queue *next;
+} db_queue_t;
+
+db_queue_t *queue = NULL; // Always points to the head
+
+// Function to create a new node - it still needs to be placed in the linked list
+// after creation
+static struct
+db_queue* db_queue_create_node(struct db_queue_item *data) {
+    db_queue_t* newNode = (db_queue_t*)calloc(1, sizeof(db_queue_t));
+    if (newNode == NULL) {
+        DPRINTF(E_FATAL, L_DB, "db_queue_create_node():queue_node:Memory allocation failed\n");
+        return (db_queue_t *)NULL;
+    }
+    newNode->item.id = data->id;
+    newNode->item.file_id = data->file_id;
+    newNode->item.pos = data->pos;
+    newNode->item.shuffle_pos = data->shuffle_pos;
+    newNode->item.data_kind = data->data_kind;
+    newNode->item.media_kind = data->media_kind;
+    newNode->item.path = data->path;
+    newNode->item.bitrate = data->bitrate;
+    newNode->item.samplerate = data->samplerate;
+    newNode->item.channels = data->channels;
+    newNode->next = NULL;
+    return newNode;
+}
+
+static struct
+db_queue* db_queue_insert_atend(struct db_queue_item *data) {
+    db_queue_t* newNode = db_queue_create_node(data);
+    if (queue == NULL) {
+        // queue is empty, new node is the head
+        queue = newNode;
+        return newNode; // If list is empty, new node is the head
+    }
+    db_queue_t* current = queue;
+    while (current->next != NULL) {
+        current = current->next;
+    }
+    current->next = newNode;
+    return queue;
+}
+
 struct db_queue_item *
 db_queue_fetch_byitemid(uint32_t item_id)
 {
     struct db_queue_item *ret = NULL;
+    db_queue_t *q = queue; // start at the head
+
+    while (q) {
+        if (q->item.id == item_id) {
+            ret = &q->item;
+            break;
+        }
+        q = q->next;
+    }
     return ret; 
 }
 
@@ -44,6 +107,8 @@ struct db_queue_item *
 db_queue_fetch_next(uint32_t item_id, char shuffle)
 {
     struct db_queue_item *ret = NULL;
+
+    DPRINTF(E_LOG, L_DB, "db_queue_fetch_next() not yet fully implemented.\n");
     return ret; 
 }
 
@@ -51,6 +116,8 @@ struct db_queue_item *
 db_queue_fetch_prev(uint32_t item_id, char shuffle)
 {
     struct db_queue_item *ret = NULL;
+
+    DPRINTF(E_LOG, L_DB, "db_queue_fetch_prev() not yet fully implemented.\n");
     return ret; 
 }
 
@@ -58,48 +125,141 @@ struct db_queue_item *
 db_queue_fetch_bypos(uint32_t pos, char shuffle)
 {
     struct db_queue_item *ret = NULL;
+
+    DPRINTF(E_LOG, L_DB, "db_queue_fetch_bypos() not yet fully implemented.\n");
     return ret; 
 }
 
 int
 db_queue_reshuffle(uint32_t item_id)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_queue_reshuffle() net yet fully implemented.\n");
     return 0;
 }
 
 int
 db_queue_inc_version(void)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_queue_inc_version() not yet fully implemented.\n");
     return 0;
 }
 
 int
 db_queue_delete_byitemid(uint32_t item_id)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_queue_delete_byitemid() not yet fully implemented.\n");
     return 0;
 }
 
+/*
+ * Removes all items from the queue except the item give by 'keep_item_id' (if 'keep_item_id' > 0).
+ *
+ * @param keep_item_id item-id (e. g. the now playing item) to be left in the queue
+ */
 int
 db_queue_clear(uint32_t keep_item_id)
 {
+    if (queue == NULL) // queue already empty
+        return 0;
+    
+    db_queue_t *temp = queue;
+    db_queue_t *keep = NULL;
+    while (temp) {
+        db_queue_t *next = temp->next;
+        if (temp->item.id == keep_item_id)
+            keep = temp;
+        else
+            free(temp);
+        temp = next;
+    }
+    if (keep)
+        queue = keep;
+    else
+        queue = NULL; // we deleted all items in the queue
+
     return 0;
 }
 
 int
 db_queue_item_update(struct db_queue_item *qi)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_queue_item_update() not yet fully implemented.\n");
     return 0;
 }
 
+/*
+ * Adds the files matching the given query to the queue
+ *
+ * Music Assistant:
+ * Adds the file to the local memory "normal" queue
+ * 
+ * Owntones:
+ * The files table is queried with the given parameters and all found files are added to the end of the
+ * "normal" queue and the shuffled queue.
+ *
+ * The function returns -1 on failure (e. g. error reading from database). It wraps all database access
+ * in a transaction and performs a rollback if an error occurs, leaving the queue in a consistent state.
+ *
+ * @param qp Query parameters for the files table
+ * @param reshuffle If 1 queue will be reshuffled after adding new items
+ * @param item_id The base item id, all items after this will be reshuffled
+ * @param position The position in the queue for the new queue item, -1 to add at end of queue
+ * @param count If not NULL returns the number of items added to the queue
+ * @param new_item_id If not NULL return the queue item id of the first new queue item
+ * @return 0 on success, -1 on failure
+ */
 int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
+
+    DPRINTF(E_DBG, L_DB, "db_queue_add_by_query() called.\n");
+
+    if (qp->type == Q_ITEMS) {
+        DPRINTF(E_DBG, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
+        if (position == -1) {
+            // Add to end of queue
+             struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));
+            if (item == NULL) {
+                DPRINTF(E_FATAL, L_DB, "db_queue_add_by_query():Memory allocation failed\n");
+                return -1;
+            }
+            // put some data in the queue_item first!!
+            item->id = item_id + 1;
+            item->file_id = 1; // We only expect one item in the queue, so make them all the same
+            item->pos = 1;
+            item->shuffle_pos = 1;
+            item->data_kind = DATA_KIND_PIPE; // this is all we support for the moment
+            item->media_kind = MEDIA_KIND_MUSIC; // we only support audio
+            item->path = gnamed_pipe;
+            item->bitrate = 0; // I don't think value matters for us.
+            item->samplerate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
+            item->channels = 2;
+            if (db_queue_insert_atend(item)) {
+                if (count) *count = 1;
+                if (new_item_id) *new_item_id = item->id;
+                return 0;
+            }
+            else {
+                return -1;
+            }
+        }
+        else {
+            DPRINTF(E_LOG, L_DB, "db_queue_add_by_query(). Position %d not yet supported.\n", position);
+            return -1;
+        }
+    }
     return 0;
 }
 
 void
 db_file_seek_update(int id, uint32_t seek)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_file_seek_update() net yet fully implemented.\n");
     return;
 }
 
@@ -107,71 +267,107 @@ struct media_file_info *
 db_file_fetch_byid(int id)
 {
     struct media_file_info *ret = NULL;
+
+    DPRINTF(E_LOG, L_DB, "db_file_fetch_byid(%d) not yet fully implemented.\n", id);
     return ret; 
 }
 
 void
 db_file_inc_skipcount(int id)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_file_inc_skipcount() not yet fully implemented.\n");
     return;
 }
 
 void
 db_file_inc_playcount(int id)
 {
+    DPRINTF(E_LOG, L_DB, "db_file_inc_playcount() not yet fully implemented.\n");
     return;
 }
 
 int
 db_perthread_init(void)
 {
+    DPRINTF(E_LOG, L_DB, "db_perthread_init() not yet fully implemented.\n");
     return 0;
 }
 
+// Free memory allocated for our in-memory db items
 void
-db_perthread_deinit(void) {
+db_deinit(void)
+{
+    db_queue_clear(0);
+    return;
+}
+
+void
+db_perthread_deinit(void) 
+{
+
+    DPRINTF(E_LOG, L_DB, "db_perthread_deinit() not yet fully implemented.\n");
     return;
 }
 
 int
 db_speaker_save(struct output_device *device)
 {
+    DPRINTF(E_LOG, L_DB, "db_speaker_save() not yet fully implemented.\n");
+    DPRINTF(E_DBG, L_DB, "db_speaker_save():\n\tdevice.id: %d\n", device->id);
+    DPRINTF(E_DBG, L_DB, "\tname: %s", device->name);
+    DPRINTF(E_DBG, L_DB, "\ttype_name: %s", device->type_name);
+
     return 0;
 }
 
 int
 db_speaker_get(struct output_device *device, uint64_t id)
 {
+    device->id = id;
+    device->selected = 1;
+    device->volume = ap2_device_info.volume;
+    //device->auth_key = ?? // might need to pass this as command line argument for some devices
+    device->selected_format = MEDIA_FORMAT_ALAC;
+
     return 0;
 }
 
 int
 db_query_start(struct query_params *qp)
 {
+    DPRINTF(E_LOG, L_DB, "db_query_start() not yet fully implemented.\n");
     return 0;
 }
 
 void
 db_query_end(struct query_params *qp)
 {
+    DPRINTF(E_LOG, L_DB, "db_query_end() not yet fully implemented.\n");
     return;
 }
 
 int
 db_query_fetch_file(struct db_media_file_info *dbmfi, struct query_params *qp)
 {
+
+    DPRINTF(E_LOG, L_DB, "db_query_fetch_file() not yet fully implemented.\n");
     return 0;
 }
 
 void
 free_mfi(struct media_file_info *mfi, int content_only)
 {
+
+    DPRINTF(E_LOG, L_DB, "free_mfi() not yet fully implemented.\n");
     return;
 }
 
 void
 free_queue_item(struct db_queue_item *qi, int content_only)
 {
+
+    DPRINTF(E_LOG, L_DB, "free_queue_item() not yet fully implemented.\n");
     return;
 }
 
@@ -240,27 +436,6 @@ int
 settings_option_setbool(struct settings_option *option, bool value)
 {
     return 0;
-}
-
-/*
- * Wrappers for listener.c
- */
-int
-listener_add(notify notify_cb, short event_mask, void *ctx)
-{
-    return 0;
-}
-
-int
-listener_remove(notify notify_cb)
-{
-    return 0;
-}
-
-void
-listener_notify(short event_mask)
-{
-    return;
 }
 
 /*
