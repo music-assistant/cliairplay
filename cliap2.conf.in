@@ -71,7 +71,7 @@ mass {
 	# Automatically start playback when PCM data read on stdin
 #	autostart = yes
 
-	# PCM data quality 
+	# PCM data quality
 	# sample rate and bits per sample of the PCM data sent from Music Assistant
 #	pcm_sample_rate = 44100
 #	pcm_bits_per_sample = 16
@@ -213,7 +213,7 @@ library {
 #	force_decode = { "format", "format" }
 	# Prefer transcode to wav (default), alac or mpeg (mp3 with the bit rate
 	# configured below in the streaming section). Note that alac requires
-	# precomputing and caching mp4 headers, which takes both cpu and disk. 
+	# precomputing and caching mp4 headers, which takes both cpu and disk.
 #	prefer_format = "format"
 
 	# Set ffmpeg filters (similar to 'ffmpeg -af xxx') that you want the
@@ -356,7 +356,7 @@ library {
 	# list
 #	exclude = false
 
-	# A Roku/SoundBridge can power up in 2 modes: (default) reconnect to the 
+	# A Roku/SoundBridge can power up in 2 modes: (default) reconnect to the
 	# previously used library (ie OwnTone) or in a 'cleared library' mode.
 	# The Roku power up behaviour is affected by how OwnTone disconnects
 	# from the Roku device.
