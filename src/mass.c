@@ -4,8 +4,9 @@
  * This was copied from pipe.c from the owntones repo and adapted
  * to provide an interface between Music Assistant and the airplay
  * player codebase from owtnones.
- * Raw PCM data is read from stdin and streamed to the airplay player
- * Metadata and commands are read from named pipe(s) - yet to be implemented.
+ * Raw PCM data is read from a named pipe and streamed to the airplay player
+ * Metadata and commands are read from a second named pipe
+ * Player status is reported back to Music Assistant on stderr
  *
  * original code:
  * Copyright (C) 2017 Espen Jurgensen
@@ -75,6 +76,15 @@
 
 #define MASS_UPDATE_INTERVAL_SEC 1 // every second
 #define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
+#define MASS_METADATA_KEYVAL_SEP "="  // Key-value separator in metadata
+#define MASS_METADATA_PROGRESS_KEY "PROGRESS"
+#define MASS_METADATA_VOLUME_KEY   "VOLUME"
+#define MASS_METADATA_ARTWORK_KEY  "ARTWORK"
+#define MASS_METADATA_ALBUM_KEY    "ALBUM"
+#define MASS_METADATA_TITLE_KEY    "TITLE"
+#define MASS_METADATA_ARTIST_KEY   "ARTIST"
+#define MASS_METADATA_DURATION_KEY  "DURATION"
+#define MASS_METADATA_ACTION_KEY    "ACTION"
 
 /* from cliap2.c */
 extern char* gnamed_pipe;
@@ -644,6 +654,126 @@ parse_item_xml(uint32_t *type, uint32_t *code, uint8_t **data, int *data_len, co
   return -1;
 }
 
+static
+void extract_key_value(const char *input_string, char **key, char **value) {
+    char *delimiter_pos = strchr(input_string, '='); // Find the '=' delimiter
+
+    if (delimiter_pos == NULL) {
+        // Handle cases where the delimiter is not found
+        *key = NULL;
+        *value = NULL;
+        return;
+    }
+
+    // Calculate lengths
+    size_t key_len = delimiter_pos - input_string;
+    size_t value_len = strlen(delimiter_pos + 1);
+
+    // Allocate memory for key and value
+    *key = (char *)malloc(key_len + 1);
+    *value = (char *)malloc(value_len + 1);
+
+    if (*key == NULL || *value == NULL) {
+        // Handle memory allocation failure
+        free(*key); // Free if one was allocated
+        free(*value);
+        *key = NULL;
+        *value = NULL;
+        return;
+    }
+
+    // Copy the key
+    strncpy(*key, input_string, key_len);
+    (*key)[key_len] = '\0'; // Null-terminate the key
+
+    // Copy the value
+    strcpy(*value, delimiter_pos + 1); // Copy from after the delimiter
+}
+
+// Parse one metadata item from Music Assistant
+static int
+parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
+{
+  struct input_metadata *m = &prepared->input_metadata;
+  uint32_t type;
+  uint32_t code;
+  uint8_t *data;
+  int data_len;
+  char **dstptr;
+  enum pipe_metadata_msg message;
+  int ret;
+  char *key, *value = NULL;
+  int duration_sec = 0;
+
+  extract_key_value(item, &key, &value);
+  if (!key || !value) {
+      DPRINTF(E_LOG, L_PLAYER, "%s:Invalid key-value pair in Music Assistant metadata: '%s'\n", __func__, item);
+      if (key) free(key);
+      if (value) free(value);
+      return -1;
+  }
+
+  if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
+      message = PIPE_METADATA_MSG_METADATA;
+      prepared->input_metadata.album = value;
+  }
+  else if (!strncmp(key,MASS_METADATA_ARTIST_KEY, strlen(MASS_METADATA_ARTIST_KEY))) {
+      message = PIPE_METADATA_MSG_METADATA;
+      prepared->input_metadata.artist = value;
+  }
+  else if (!strncmp(key,MASS_METADATA_TITLE_KEY, strlen(MASS_METADATA_TITLE_KEY))) {
+      message = PIPE_METADATA_MSG_METADATA;
+      prepared->input_metadata.title = value;
+  }
+  else if (!strncmp(key,MASS_METADATA_DURATION_KEY, strlen(MASS_METADATA_DURATION_KEY))) {
+      message = PIPE_METADATA_MSG_METADATA;
+      ret = safe_atoi32(value, &duration_sec);
+      if (ret < 0) {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid duration value in Music Assistant metadata: '%s'\n", __func__, value);
+          free(key);
+          free(value);
+          return -1;
+      }
+      prepared->input_metadata.len_ms = duration_sec * 1000;
+  }
+  else if (!strncmp(key,MASS_METADATA_PROGRESS_KEY, strlen(MASS_METADATA_PROGRESS_KEY))) {
+      message = PIPE_METADATA_MSG_PROGRESS;
+      ret = safe_atoi32(value, &prepared->input_metadata.pos_ms);
+      if (ret < 0) {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid progress value in Music Assistant metadata: '%s'\n", __func__, value);
+          free(key);
+          free(value);
+          return -1;
+      }
+      prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
+  }
+  else if (!strncmp(key,MASS_METADATA_ARTWORK_KEY, strlen(MASS_METADATA_ARTWORK_KEY))) {
+      message = PIPE_METADATA_MSG_METADATA;
+      prepared->input_metadata.artwork_url = value;
+  }
+  else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
+      message = PIPE_METADATA_MSG_VOLUME;
+      ret = safe_atoi32(value, &prepared->volume);
+      if (ret < 0) {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid volume value in Music Assistant metadata: '%s'\n", __func__, value);
+          free(key);
+          free(value);
+          return -1;
+      }
+  }
+  else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
+      if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0)
+         message = PIPE_METADATA_MSG_METADATA;
+  }
+  else {
+      DPRINTF(E_LOG, L_PLAYER, "%s:Unknown key in Music Assistant metadata: '%s=%s'\n", __func__, key, value);
+      free(key);
+      free(value);
+      return -1;
+  }
+  return 0;
+}
+
 static int
 parse_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -713,6 +843,8 @@ parse_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepa
   return 0;
 }
 
+// Music Assistant terminates commands/metadata with a newline. This extracts
+// one item from the evbuffer, or NULL if there is no complete item.
 static char *
 extract_item(struct evbuffer *evbuf)
 {
@@ -720,22 +852,22 @@ extract_item(struct evbuffer *evbuf)
   size_t size;
   char *item;
 
-  evptr = evbuffer_search(evbuf, "</item>", strlen("</item>"), NULL);
+  evptr = evbuffer_search(evbuf, "\n", strlen("\n"), NULL);
   if (evptr.pos < 0)
     return NULL;
 
-  size = evptr.pos + strlen("</item>") + 1;
+  size = evptr.pos + strlen("\n") + 1;
   item = malloc(size);
   if (!item)
     return NULL;
 
   evbuffer_remove(evbuf, item, size - 1);
-  item[size - 1] = '\0';
+  item[size - 2] = '\0'; // Replace newline with null terminator
 
   return item;
 }
 
-// Parses the xml content of the evbuf into a parsed struct. The first arg is
+// Parses the content of the evbuf into a parsed struct. The first arg is
 // a bitmask describing all the item types that were found, e.g.
 // PIPE_METADATA_MSG_VOLUME | PIPE_METADATA_MSG_METADATA. Returns -1 if the
 // evbuf could not be parsed.
@@ -749,7 +881,8 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
   *out_msg = 0;
   while ((item = extract_item(evbuf)))
     {
-      ret = parse_item(&message, prepared, item);
+      DPRINTF(E_DBG, L_PLAYER, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
+      ret = parse_mass_item(&message, prepared, item);
       free(item);
       if (ret < 0)
 	return -1;
