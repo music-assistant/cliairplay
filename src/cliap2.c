@@ -718,14 +718,12 @@ main(int argc, char **argv)
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
 
-  DPRINTF(E_LOG, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
-
-  // DPRINTF(E_LOG, L_MAIN, "Built with:\n");
-  // buildopts = buildopts_get();
-  // for (i = 0; buildopts[i]; i++)
-  //   {
-  //     DPRINTF(E_LOG, L_MAIN, "- %s\n", buildopts[i]);
-  //   }
+  if (testrun) {
+    DPRINTF(E_LOG, L_MAIN, "%s version %s test run\n", PACKAGE, VERSION);
+  }
+  else {
+    DPRINTF(E_LOG, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
+  }
 
 #if HAVE_DECL_AV_VERSION_INFO
   av_version = av_version_info();

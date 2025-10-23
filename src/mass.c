@@ -73,7 +73,23 @@
 #include "commands.h"
 #include "mass.h"
 
+#define MASS_UPDATE_INTERVAL_SEC 1 // every second
+#define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
+
+/* from cliap2.c */
 extern char* gnamed_pipe;
+extern struct event_base *evbase_main;
+
+/* from player.c */
+extern struct event_base *evbase_player;
+
+ /* mass specific stuff - run the timer in the main thread, so we can initiate program termination */
+static struct event *mass_timer_event = NULL;
+static struct timeval mass_tv = { MASS_UPDATE_INTERVAL_SEC, 0};
+// static struct timespec playback_start_ts = {0, 0};
+static struct timespec paused_start_ts = {0, 0};
+static bool player_started = false;
+static bool player_paused = false;
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -153,6 +169,9 @@ static pthread_t tid_pipe;
 static struct event_base *evbase_pipe;
 static struct commands_base *cmdbase;
 
+// for timer events
+static struct event_base *evbase_timer;
+
 // From config - the sample rate and bps of the pipe input
 static int pipe_sample_rate;
 static int pipe_bits_per_sample;
@@ -186,6 +205,35 @@ dmap_val2str(char buf[5], uint32_t val)
   buf[4] = 0;
 }
 
+static const char *pipetype_str(enum pipetype type)
+{
+  switch (type)
+    {
+    case PIPE_PCM:
+      return "PCM";
+    case PIPE_METADATA:
+      return "Metadata";
+    default:
+      return "Unknown";
+    }
+}
+
+static const char *play_status_str(enum play_status status)
+{
+  switch (status)
+    {
+    case PLAY_STOPPED:
+      return "stopped";
+    case PLAY_PAUSED:
+      return "paused";
+    case PLAY_PLAYING:
+      return "playing";
+    default:
+      return "unknown";
+    }
+}
+
+/* -------------------------------------------------------------------------*/
 static struct pipe *
 pipe_create(const char *path, int id, enum pipetype type, event_callback_fn cb)
 {
@@ -213,11 +261,6 @@ pipe_open(const char *path, bool silent)
 {
   struct stat sb;
   int fd;
-
-  if (!strncmp(path, "/dev/stdin", strlen("/dev/stdin"))) {
-    // perform our trick for Music Assistant integration
-    return 0; // file descriptor of stdin is 0
-  }
 
   DPRINTF(E_DBG, L_PLAYER, "(Re)opening pipe: '%s'\n", path);
 
@@ -260,10 +303,7 @@ pipe_close(int fd)
 static int
 watch_add(struct pipe *pipe)
 {
-  bool silent;
-
-  silent = (pipe->type == PIPE_METADATA);
-  pipe->fd = pipe_open(pipe->path, silent);
+  pipe->fd = pipe_open(pipe->path, 0);
   if (pipe->fd < 0)
     return -1;
 
@@ -725,6 +765,8 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 /*                                 Thread: pipe                               */
 
 // Some data arrived on a pipe we watch - let's autostart playback
+// and here is probably the plase to setup epoch time and an event timer to
+// report playback status back to Music Assistant on stderr
 static void
 pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 {
@@ -750,11 +792,10 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 
   DPRINTF(E_DBG, L_PLAYER, "player_playback_start_byid(%d)\n", pipe->id);
   ret = player_playback_start_byid(pipe->id);
-  if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed.\n", pipe->path, fd);
-      return;
-    }
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed.\n", pipe->path, fd);
+    return;
+  }
 
   pipe_autostart_id = pipe->id;
 }
@@ -835,6 +876,10 @@ pipe_watch_update(void *arg, int *retval)
 static void *
 pipe_thread_run(void *arg)
 {
+  char my_thread[32];
+
+  thread_getnametid(my_thread, sizeof(my_thread));
+  DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_pipe);
 
   pthread_exit(NULL);
@@ -890,6 +935,8 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
       evbuffer_drain(pipe_metadata.evbuf, len);
       goto readd;
     }
+  
+  DPRINTF(E_DBG, L_PLAYER, "%s:Received %d bytes of metadata\n", __func__, len);
 
   // .parsed is shared with the input thread (see metadata_get), so use mutex.
   // Note that this means _parse() must not do anything that could cause a
@@ -932,6 +979,7 @@ pipe_metadata_watch_add(void *arg)
   pipe_metadata.pipe = pipe_create(path, 0, PIPE_METADATA, pipe_metadata_read_cb);
   pipe_metadata.evbuf = evbuffer_new();
 
+  DPRINTF(E_DBG, L_PLAYER, "%s: watch_add for %s\n", __func__, path);
   ret = watch_add(pipe_metadata.pipe);
   if (ret < 0)
     {
@@ -987,7 +1035,6 @@ pipelist_create(void)
   int id;
   int ret;
 
-  // All we should need to do here is to call pipe_create for stdin
   DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", gnamed_pipe);
   head = NULL;
   pipe = pipe_create(gnamed_pipe, 1, PIPE_PCM, pipe_read_cb);
@@ -1142,18 +1189,120 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 }
 
 // Thread: main
+
+// Listener for player events to stop program execution when playback stops
+static void
+mass_player_listener_cb(short event_mask, void *ctx)
+{
+  // If playback stopped, reset the autostart pipe id
+  struct player_status status;
+  int ret;
+
+  ret = player_get_status(&status);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "%s: could not get player status\n", __func__);
+    return;
+  }
+
+  DPRINTF(E_DBG, L_PLAYER, "%s: player status:%s\n", __func__, play_status_str(status.status));
+
+}
+
+static void
+mass_timer_cb(int fd, short what, void *arg)
+{
+  struct timespec now;
+  uint64_t elapsed_ms = 0;
+  uint64_t begin_ms, now_ms, playing_ms = 0;
+  struct player_status status;
+  int ret;
+
+  ret = player_get_status(&status);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "%s(): could not get player status\n", __func__);
+    return;
+  }
+
+  DPRINTF(E_DBG, L_PLAYER,
+    "%s(): player status:%s, volume:%d, pos_ms:%u\n", 
+    __func__, play_status_str(status.status), status.volume, status.pos_ms
+  );
+
+  if (status.status == PLAY_PLAYING) {
+    if (!player_started) {
+      player_started = true;
+    }
+    DPRINTF(E_INFO, L_PLAYER, 
+      "%s(): elapsed milliseconds:%" PRIu64 " ms. volume:%d state:%s\n",
+      __func__, status.pos_ms, status.volume, play_status_str(status.status)
+    );
+  }
+  else if (player_started && status.status == PLAY_PAUSED) {
+    if (!player_paused) {
+      player_paused = true;
+      clock_gettime(CLOCK_MONOTONIC, &paused_start_ts); // reset paused time
+      DPRINTF(E_INFO, L_PLAYER, 
+        "%s(): playback paused, starting paused timer\n", __func__
+      );
+    }
+    else {
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
+      now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
+      elapsed_ms = now_ms - begin_ms;
+      DPRINTF(E_INFO, L_PLAYER, 
+        "%s(): paused milliseconds:%" PRIu64 " ms\n", __func__, elapsed_ms
+      );
+
+      if (elapsed_ms >= MASS_MS_TILL_EXIT) {
+        DPRINTF(E_INFO, L_PLAYER, 
+          "%s(): paused for %" PRIu64 " ms, stopping playback and exiting\n", 
+          __func__, elapsed_ms
+        );
+        player_playback_stop();
+
+        // stop the timer event. mass_deinit() will free it
+        evtimer_del(mass_timer_event);
+
+        // break the main event loop, which will trigger graceful program exit
+        event_base_loopbreak(evbase_main);
+      }
+    }
+  }
+  else { // should not happen, but just in case
+    DPRINTF(E_WARN, L_PLAYER, "%s():%s: Not playing or paused\n", __func__, play_status_str(status.status));
+    // reset all
+    player_started = false;
+    player_paused = false;
+    elapsed_ms = 0;
+    playing_ms = 0;
+  }
+}
+
 int
 mass_init(void)
 {
   DPRINTF(E_DBG, L_PLAYER, "mass_init()\n");
+
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
 
+  if (!tid_pipe) {
+    // main thread
+    // Create a persistent event timer in the main event loop to monitor and report playback status
+    mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:Activating persistent event timer with timeval %d sec, %d usec\n,",
+      __func__, mass_tv.tv_sec, mass_tv.tv_usec
+    );
+    evtimer_add(mass_timer_event, &mass_tv);
+  }
+
   pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
   if (pipe_autostart)
     {
-      pipe_listener_cb(0, NULL);
+      pipe_listener_cb(0, NULL); // We will noe be in the pipe thread once this returns
       CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
     }
 
@@ -1184,6 +1333,9 @@ mass_deinit(void)
     }
 
   CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
+
+  // work out where to locate timer_delete - ie. which thread.
+  event_free(mass_timer_event);
 }
 
 struct input_definition input_pipe =

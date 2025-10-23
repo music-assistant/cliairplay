@@ -50,6 +50,9 @@ cliap2_CPPFLAGS = \
     -DCONFDIR=\".\" \
 	-DSTATEDIR=\"$(localstatedir)\"
 
+cliap2_CFLAGS = \
+    -ggdb -Og
+
 cliap2_LDADD = \
 	$(OWNTONE_LIBS) \
 	$(OWNTONE_OPTS_LIBS) \

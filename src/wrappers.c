@@ -150,7 +150,30 @@ int
 db_queue_delete_byitemid(uint32_t item_id)
 {
 
-    DPRINTF(E_LOG, L_DB, "db_queue_delete_byitemid() not yet fully implemented.\n");
+    DPRINTF(E_DBG, L_DB, "%s(%d)\n", __func__, item_id);
+
+    // find the queue item, then remove it from the linked list and dealloc
+    if (queue == NULL) // queue already empty
+        return 0;
+    
+    db_queue_t *prev_node = NULL;
+    db_queue_t *node = queue;
+    for (node = queue; node->next; node = node->next) {
+        // traverse the queue
+        if (node->item.id == item_id) {
+            // we found the node to delete
+            if (prev_node) {
+                // remove node from the linked list
+                prev_node->next = node->next;
+                DPRINTF(E_DBG, L_DB, "%s:Removed node with item id %d from the queue\n", __func__, node->item.id);
+                // free memory alloced for node and break from loop
+                free(node);
+                DPRINTF(E_DBG, L_DB, "%s:Free'd memory for node with item id %d from the queue\n", __func__, item_id);
+                break;
+            }
+        }
+        prev_node = node;
+    }
     return 0;
 }
 
@@ -215,16 +238,13 @@ db_queue_item_update(struct db_queue_item *qi)
 int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
-
-    DPRINTF(E_DBG, L_DB, "db_queue_add_by_query() called.\n");
-
     if (qp->type == Q_ITEMS) {
         DPRINTF(E_DBG, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
         if (position == -1) {
             // Add to end of queue
              struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));
             if (item == NULL) {
-                DPRINTF(E_FATAL, L_DB, "db_queue_add_by_query():Memory allocation failed\n");
+                DPRINTF(E_FATAL, L_DB, "%s():Memory allocation failed\n", __func__);
                 return -1;
             }
             // put some data in the queue_item first!!
@@ -248,7 +268,7 @@ db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id,
             }
         }
         else {
-            DPRINTF(E_LOG, L_DB, "db_queue_add_by_query(). Position %d not yet supported.\n", position);
+            DPRINTF(E_LOG, L_DB, "%s(). Position %d not yet supported.\n", __func__, position);
             return -1;
         }
     }
@@ -268,7 +288,7 @@ db_file_fetch_byid(int id)
 {
     struct media_file_info *ret = NULL;
 
-    DPRINTF(E_LOG, L_DB, "db_file_fetch_byid(%d) not yet fully implemented.\n", id);
+    // It has been tested that it is ok to do nothing
     return ret; 
 }
 
@@ -290,7 +310,7 @@ db_file_inc_playcount(int id)
 int
 db_perthread_init(void)
 {
-    // It has been tested that it ok to do nothing
+    // It has been tested that it is ok to do nothing
     return 0;
 }
 
@@ -305,18 +325,14 @@ db_deinit(void)
 void
 db_perthread_deinit(void) 
 {
-    // It has been tested that it ok to do nothing
+    // It has been tested that it is ok to do nothing
     return;
 }
 
 int
 db_speaker_save(struct output_device *device)
 {
-    DPRINTF(E_LOG, L_DB, "db_speaker_save() not yet fully implemented.\n");
-    DPRINTF(E_DBG, L_DB, "db_speaker_save():\n\tdevice.id: %d\n", device->id);
-    DPRINTF(E_DBG, L_DB, "\tname: %s", device->name);
-    DPRINTF(E_DBG, L_DB, "\ttype_name: %s", device->type_name);
-
+    // It has been tested that it is ok to do nothing
     return 0;
 }
 
@@ -365,8 +381,17 @@ free_mfi(struct media_file_info *mfi, int content_only)
 void
 free_queue_item(struct db_queue_item *qi, int content_only)
 {
+    // owntones behaviour is to free the memory allocated for elements of the queue item
+    // that were malloc'ed on creation, and then to free the memory alloc'ed for the queue item
+    // if content_only == 0.
+    // For mass, we don't need to free any content, because we never malloc'ed for any content
+    // but let's re-evaluate once metadata is implemented.
+    // If content_only == 0, then remove the item from the queue.
 
-    DPRINTF(E_LOG, L_DB, "free_queue_item() not yet fully implemented.\n");
+    if (!content_only) {
+        DPRINTF(E_DBG, L_DB, "%s:Removing item %d from the queue\n", __func__, qi->id);
+        db_queue_delete_byitemid(qi->id);
+    }
     return;
 }
 
