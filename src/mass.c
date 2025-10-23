@@ -691,6 +691,7 @@ void extract_key_value(const char *input_string, char **key, char **value) {
 }
 
 // Parse one metadata item from Music Assistant
+// TODO: @bradkeifer - check and improve memory management to ensure key and value are freed properly
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -712,6 +713,8 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       if (value) free(value);
       return -1;
   }
+
+  DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, key, value);
 
   if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
       message = PIPE_METADATA_MSG_METADATA;
@@ -752,14 +755,15 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       prepared->input_metadata.artwork_url = value;
   }
   else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
-      message = PIPE_METADATA_MSG_VOLUME;
-      ret = safe_atoi32(value, &prepared->volume);
-      if (ret < 0) {
-          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid volume value in Music Assistant metadata: '%s'\n", __func__, value);
-          free(key);
-          free(value);
-          return -1;
-      }
+    message = PIPE_METADATA_MSG_VOLUME;
+    ret = safe_atoi32(value, &prepared->volume);
+    if (ret < 0) {
+        DPRINTF(E_LOG, L_PLAYER, "%s:Invalid volume value in Music Assistant metadata: '%s'\n", __func__, value);
+        free(key);
+        free(value);
+        return -1;
+    }
+    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0)
@@ -771,6 +775,9 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       free(value);
       return -1;
   }
+  *out_msg = message;
+  if (key) free(key);
+  // if (value) free(value); // this will destroy the values stored in char *'s like prepared->input_metadata for artwork_url
   return 0;
 }
 
@@ -879,16 +886,17 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
   int ret;
 
   *out_msg = 0;
-  while ((item = extract_item(evbuf)))
-    {
-      DPRINTF(E_DBG, L_PLAYER, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
-      ret = parse_mass_item(&message, prepared, item);
-      free(item);
-      if (ret < 0)
-	return -1;
+  while ((item = extract_item(evbuf))) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
+    ret = parse_mass_item(&message, prepared, item);
+    free(item);
+    if (ret < 0) {
+      DPRINTF(E_LOG, L_PLAYER, "%s:parse_mass_item() failed to parse Music Assistant metadata item\n", __func__);
+      return -1;
+    }
 
       *out_msg |= message;
-    }
+  }
 
   return 0;
 }
@@ -1077,23 +1085,40 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   pthread_mutex_lock(&pipe_metadata.prepared.lock);
   ret = pipe_metadata_parse(&message, &pipe_metadata.prepared, pipe_metadata.evbuf);
   pthread_mutex_unlock(&pipe_metadata.prepared.lock);
-  if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Error parsing incoming data on metadata pipe '%s', will stop reading\n", pipe_metadata.pipe->path);
-      pipe_metadata_watch_del(NULL);
-      return;
-    }
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Error parsing incoming data on metadata pipe '%s', will stop reading\n", pipe_metadata.pipe->path);
+    pipe_metadata_watch_del(NULL);
+    return;
+  }
 
-  if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PROGRESS | PIPE_METADATA_MSG_PICTURE))
+  DPRINTF(E_DBG, L_PLAYER, "%s:Parsed metadata pipe message mask: 0x%x\n", __func__, message);
+
+  if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PROGRESS | PIPE_METADATA_MSG_PICTURE)) {
     pipe_metadata.is_new = 1; // Trigger notification to player in playback loop
-  if (message & PIPE_METADATA_MSG_VOLUME)
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:Triggered notification to player in the playback loop of new metadata available (message=0x%x)\n", 
+      __func__, message
+    );
+  }
+  if (message & PIPE_METADATA_MSG_VOLUME) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Setting volume from metadata pipe to %d\n", __func__, pipe_metadata.prepared.volume);
     player_volume_set(pipe_metadata.prepared.volume);
-  if (message & PIPE_METADATA_MSG_FLUSH)
+  }
+  if (message & PIPE_METADATA_MSG_FLUSH) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Flushing playback from metadata pipe command\n", __func__);
     player_playback_flush();
+  }
 
  readd:
-  if (pipe_metadata.pipe && pipe_metadata.pipe->ev)
+  if (pipe_metadata.pipe && pipe_metadata.pipe->ev) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Re-adding event for metadata pipe '%s'\n", __func__, pipe_metadata.pipe->path);
     event_add(pipe_metadata.pipe->ev, NULL);
+  }
+  else {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Metadata pipe '%s' no longer valid, not re-adding event\n",
+      __func__, pipe_metadata.pipe->path
+    );
+  }
 }
 
 static void
