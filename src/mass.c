@@ -777,7 +777,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   }
   *out_msg = message;
   if (key) free(key);
-  // if (value) free(value); // this will destroy the values stored in char *'s like prepared->input_metadata for artwork_url
+  if (value) free(value); // this will destroy the values stored in char *'s like prepared->input_metadata for artwork_url
   return 0;
 }
 
@@ -906,8 +906,6 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 /*                                 Thread: pipe                               */
 
 // Some data arrived on a pipe we watch - let's autostart playback
-// and here is probably the plase to setup epoch time and an event timer to
-// report playback status back to Music Assistant on stderr
 static void
 pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 {
@@ -937,6 +935,9 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
     DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed.\n", pipe->path, fd);
     return;
   }
+
+  /* Music Assistant looks for "restarting w/o pause" */
+  DPRINTF(E_INFO, L_PLAYER, "%s: restarting w/o pause\n", __func__);
 
   pipe_autostart_id = pipe->id;
 }
@@ -1211,7 +1212,7 @@ pipe_listener_cb(short event_mask, void *ctx)
 {
   union pipe_arg *cmdarg;
 
-  DPRINTF(E_DBG, L_PLAYER, "pipe_listener_cb()\n");
+  DPRINTF(E_DBG, L_PLAYER, "%s()\n", __func__);
 
   cmdarg = malloc(sizeof(union pipe_arg));
   if (!cmdarg)
@@ -1220,7 +1221,7 @@ pipe_listener_cb(short event_mask, void *ctx)
   cmdarg->pipelist = pipelist_create();
   if (!cmdarg->pipelist)
     {
-      DPRINTF(E_INFO, L_PLAYER, "pipe_listener_cb(): No pipelist. Stopping thread.\n");
+      DPRINTF(E_INFO, L_PLAYER, "%s: No pipelist. Stopping thread.\n", __func__);
       pipe_thread_stop();
       free(cmdarg);
       return;
@@ -1399,8 +1400,9 @@ mass_timer_cb(int fd, short what, void *arg)
     if (!player_paused) {
       player_paused = true;
       clock_gettime(CLOCK_MONOTONIC, &paused_start_ts); // reset paused time
+      /* Music Assistant looks for "set pause" or "Pause at" */
       DPRINTF(E_INFO, L_PLAYER, 
-        "%s(): playback paused, starting paused timer\n", __func__
+        "%s(): Pause at %d, starting paused timer\n", __func__, status.pos_ms
       );
     }
     else {
@@ -1413,10 +1415,13 @@ mass_timer_cb(int fd, short what, void *arg)
       );
 
       if (elapsed_ms >= MASS_MS_TILL_EXIT) {
+        /* This can only be a temporary method, because it is legitimate for Music Assistant to pause playback */
+        /* We need to find another way to detect end of play from Music Assistant */
         DPRINTF(E_INFO, L_PLAYER, 
-          "%s(): paused for %" PRIu64 " ms, stopping playback and exiting\n", 
+          "%s():end of stream reached. Paused for %" PRIu64 " ms, stopping playback and exiting\n", 
           __func__, elapsed_ms
         );
+
         player_playback_stop();
 
         // stop the timer event. mass_deinit() will free it
