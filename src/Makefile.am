@@ -28,7 +28,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/rtp_common.c \
-    ../owntone-server/src/player.c \
     ../owntone-server/src/transcode.c \
     ../owntone-server/src/worker.c
 
@@ -36,6 +35,7 @@ cliap2_SOURCES = \
     conffile.c \
     cliap2.c \
     mass.c \
+    player.c \
     wrappers.c \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)

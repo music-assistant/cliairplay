@@ -73,6 +73,7 @@
 #include "worker.h"
 #include "commands.h"
 #include "mass.h"
+#include "cliap2.h"
 
 #define MASS_UPDATE_INTERVAL_SEC 1 // every second
 #define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
@@ -89,6 +90,7 @@
 /* from cliap2.c */
 extern char* gnamed_pipe;
 extern struct event_base *evbase_main;
+extern ap2_device_info_t ap2_device_info;
 
 /* from player.c */
 extern struct event_base *evbase_player;
@@ -927,7 +929,7 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 
   DPRINTF(E_INFO, L_PLAYER, "Autostarting pipe '%s' (fd %d)\n", pipe->path, fd);
 
-  player_playback_stop();
+  // player_playback_stop(); // Why are we calling this???
 
   DPRINTF(E_DBG, L_PLAYER, "player_playback_start_byid(%d)\n", pipe->id);
   ret = player_playback_start_byid(pipe->id);
@@ -959,6 +961,7 @@ pipe_watch_reset(void *arg, int *retval)
   return COMMAND_END;
 }
 
+// Updates the list of pipes we are watching based on the provided list
 static enum command_state
 pipe_watch_update(void *arg, int *retval)
 {
@@ -1202,11 +1205,10 @@ pipelist_create(void)
   return head;
 }
 
-// Queries the db to see if any pipes are present in the library. If so, starts
-// the pipe thread to watch the pipes. If no pipes in library, it will shut down
-// the pipe thread.
-// For Music Assistant integration, we will always have at least one pipe (stdin)
-// which is handled by pipelist_create(), so we should always get a pipelist.
+// For Music Assistant integration, we will always have one pipe
+// which is handled by pipelist_create(), so we will always get a pipelist.
+// When we get a pipelist, we start the pipe thread (if not already running)
+// and asynchronously execute the pipe watch update command.
 static void
 pipe_listener_cb(short event_mask, void *ctx)
 {
@@ -1465,7 +1467,7 @@ mass_init(void)
   pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
   if (pipe_autostart)
     {
-      pipe_listener_cb(0, NULL); // We will noe be in the pipe thread once this returns
+      pipe_listener_cb(0, NULL); // We will be in the pipe thread once this returns
       CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
     }
 
