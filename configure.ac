@@ -116,8 +116,10 @@ AC_CHECK_HEADER([sys/eventfd.h], [AC_CHECK_FUNCS([eventfd])])
 AC_CHECK_HEADER([sys/timerfd.h], [AC_CHECK_FUNC([timerfd_create],
 	[AC_DEFINE([HAVE_TIMERFD], 1, [Define to 1 if you have timerfd])])])
 
-OWNTONE_FUNC_REQUIRE([OWNTONE], [inotify], [INOTIFY], [inotify],
-	[inotify_add_watch], [sys/inotify.h])
+AS_IF([test "`uname -s`" = "Darwin"],
+	[AC_MSG_NOTICE([Skipping inotify checks on macOS])],
+	[OWNTONE_FUNC_REQUIRE([OWNTONE], [inotify], [INOTIFY], [inotify],
+		[inotify_add_watch], [sys/inotify.h])])
 
 have_signal=no
 AC_CHECK_HEADER([sys/signalfd.h], [AC_CHECK_FUNCS([signalfd], [have_signal=yes])])
