@@ -402,12 +402,13 @@ int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
     if (!strncmp(AIRPLAY_SERVICE_TYPE, type, strlen(AIRPLAY_SERVICE_TYPE))) {
+        // Pass hostname as address since the callback needs the actual device IP/hostname
         cb(ap2_device_info.name,
            AIRPLAY_SERVICE_TYPE,
            "local",
            ap2_device_info.hostname,
            AF_INET,
-           ap2_device_info.address,
+           ap2_device_info.hostname,  // Use hostname as address
            ap2_device_info.port,
            ap2_device_info.txt);
     }

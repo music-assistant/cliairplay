@@ -73,6 +73,7 @@
 #include "worker.h"
 #include "commands.h"
 #include "mass.h"
+#include "cliap2.h"
 
 #define MASS_UPDATE_INTERVAL_SEC 1 // every second
 #define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
@@ -100,6 +101,10 @@ static struct timeval mass_tv = { MASS_UPDATE_INTERVAL_SEC, 0};
 static struct timespec paused_start_ts = {0, 0};
 static bool player_started = false;
 static bool player_paused = false;
+
+/* NTP synchronization variables */
+static uint64_t playback_start_at = 0;  // NTP time when playback should start (0 = start immediately)
+static bool waiting_for_start_time = false;
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -1262,6 +1267,39 @@ setup(struct input_source *source)
   source->quality.bits_per_sample = pipe_bits_per_sample;
   source->quality.channels = 2;
 
+  // Calculate RTP start position if --ntpstart or --wait specified
+  // The RTP timestamp tells the device WHEN to start playing (in samples since epoch)
+  // This is sent in the RECORD command as rtptime=X
+  // The device will buffer audio and start playing when its clock reaches that rtptime
+  if (ap2_device_info.ntpstart || ap2_device_info.wait)
+    {
+      uint64_t now = cliap2_get_ntp();
+      uint64_t start = ap2_device_info.ntpstart;
+      uint32_t wait = ap2_device_info.wait;
+
+      // Calculate the NTP time when playback should start
+      // start_ntp = (ntpstart ? ntpstart : now) + wait_time
+      uint64_t start_ntp = (start ? start : now) + MS2NTP(wait);
+
+      // Convert NTP timestamp to RTP timestamp (samples)
+      // RTP timestamp = samples elapsed since NTP epoch at the given sample rate
+      uint32_t rtp_start = (uint32_t)NTP2TS(start_ntp, pipe_sample_rate);
+
+      // Store in global for airplay.c to use when creating rtp_session
+      g_rtp_start_pos = rtp_start;
+
+      DPRINTF(E_INFO, L_PLAYER, "NTP sync: now %u.%u, audio starts at NTP %u.%u (RTP pos=%u, in %u ms)\n",
+              RAOP_SEC(now), RAOP_FRAC(now),
+              RAOP_SEC(start_ntp), RAOP_FRAC(start_ntp),
+              rtp_start,
+              (start_ntp > now) ? (uint32_t)NTP2MS(start_ntp - now) : 0);
+    }
+  else
+    {
+      // No NTP sync requested, use random start position
+      g_rtp_start_pos = 0;
+    }
+
   return 0;
 }
 
@@ -1303,6 +1341,9 @@ play(struct input_source *source)
   struct pipe *pipe = source->input_ctx;
   short flags;
   int ret;
+
+  // No need to delay - the RTP timestamp in the RECORD command tells the device
+  // when to start playing. The device buffers audio and starts at the right time.
 
   ret = evbuffer_read(source->evbuf, pipe->fd, PIPE_READ_MAX);
   if ((ret == 0) && (pipe->is_autostarted))
@@ -1455,33 +1496,57 @@ mass_init(void)
     // main thread
     // Create a persistent event timer in the main event loop to monitor and report playback status
     mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
-    DPRINTF(E_DBG, L_PLAYER, 
+    DPRINTF(E_DBG, L_PLAYER,
       "%s:Activating persistent event timer with timeval %d sec, %d usec\n,",
       __func__, mass_tv.tv_sec, mass_tv.tv_usec
     );
     evtimer_add(mass_timer_event, &mass_tv);
   }
 
-  pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
+  // Try to get autostart from config, default to true
+  if (cfg && cfg_getsec(cfg, "mass")) {
+    pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
+  } else {
+    pipe_autostart = true; // Default to autostart
+  }
+
   if (pipe_autostart)
     {
-      pipe_listener_cb(0, NULL); // We will noe be in the pipe thread once this returns
+      pipe_listener_cb(0, NULL); // We will now be in the pipe thread once this returns
       CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
     }
 
-  pipe_sample_rate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
+  // Use global values set from command line, or try config, or use defaults
+  if (g_sample_rate > 0) {
+    pipe_sample_rate = g_sample_rate;
+  } else if (cfg && cfg_getsec(cfg, "mass")) {
+    pipe_sample_rate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
+  } else {
+    pipe_sample_rate = 48000; // Default
+  }
+
   if (pipe_sample_rate != 44100 && pipe_sample_rate != 48000 && pipe_sample_rate != 88200 && pipe_sample_rate != 96000)
     {
       DPRINTF(E_FATAL, L_PLAYER, "The configuration of pcm_sample_rate is invalid: %d\n", pipe_sample_rate);
       return -1;
     }
 
-  pipe_bits_per_sample = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
+  // Use global values set from command line, or try config, or use defaults
+  if (g_bits_per_sample > 0) {
+    pipe_bits_per_sample = g_bits_per_sample;
+  } else if (cfg && cfg_getsec(cfg, "mass")) {
+    pipe_bits_per_sample = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
+  } else {
+    pipe_bits_per_sample = 32; // Default
+  }
+
   if (pipe_bits_per_sample != 16 && pipe_bits_per_sample != 32)
     {
       DPRINTF(E_FATAL, L_PLAYER, "The configuration of pipe_bits_per_sample is invalid: %d\n", pipe_bits_per_sample);
       return -1;
     }
+
+  DPRINTF(E_INFO, L_PLAYER, "Using PCM format: %d Hz, %d bits per sample\n", pipe_sample_rate, pipe_bits_per_sample);
 
   return 0;
 }

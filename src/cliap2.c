@@ -58,7 +58,6 @@
 #include <pthread.h>
 #include <gcrypt.h>
 
-#include "conffile.h"
 #include "library.h"
 #include "logger.h"
 #include "misc.h"
@@ -80,6 +79,16 @@ static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
 char* gnamed_pipe = NULL;
+
+// Global audio configuration for mass module
+// Defaults: 44.1kHz/16-bit ALAC (known working configuration)
+int g_sample_rate = 44100;
+int g_bits_per_sample = 16;
+int g_use_alac = 1;  // Default to ALAC encoding
+int g_alac_24bit = 0;  // TODO: 24-bit ALAC doesn't work yet, needs proper encoder implementation
+
+// Global RTP start position (calculated from NTP start time in mass.c)
+uint32_t g_rtp_start_pos = 0;
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -109,6 +118,29 @@ timing_get_clock_ntp(struct ntp_timestamp *ns)
   return 0;
 }
 
+// Get current NTP time as a 64-bit timestamp
+// Upper 32 bits = seconds since 1900, lower 32 bits = fraction
+// Based on raopcl_get_ntp() from libraop
+uint64_t
+cliap2_get_ntp(void)
+{
+  struct timespec ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_MAIN, "Couldn't get clock for NTP: %s\n", strerror(errno));
+      return 0;
+    }
+
+  // Convert to NTP epoch (1900-01-01)
+  uint32_t seconds = ts.tv_sec + NTP_EPOCH_DELTA;
+  uint32_t fraction = (uint32_t)(((double)ts.tv_nsec * 1e-9) * FRAC);
+
+  return ((uint64_t)seconds << 32) | fraction;
+}
+
 static void
 ntptime(void)
 {
@@ -132,27 +164,30 @@ usage(char *program)
 {
   version();
   printf("\n");
-  printf("Usage: %s [options]\n\n", program);
+  printf("Usage: %s [options] <player_hostname>\n\n", program);
   printf("Options:\n");
-  printf("  --loglevel <number>       Log level (0-5)\n");
+  printf("  --loglevel <number>       Log level (0-5, default: 1)\n");
   printf("  --logdomains <dom,dom..>  Log domains\n");
-  printf("  --config <file>           Use <file> as the configuration file\n");
-  printf("  --name <name>             Name of the airplay 2 device\n");
-  printf("  --hostname <hostname>     Hostname of AirPlay 2 device\n");
-  printf("  --address <address>       IP address to bind to for AirPlay 2 service\n");
-  printf("  --port <port>             Port number to bind to for AirPlay 2 service\n");
-  printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service\n");
-  printf("  --pipe                    filename of named pipe to read streamed audio\n");
+  printf("  --name <name>             Name of the AirPlay 2 device (default: cliap2)\n");
+  printf("  --hostname <hostname>     Hostname/IP of AirPlay 2 device (required)\n");
+  printf("  --address <address>       IP address to bind to (default: 0.0.0.0)\n");
+  printf("  --port <port>             Port number to use (default: 7000)\n");
+  printf("  --txt <txt>               TXT key-vals for mDNS in format \"key=value\" \"key=value\"\n");
+  printf("  --pipe <path>             Path to named pipe for audio input (required)\n");
   printf("  --ntp                     Print current NTP time and exit\n");
-  printf("  --ntpstart                NTP time to start playback\n");
-  printf("  --wait                    Additional time to wait after NTP time in ms??\n");
-  printf("  --latency                 Latency to apply in ms??\n");
-  printf("  --volume                  Initial volume\n");
+  printf("  --ntpstart <ntp>          NTP time to start playback\n");
+  printf("  --wait <ms>               Additional time to wait after NTP time in ms\n");
+  printf("  --latency <ms>            Latency to apply in ms\n");
+  printf("  --volume <0-100>          Initial volume (default: 75)\n");
+  printf("  --alac24bit               Use 48kHz/24-bit ALAC (experimental, doesn't work yet)\n");
+  printf("  --check                   Print check info and exit\n");
+  printf("  --debug <level>           Debug level 0-9 (default: 3)\n");
   printf("  -v, --version             Display version information and exit\n");
-  printf("\n\n");
+  printf("  -h, --help                Display this help and exit\n");
+  printf("\n");
   printf("Available log domains:\n");
   logger_domains();
-  printf("\n\n");
+  printf("\n");
 }
 
 
@@ -369,7 +404,11 @@ int check_pipes(const char *pipe_path)
     asprintf(&metadata_path, "%s.metadata", pipe_path);
     ret = check_pipe(metadata_path);
     free(metadata_path);
-    return ret;
+    if (ret < 0) {
+      // Metadata pipe is optional - just warn
+      DPRINTF(E_WARN, L_MAIN, "%s: Metadata pipe not found - continuing without it\n", __func__);
+    }
+    return 0;  // Success even if metadata pipe missing
   }
   return -1;
 }
@@ -477,7 +516,6 @@ int
 main(int argc, char **argv)
 {
   int option;
-  char *configfile = CONFFILE;
   bool background = false;
   bool testrun = false;
   bool mdns_no_rsp = true;
@@ -500,18 +538,22 @@ main(int argc, char **argv)
   int i;
   int ret;
   int port = -1;
-  const char *name, *hostname, *address, *txt = NULL;
+  const char *name = NULL;
+  const char *hostname = NULL;
+  const char *address = NULL;
+  const char *txt = NULL;
 
   uint64_t ntpstart = 0;
   uint32_t wait = 0;
   uint32_t latency = 0;
   int volume = 0;
+  int sample_rate = 48000;  // Default to 48000 Hz
+  int debug_level = 3;
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
     { "logdomains",    1, NULL, 501 },
-    { "config",        1, NULL, 502 },
     { "name",          1, NULL, 503 },
     { "hostname",      1, NULL, 504 },
     { "address",       1, NULL, 505 },
@@ -525,6 +567,10 @@ main(int argc, char **argv)
     { "version",       0, NULL, 513 },
     { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
     { "pipe",          1, NULL, 515 },
+    { "check",         0, NULL, 518 },
+    { "debug",         1, NULL, 519 },
+    { "help",          0, NULL, 520 },
+    { "alac24bit",     0, NULL, 522 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -545,10 +591,6 @@ main(int argc, char **argv)
 
       case 501: // logdomains
         logdomains = optarg;
-        break;
-
-      case 502: //config
-        configfile = optarg;
         break;
 
       case 513: // version
@@ -622,6 +664,38 @@ main(int argc, char **argv)
         gnamed_pipe = optarg;
         break;
 
+      case 518: // check
+        printf("%s check\n", PACKAGE_NAME);
+        return EXIT_SUCCESS;
+
+      case 519: // debug
+        ret = safe_atoi32(optarg, &debug_level);
+        if (ret < 0 || debug_level < 0 || debug_level > 9) {
+          fprintf(stderr, "Error: debug level must be 0-9 in '--debug %s'\n", optarg);
+          return EXIT_FAILURE;
+        }
+        // Map debug level to loglevel if not already set
+        if (loglevel < 0) {
+          if (debug_level == 0) loglevel = E_FATAL;
+          else if (debug_level <= 2) loglevel = E_LOG;
+          else if (debug_level <= 4) loglevel = E_INFO;
+          else if (debug_level <= 6) loglevel = E_DBG;
+          else loglevel = E_SPAM;
+        }
+        break;
+
+      case 520: // help
+        usage(argv[0]);
+        return EXIT_SUCCESS;
+
+      case 522: // alac24bit
+        // TODO: 24-bit ALAC encoding doesn't work yet - this flag is experimental
+        // Need to implement proper 24-bit ALAC encoder or use alternative library
+        g_alac_24bit = 1;
+        g_sample_rate = 48000;  // Use 48kHz with 24-bit
+        g_bits_per_sample = 32;  // Use 32-bit for pipe compatibility
+        break;
+
         default:
       case '?':
         usage(argv[0]);
@@ -631,20 +705,32 @@ main(int argc, char **argv)
   }
 
   // Check that mandatory arguments have been supplied
+  // Only hostname and pipe are truly required for basic operation
   if (!testrun &&
-      (port == -1 ||
-      name == (char *)NULL ||
-      hostname == (char *)NULL ||
-      address == (char*)NULL ||
-      txt == (char*)NULL ||
-      gnamed_pipe == (char*)NULL ||
-      ntpstart == 0 ||
-      volume == 0
-      )
+      (hostname == (char *)NULL ||
+       gnamed_pipe == (char*)NULL)
      ) {
+      fprintf(stderr, "Error: --hostname and --pipe are required\n");
       usage(argv[0]);
       return EXIT_FAILURE;
   }
+
+  // Set sensible defaults for optional arguments
+  if (port == -1) port = 7000;  // Default AirPlay port
+  if (name == NULL) name = "cliap2";  // Default device name
+  if (address == NULL) address = "0.0.0.0";  // Bind to all interfaces
+  if (txt == NULL) txt = "";  // Empty TXT record is fine
+  if (ntpstart == 0) {
+    // If not specified, start immediately (get current NTP time)
+    struct ntp_timestamp ntp;
+    timing_get_clock_ntp(&ntp);
+    ntpstart = (((uint64_t)ntp.sec) << 32) | ntp.frac;
+  }
+  if (volume == 0) volume = 75;  // Default volume 75%
+
+  // Set global audio configuration for mass module
+  g_sample_rate = sample_rate;
+  // g_bits_per_sample is set via --alac24bit flag (16-bit default, 32-bit for 24-bit ALAC)
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
@@ -654,28 +740,18 @@ main(int argc, char **argv)
   }
   // logger_detach();  // Eliminate logging to stderr
 
-  ret = conffile_load(configfile);
-  if (ret != 0) {
-    DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
-
-    logger_deinit();
-    return EXIT_FAILURE;
-  }
-
   logger_deinit();
 
-  /* Reinit log facility with configfile values */
+  /* Reinit log facility with defaults */
   if (loglevel < 0)
-    loglevel = cfg_getint(cfg_getsec(cfg, "general"), "loglevel");
+    loglevel = E_LOG;
   if (!logformat)
-    logformat = cfg_getstr(cfg_getsec(cfg, "general"), "logformat");
-  logfile = cfg_getstr(cfg_getsec(cfg, "general"), "logfile");
+    logformat = "default";
+  logfile = NULL;  // No logfile by default for CLI usage
 
   ret = logger_init(logfile, logdomains, loglevel, logformat);
   if (ret != 0) {
-    fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
-
-    conffile_unload();
+    fprintf(stderr, "Could not reinitialize log facility\n");
     return EXIT_FAILURE;
   }
   // logger_detach();  // Eliminate logging to stderr
@@ -697,12 +773,15 @@ main(int argc, char **argv)
 
     CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
 
-    ret = parse_keyval(txt, txt_kv);
-    if (ret != 0){
-      DPRINTF(E_FATAL, L_MAIN, 
-        "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n", 
-        txt);
-      goto txt_fail;
+    // Only parse txt if it's not empty
+    if (txt != NULL && txt[0] != '\0') {
+      ret = parse_keyval(txt, txt_kv);
+      if (ret != 0){
+        DPRINTF(E_FATAL, L_MAIN,
+          "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n",
+          txt);
+        goto txt_fail;
+      }
     }
     ap2_device_info.name = name;
     ap2_device_info.hostname = hostname;
@@ -917,7 +996,6 @@ main(int argc, char **argv)
   if (txt_kv) keyval_clear(txt_kv);
 
   DPRINTF(E_LOG, L_MAIN, "Exiting.\n");
-  conffile_unload();
   logger_deinit();
 
   return ret;
