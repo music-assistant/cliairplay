@@ -20,13 +20,17 @@
 #include <string.h>
 #include <inttypes.h>
 
-#include "wrappers.h"
-#include "cliap2.h"
-
+// Owntones headers
+#include "artwork.h"
+#include "conffile.h"
+#include "db.h"
+#include "http.h"
 #include "logger.h"
 #include "outputs.h"
-#include "db.h"
-#include "conffile.h"
+
+// Music Assistant specific headers
+#include "wrappers.h"
+#include "cliap2.h"
 
 #define AIRPLAY_SERVICE_TYPE "_airplay._tcp"
 
@@ -100,6 +104,7 @@ db_queue_fetch_byitemid(uint32_t item_id)
         }
         q = q->next;
     }
+    DPRINTF(E_DBG, L_DB, "%s(%d) returning %p\n", __func__, item_id, ret);
     return ret; 
 }
 
@@ -185,6 +190,7 @@ db_queue_delete_byitemid(uint32_t item_id)
 int
 db_queue_clear(uint32_t keep_item_id)
 {
+    DPRINTF(E_DBG, L_DB, "%s(%d)\n", __func__, keep_item_id);
     if (queue == NULL) // queue already empty
         return 0;
     
@@ -209,8 +215,57 @@ db_queue_clear(uint32_t keep_item_id)
 int
 db_queue_item_update(struct db_queue_item *qi)
 {
+    // todo: validate what memory associated with qi needs to be freed
+    if (qi) {
+        DPRINTF(E_DBG, L_DB, 
+            "%s:qi elements id: %d, file_id: %d, pos: %d, shuffle_pos: %d, data_kind: %d, "
+            "media_kind: %d, song_length: %d, path: %s, virtual_path: %s, title: %s, artist: %s, artwork_url: %s\n", 
+            __func__, qi->id, qi->file_id, qi->pos, qi->shuffle_pos, qi->data_kind, 
+            qi->media_kind, qi->song_length, qi->path, qi->virtual_path, qi->title, qi->artist, qi->artwork_url);
+        
+        // find the queue item, then update it
+        db_queue_t *node = queue;
+        for (node = queue; node->next; node = node->next) {
+            // traverse the queue
+            if (node->item.id == qi->id) {
+                // we found the node to update
+                node->item.file_id = qi->file_id;
+                node->item.pos = qi->pos;
+                node->item.shuffle_pos = qi->shuffle_pos;
+                node->item.data_kind = qi->data_kind;
+                node->item.media_kind = qi->media_kind;
+                node->item.song_length = qi->song_length;
+                node->item.path = qi->path;
+                node->item.virtual_path = qi->virtual_path;
+                node->item.title = qi->title;
+                node->item.artist = qi->artist;
+                node->item.album_artist = qi->album_artist;
+                node->item.album = qi->album;
+                node->item.genre = qi->genre;
+                node->item.songalbumid = qi->songalbumid;
+                node->item.time_modified = qi->time_modified;
+                node->item.artist_sort = qi->artist_sort;
+                node->item.album_sort = qi->album_sort;
+                node->item.album_artist_sort = qi->album_artist_sort;
+                node->item.year = qi->year;
+                node->item.track = qi->track;
+                node->item.disc = qi->disc;
+                node->item.artwork_url = qi->artwork_url;
+                node->item.queue_version = qi->queue_version;
+                node->item.composer = qi->composer;
+                node->item.type = qi->type;
+                node->item.bitrate = qi->bitrate;
+                node->item.samplerate = qi->samplerate;
+                node->item.channels = qi->channels;
+                node->item.songartistid = qi->songartistid;
+                // node->item.seek = qi->seek; // not sure if we should be updating this one
 
-    DPRINTF(E_LOG, L_DB, "db_queue_item_update() not yet fully implemented.\n");
+                // free(qi); // ???
+
+                break;
+            }
+        }
+    }
     return 0;
 }
 
@@ -387,13 +442,27 @@ free_queue_item(struct db_queue_item *qi, int content_only)
     // if content_only == 0.
     // For mass, we don't need to free any content, because we never malloc'ed for any content
     // but let's re-evaluate once metadata is implemented.
-    // If content_only == 0, then remove the item from the queue.
 
-    if (!content_only) {
-        DPRINTF(E_DBG, L_DB, "%s:Removing item %d from the queue\n", __func__, qi->id);
-        db_queue_delete_byitemid(qi->id);
-    }
+    DPRINTF(E_INFO, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged.\n", 
+        __func__, qi->id, content_only, PACKAGE_NAME);
+
+
+    // If content_only == 0, then remove the item from the queue. Hmmm - this breaks metadata handling
+    // if (!content_only) {
+    //     DPRINTF(E_DBG, L_DB, "%s:Removing item %d from the queue\n", __func__, qi->id);
+    //     db_queue_delete_byitemid(qi->id);
+    // }
+
     return;
+}
+
+char *
+db_escape_string(const char *str)
+{
+    char *ret = NULL;
+
+    DPRINTF(E_LOG, L_DB, "%s(str=%s) not yet fully implemented.\n", __func__, str);
+    return ret; 
 }
 
 /*
@@ -650,6 +719,9 @@ struct output_definition output_rcp =
  */
 /*
  * Get the artwork image for an individual item (track)
+ * For Music Assistant, we have previously written the artwork_url curl request
+ * result into a temporary file, so here we just need to read that file into the
+ * evbuf and return the format.
  *
  * @out evbuf    Event buffer that will contain the (scaled) image
  * @in  id       The mfi item id
@@ -661,20 +733,129 @@ struct output_definition output_rcp =
 int
 artwork_get_item(struct evbuffer *evbuf, int id, int max_w, int max_h, int format)
 {
+    size_t len = 0;
+
+    len = evbuffer_get_length(evbuf);
+    
+    // find the queue item by id to get the artwork_url
+    struct db_queue_item *qi = db_queue_fetch_byitemid((uint32_t)id);
+    if (qi && qi->artwork_url) {
+        // read the artwork file into the evbuf
+        FILE *f = fopen(qi->artwork_url + 5, "rb"); // skip "file:"
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            len = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            unsigned char *buffer = (unsigned char *)malloc(len);
+            if (buffer) {
+                size_t read_len = fread(buffer, 1, len, f);
+                if (read_len == len) {
+                    evbuffer_add(evbuf, buffer, len);
+                    free(buffer);
+                    fclose(f);
+                    // determine format from file extension
+                    const char *ext = strrchr(qi->artwork_url, '.');
+                    if (ext) {
+                        if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+                            return ART_FMT_JPEG;
+                        }
+                        else if (strcasecmp(ext, ".png") == 0) {
+                            return ART_FMT_PNG;
+                        }
+                    }
+                    return ART_FMT_JPEG; // default
+                }
+                free(buffer);
+            }
+            fclose(f);
+        }
+        else {
+            DPRINTF(E_LOG, L_ART, "%s:Could not open artwork file '%s'. %s\n", 
+                __func__, qi->artwork_url + 5, strerror(errno));
+        }
+    }
+    
     return -1;
 }
 
 bool
 artwork_extension_is_artwork(const char *path)
 {
+    DPRINTF(E_LOG, L_ART, "%s(path=%s) not yet fully implemented.\n", __func__, path);
     return false;
+}
+
+
+/* Reads an artwork file from the given http url straight into an evbuf
+ *
+ * @out evbuf     Image data
+ * @in  url       URL for the image
+ * @return        ART_FMT_* on success, ART_E_NONE on 404, ART_E_ERROR otherwise
+ */
+int
+artwork_read_byurl(struct evbuffer *evbuf, const char *url)
+{
+  struct http_client_ctx client;
+  struct keyval *kv;
+  const char *content_type;
+  size_t len;
+  int format;
+  int ret;
+
+  DPRINTF(E_SPAM, L_ART, "Trying internet artwork in %s\n", url);
+
+  format = ART_E_ERROR;
+  CHECK_NULL(L_ART, kv = keyval_alloc());
+
+  len = strlen(url);
+  if ((len < 14) || (len > PATH_MAX)) { // Can't be shorter than http://a/1.jpg
+    DPRINTF(E_LOG, L_ART, "Artwork request URL is invalid (len=%zu): '%s'\n", len, url);
+    goto out;
+  }
+
+  memset(&client, 0, sizeof(struct http_client_ctx));
+  client.url = url;
+  client.input_headers = kv;
+  client.input_body = evbuf;
+
+  ret = http_client_request(&client, NULL);
+  if (ret < 0) {
+    goto out;
+  }
+
+  if (client.response_code == HTTP_NOTFOUND) {
+    DPRINTF(E_INFO, L_ART, "No artwork found at '%s' (code %d)\n", url, client.response_code);
+    format = ART_E_NONE;
+    goto out;
+  }
+  else if (client.response_code != HTTP_OK) {
+    DPRINTF(E_LOG, L_ART, "Request to '%s' failed with code %d\n", url, client.response_code);
+    goto out;
+  }
+
+  content_type = keyval_get(kv, "Content-Type");
+  if (content_type && (strcasecmp(content_type, "image/jpeg") == 0 || strcasecmp(content_type, "image/jpg") == 0))
+    format = ART_FMT_JPEG;
+  else if (content_type && strcasecmp(content_type, "image/png") == 0)
+    format = ART_FMT_PNG;
+  else
+    DPRINTF(E_LOG, L_ART, "Artwork from '%s' has no known content type\n", url);
+
+ out:
+  keyval_clear(kv);
+  free(kv);
+  return format;
 }
 
 /*
  * Wrappers for dmap_common.c
+ * Maybe we don't need to wrapper these at all. Let's try including owntones dmap_common.c directly first.
  */
-int
-dmap_encode_queue_metadata(struct evbuffer *songlist, struct evbuffer *song, struct db_queue_item *queue_item)
-{
-    return -1;
-}
+// int
+// dmap_encode_queue_metadata(struct evbuffer *songlist, struct evbuffer *song, struct db_queue_item *queue_item)
+// {
+//     DPRINTF(E_LOG, L_DB, "$s(songlist=%p, song=%p, queue_item->id=%d) not yet fully implemented.\n", 
+//         __func__, songlist, song, queue_item->id);
+    
+//     return -1;
+// }

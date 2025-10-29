@@ -1351,8 +1351,8 @@ playback_cb(int fd, short what, void *arg)
 
       pb_session.read_deficit -= nbytes;
 
-      DPRINTF(E_DBG, L_PLAYER, "%s:Read %d bytes (%d samples) from source for playback at %ld.%ld\n", 
-        __func__, nbytes, nsamples, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
+      // DPRINTF(E_DBG, L_PLAYER, "%s:Read %d bytes (%d samples) from source for playback at %ld.%ld\n", 
+      //   __func__, nbytes, nsamples, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
       outputs_write(pb_session.buffer, nbytes, nsamples, &pb_session.quality, &pb_session.pts);
 
       if (nbytes < pb_session.bufsize)
