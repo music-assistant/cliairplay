@@ -32,6 +32,24 @@ db_perthread_deinit(void);
 // db_purge_cruft_bysource(time_t ref, enum scan_kind scan_kind);
 
 /*
+ * Wrappers for artwork.c
+ */
+
+/*
+ * An artwork source handler must return one of the following:
+ *
+ *   ART_FMT_XXXX (positive)  An image, see possible formats in artwork.h
+ *   ART_E_NONE (zero)        No artwork found
+ *   ART_E_ERROR (negative)   An error occurred while searching for artwork
+ *   ART_E_ABORT (negative)   Caller should abort artwork search (may be returned by cache)
+ */
+#define ART_E_NONE 0
+#define ART_E_ERROR -1
+#define ART_E_ABORT -2
+
+int artwork_read_byurl(struct evbuffer *evbuf, const char *url);
+
+/*
  * Wrappers for mdns.c
  */
 enum mdns_options
