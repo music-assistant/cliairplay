@@ -87,7 +87,8 @@ timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
   /* Seconds since NTP Epoch (1900-01-01) */
   ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
 
-  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
+  // tv_nsec is a long (ie 64-bit). frac is a uint32_t (32-bit). By definition, we will lose granularity upon conversion
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC); // this uses floating point math, and hence subject to rounding error
 }
 
 static inline void
@@ -732,7 +733,7 @@ main(int argc, char **argv)
     DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
       (uint64_t)(now_ts.tv_sec), (uint64_t)(now_ts.tv_nsec));
     timespec_to_ntp(&ap2_device_info.start_ts, &ns);
-    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%" PRIu32 "\n", ns.sec, ns.sec);
+    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%" PRIu32 "\n", ns.sec, ns.frac);
 
     
     ap2_device_info.name = name;
