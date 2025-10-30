@@ -50,19 +50,19 @@ OWNTONE_SRC = \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
-    ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
-    ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/transcode.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
 
 cliap2_SOURCES = \
-    conffile.c \
+    airplay.c \
     cliap2.c \
+    conffile.c \
     mass.c \
     player.c \
+    rtp_common.c \
     wrappers.c \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
@@ -72,6 +72,7 @@ cliap2_CPPFLAGS = \
 	$(OWNTONE_OPTS_CPPFLAGS) \
 	$(COMMON_CPPFLAGS) \
     -I../owntone-server/src \
+    -I../owntone-server/src/outputs \
 	-D_GNU_SOURCE \
     -DCONFIG_GCRYPT \
     -DCONFDIR=\".\" \
