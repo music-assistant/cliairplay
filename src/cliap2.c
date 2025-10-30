@@ -106,7 +106,7 @@ timing_get_clock_ntp(struct ntp_timestamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -716,7 +716,7 @@ main(int argc, char **argv)
         txt);
       goto txt_fail;
     }
-    ret = clock_gettime(CLOCK_MONOTONIC, &now_ts);
+    ret = clock_gettime(CLOCK_REALTIME, &now_ts);
     if (ret != 0) {
       DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
       goto player_fail;

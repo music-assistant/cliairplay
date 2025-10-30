@@ -279,7 +279,7 @@ timing_get_clock_ntp(struct ntp_stamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -1590,14 +1590,14 @@ mass_timer_cb(int fd, short what, void *arg)
   else if (player_started && status.status == PLAY_PAUSED) {
     if (!player_paused) {
       player_paused = true;
-      clock_gettime(CLOCK_MONOTONIC, &paused_start_ts); // reset paused time
+      clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
       /* Music Assistant looks for "set pause" or "Pause at" */
       DPRINTF(E_INFO, L_PLAYER, 
         "%s(): Pause at %d, starting paused timer\n", __func__, status.pos_ms
       );
     }
     else {
-      clock_gettime(CLOCK_MONOTONIC, &now);
+      clock_gettime(CLOCK_REALTIME, &now);
       begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
       now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
       elapsed_ms = now_ms - begin_ms;

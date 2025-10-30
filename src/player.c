@@ -882,7 +882,7 @@ session_update_read(int nsamples)
   // Did we just complete our first read? Then set the start timestamp
   if (pb_session.start_ts.tv_sec == 0)
     {
-      clock_gettime_with_res(CLOCK_MONOTONIC, &pb_session.start_ts, &player_timer_res);
+      clock_gettime_with_res(CLOCK_REALTIME, &pb_session.start_ts, &player_timer_res);
       if (is_less_than(&pb_req_start_ts, &pb_session.start_ts)) {
         // Requested start time is in the past, so just use now
         pb_session.pts = pb_session.start_ts;
@@ -3927,7 +3927,7 @@ player_init(struct timespec *req_start_ts)
   // Determine if the resolution of the system timer is > or < the size
   // of an audio packet. NOTE: this assumes the system clock resolution
   // is less than one second.
-  if (clock_getres(CLOCK_MONOTONIC, &player_timer_res) < 0)
+  if (clock_getres(CLOCK_REALTIME, &player_timer_res) < 0)
     {
       DPRINTF(E_LOG, L_PLAYER, "Could not get the system timer resolution.\n");
       goto error_history_free;
@@ -3947,10 +3947,10 @@ player_init(struct timespec *req_start_ts)
 
   // Create the playback timer
 #ifdef HAVE_TIMERFD
-  pb_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+  pb_timer_fd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC | TFD_NONBLOCK);
   ret = pb_timer_fd;
 #else
-  ret = timer_create(CLOCK_MONOTONIC, NULL, &pb_timer);
+  ret = timer_create(CLOCK_REALTIME, NULL, &pb_timer);
 #endif
   if (ret < 0)
     {
