@@ -720,16 +720,19 @@ main(int argc, char **argv)
       DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
       goto player_fail;
     }
+    ap2_device_info.ntpstart = ntpstart;
     ns.sec = (uint32_t)(ntpstart >> 32);
     ns.frac = (uint32_t)(ntpstart);
     ntp_to_timespec(&ns, &ap2_device_info.start_ts);
     // Add wait time in milliseconds
     ap2_device_info.start_ts.tv_sec += wait / 1000;
     ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
-    DPRINTF(E_DBG, L_MAIN, "Calculated start time: sec=%" PRIu64 ".%" PRIu64 ". One basis of ntpstart of %" PRIu32 ".%" PRIu32 " and wait of %dms\n", 
+    DPRINTF(E_DBG, L_MAIN, "Calculated timespec start time: sec=%" PRIu64 ".%" PRIu64 ". On basis of ntpstart of %" PRIu32 ".%" PRIu32 " and wait of %dms\n", 
       (uint64_t)(ap2_device_info.start_ts.tv_sec), (uint64_t)(ap2_device_info.start_ts.tv_nsec), ns.sec, ns.frac, wait);
-    DPRINTF(E_DBG, L_MAIN, "Current time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
+    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
       (uint64_t)(now_ts.tv_sec), (uint64_t)(now_ts.tv_nsec));
+    timespec_to_ntp(&ap2_device_info.start_ts, &ns);
+    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%" PRIu32 "\n", ns.sec, ns.sec);
 
     
     ap2_device_info.name = name;
