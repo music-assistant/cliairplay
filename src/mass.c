@@ -207,6 +207,16 @@ static struct pipe *pipe_watch_list;
 // Pipe + extra fields that we start watching for metadata after playback starts
 static struct pipe_metadata pipe_metadata;
 
+/* NTP timestamp definitions - not nice - these are repeated elsewhare in the owntones codebase */
+#define FRAC             4294967296. /* 2^32 as a double */
+#define NTP_EPOCH_DELTA  0x83aa7e80  /* 2208988800 - that's 1970 - 1900 in seconds */
+
+struct ntp_stamp
+{
+  uint32_t sec;
+  uint32_t frac;
+};
+
 /* -------------------------------- HELPERS --------------------------------- */
 
 // These might be more at home in dmap_common.c
@@ -252,6 +262,34 @@ static const char *play_status_str(enum play_status status)
     default:
       return "unknown";
     }
+}
+
+static inline void
+timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
+{
+  // Seconds since NTP Epoch (1900-01-01)
+  ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
+
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
+}
+
+static inline int
+timing_get_clock_ntp(struct ntp_stamp *ns)
+{
+  struct timespec ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
+
+      return -1;
+    }
+
+  timespec_to_ntp(&ts, ns);
+
+  return 0;
 }
 
 /* -------------------------------------------------------------------------*/
@@ -1519,6 +1557,7 @@ mass_timer_cb(int fd, short what, void *arg)
   uint64_t elapsed_ms = 0;
   uint64_t begin_ms, now_ms, playing_ms = 0;
   struct player_status status;
+  struct ntp_stamp ntp_stamp;
   int ret;
 
   ret = player_get_status(&status);
@@ -1527,9 +1566,16 @@ mass_timer_cb(int fd, short what, void *arg)
     return;
   }
 
+  ret = timing_get_clock_ntp(&ntp_stamp);
+  if (ret < 0) {
+      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get current ntp timestamp\n");
+      return;
+  }
+
   DPRINTF(E_DBG, L_PLAYER,
-    "%s(): player status:%s, volume:%d, pos_ms:%u\n", 
-    __func__, play_status_str(status.status), status.volume, status.pos_ms
+    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%" PRIu32 "\n", 
+    __func__, play_status_str(status.status), status.volume, status.pos_ms,
+    ntp_stamp.sec, ntp_stamp.frac
   );
 
   if (status.status == PLAY_PLAYING) {
@@ -1559,25 +1605,9 @@ mass_timer_cb(int fd, short what, void *arg)
         "%s(): paused milliseconds:%" PRIu64 " ms\n", __func__, elapsed_ms
       );
 
-      if (elapsed_ms >= MASS_MS_TILL_EXIT) {
-        /* This can only be a temporary method, because it is legitimate for Music Assistant to pause playback */
-        /* We need to find another way to detect end of play from Music Assistant */
-        DPRINTF(E_INFO, L_PLAYER, 
-          "%s():end of stream reached. Paused for %" PRIu64 " ms, stopping playback and exiting\n", 
-          __func__, elapsed_ms
-        );
-
-        player_playback_stop();
-
-        // stop the timer event. mass_deinit() will free it
-        evtimer_del(mass_timer_event);
-
-        // break the main event loop, which will trigger graceful program exit
-        event_base_loopbreak(evbase_main);
-      }
     }
   }
-  else { // should not happen, but just in case
+  else { // should not happen, but guard just in case
     DPRINTF(E_WARN, L_PLAYER, "%s():%s: Not playing or paused\n", __func__, play_status_str(status.status));
     // reset all
     player_started = false;

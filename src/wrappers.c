@@ -294,7 +294,7 @@ int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
     if (qp->type == Q_ITEMS) {
-        DPRINTF(E_DBG, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
+        // DPRINTF(E_DBG, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
         if (position == -1) {
             // Add to end of queue
              struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));

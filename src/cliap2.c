@@ -726,10 +726,10 @@ main(int argc, char **argv)
     // Add wait time in milliseconds
     ap2_device_info.start_ts.tv_sec += wait / 1000;
     ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
-    DPRINTF(E_DBG, L_MAIN, "Calculated start time: sec=%ld.%ld\n", 
-      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec);
-    DPRINTF(E_DBG, L_MAIN, "Current time:          sec=%ld.%ld\n", 
-      now_ts.tv_sec, now_ts.tv_nsec);
+    DPRINTF(E_DBG, L_MAIN, "Calculated start time: sec=%" PRIu64 ".%" PRIu64 ". One basis of ntpstart of %" PRIu32 ".%" PRIu32 " and wait of %dms\n", 
+      (uint64_t)(ap2_device_info.start_ts.tv_sec), (uint64_t)(ap2_device_info.start_ts.tv_nsec), ns.sec, ns.frac, wait);
+    DPRINTF(E_DBG, L_MAIN, "Current time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
+      (uint64_t)(now_ts.tv_sec), (uint64_t)(now_ts.tv_nsec));
 
     
     ap2_device_info.name = name;

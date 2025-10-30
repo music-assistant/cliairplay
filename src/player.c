@@ -889,11 +889,11 @@ session_update_read(int nsamples)
       }
       else {
         // Requested start time is in the future, so use that
-        // playback never starts!!
         pb_session.pts = pb_req_start_ts;
       }
-      DPRINTF(E_DBG, L_PLAYER, "%s:Initial pb_session.pts set to %" PRIu64 ".%" PRIu64 "\n",
-        __func__, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
+      DPRINTF(E_DBG, L_PLAYER, 
+        "%s:Initial pb_session.pts set to %" PRIu64 ".%" PRIu64 " for pb_session.pos=%" PRIu32 "\n",
+        __func__, pb_session.pts.tv_sec, pb_session.pts.tv_nsec, pb_session.pos);
     }
 
   // Advance position
@@ -3900,7 +3900,9 @@ player_init(struct timespec *req_start_ts)
   int ret;
 
   if (req_start_ts) {
-    pb_req_start_ts.tv_sec = req_start_ts->tv_sec;
+    // We need to decrement the requested playback commencement time by the
+    // OUTPUTS_BUFFER_DURATION in order to get playback to commence on time
+    pb_req_start_ts.tv_sec = req_start_ts->tv_sec - OUTPUTS_BUFFER_DURATION;
     pb_req_start_ts.tv_nsec = req_start_ts->tv_nsec;
   }
 
