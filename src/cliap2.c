@@ -87,7 +87,17 @@ timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
   /* Seconds since NTP Epoch (1900-01-01) */
   ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
 
-  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
+  // tv_nsec is a long (ie 64-bit). frac is a uint32_t (32-bit). By definition, we will lose granularity upon conversion
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC); // this uses floating point math, and hence subject to rounding error
+}
+
+static inline void
+ntp_to_timespec(struct ntp_timestamp *ns, struct timespec *ts)
+{
+  // Seconds since Unix Epoch (1970-01-01)
+  ts->tv_sec = ns->sec - NTP_EPOCH_DELTA;
+
+  ts->tv_nsec = (long)((double)ns->frac / (1e-9 * FRAC));
 }
 
 static inline int
@@ -96,7 +106,7 @@ timing_get_clock_ntp(struct ntp_timestamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -144,10 +154,10 @@ usage(char *program)
   printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service\n");
   printf("  --pipe                    filename of named pipe to read streamed audio\n");
   printf("  --ntp                     Print current NTP time and exit\n");
-  printf("  --ntpstart                NTP time to start playback\n");
-  printf("  --wait                    Additional time to wait after NTP time in ms??\n");
-  printf("  --latency                 Latency to apply in ms??\n");
-  printf("  --volume                  Initial volume\n");
+  printf("  --wait                    Start playback after <wait> milliseconds\n");
+  printf("  --ntpstart                Start playback at NTP <start> + <wait>\n");
+  printf("  --latency                 Latency to apply in frames\n");
+  printf("  --volume                  Initial volume (0-100)\n");
   printf("  -v, --version             Display version information and exit\n");
   printf("\n\n");
   printf("Available log domains:\n");
@@ -704,6 +714,29 @@ main(int argc, char **argv)
         txt);
       goto txt_fail;
     }
+    ret = clock_gettime(CLOCK_REALTIME, &now_ts);
+    if (ret != 0) {
+      DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
+      goto player_fail;
+    }
+    ap2_device_info.ntpstart = ntpstart;
+    ns.sec = (uint32_t)(ntpstart >> 32);
+    ns.frac = (uint32_t)(ntpstart);
+    ntp_to_timespec(&ns, &ap2_device_info.start_ts);
+    // Add wait time in milliseconds
+    ap2_device_info.start_ts.tv_sec += wait / 1000;
+    ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
+    DPRINTF(E_DBG, L_MAIN, 
+      "Calculated timespec start time: sec=%" PRIu64 ".%" PRIu64 ". On basis of ntpstart of %" 
+      PRIu32 ".%.10" PRIu32 " and wait of %dms\n", 
+      (uint64_t)(ap2_device_info.start_ts.tv_sec), (uint64_t)(ap2_device_info.start_ts.tv_nsec), 
+      ns.sec, ns.frac, wait);
+    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
+      (uint64_t)(now_ts.tv_sec), (uint64_t)(now_ts.tv_nsec));
+    timespec_to_ntp(&ap2_device_info.start_ts, &ns);
+    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);
+
+    
     ap2_device_info.name = name;
     ap2_device_info.hostname = hostname;
     ap2_device_info.address = address;

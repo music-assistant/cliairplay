@@ -62,17 +62,24 @@
 #include <event2/event.h>
 #include <event2/buffer.h>
 
+#include "artwork.h"
+#include "cliap2.h"
+#include "commands.h"
+#include "conffile.h"
+#include "db.h"
+#include "http.h"
 #include "input.h"
+#include "limits.h"
+#include "listener.h"
+#include "logger.h"
+#include "mass.h"
 #include "misc.h"
 #include "misc_xml.h"
-#include "logger.h"
-#include "db.h"
-#include "conffile.h"
-#include "listener.h"
 #include "player.h"
 #include "worker.h"
 #include "commands.h"
 #include "mass.h"
+#include "wrappers.h"
 
 #define MASS_UPDATE_INTERVAL_SEC 1 // every second
 #define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
@@ -121,11 +128,15 @@ enum pipetype
 
 enum pipe_metadata_msg
 {
-  PIPE_METADATA_MSG_METADATA = (1 << 0),
-  PIPE_METADATA_MSG_PROGRESS = (1 << 1),
-  PIPE_METADATA_MSG_VOLUME   = (1 << 2),
-  PIPE_METADATA_MSG_PICTURE  = (1 << 3),
-  PIPE_METADATA_MSG_FLUSH    = (1 << 4),
+  PIPE_METADATA_MSG_METADATA         = (1 << 0),
+  PIPE_METADATA_MSG_PROGRESS         = (1 << 1),
+  PIPE_METADATA_MSG_VOLUME           = (1 << 2),
+  PIPE_METADATA_MSG_PICTURE          = (1 << 3),
+  PIPE_METADATA_MSG_FLUSH            = (1 << 4),
+  PIPE_METADATA_MSG_PARTIAL_METADATA = (1 << 5),
+  PIPE_METADATA_MSG_STOP             = (1 << 6),
+  PIPE_METADATA_MSG_PAUSE            = (1 << 7),
+  PIPE_METADATA_MSG_PLAY             = (1 << 8),
 };
 
 struct pipe
@@ -142,6 +153,8 @@ struct pipe
 };
 
 // struct for storing the data received via a metadata pipe
+// We will never receive the artwok as a file, it will always be
+// via a URL, which is handled in input_metadata struct.
 struct pipe_metadata_prepared
 {
   // Progress, artist etc goes here
@@ -196,6 +209,16 @@ static struct pipe *pipe_watch_list;
 // Pipe + extra fields that we start watching for metadata after playback starts
 static struct pipe_metadata pipe_metadata;
 
+/* NTP timestamp definitions - not nice - these are repeated elsewhare in the owntones codebase */
+#define FRAC             4294967296. /* 2^32 as a double */
+#define NTP_EPOCH_DELTA  0x83aa7e80  /* 2208988800 - that's 1970 - 1900 in seconds */
+
+struct ntp_stamp
+{
+  uint32_t sec;
+  uint32_t frac;
+};
+
 /* -------------------------------- HELPERS --------------------------------- */
 
 // These might be more at home in dmap_common.c
@@ -241,6 +264,34 @@ static const char *play_status_str(enum play_status status)
     default:
       return "unknown";
     }
+}
+
+static inline void
+timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
+{
+  // Seconds since NTP Epoch (1900-01-01)
+  ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
+
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
+}
+
+static inline int
+timing_get_clock_ntp(struct ntp_stamp *ns)
+{
+  struct timespec ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
+
+      return -1;
+    }
+
+  timespec_to_ntp(&ts, ns);
+
+  return 0;
 }
 
 /* -------------------------------------------------------------------------*/
@@ -530,6 +581,99 @@ parse_volume(struct pipe_metadata_prepared *prepared, const char *volume)
   return -1;
 }
 
+/* Retrieves artwork from a URL and writes the artwork to a tmpfile
+ * associated with the named pipes used for streaming and metadata.
+ * The tmpfile path is stored in prepared->pict_tmpfile_path and can be used by the airplay output module.
+ * The artwork URL is freed.
+ * 
+ * @out ?
+ * @in prepared   Prepared metadata struct containing the artwork URL
+ * @return        ART_FMT_* on success, ART_E_NONE or ART_E_ERROR on error
+*/
+static int
+parse_artwork_url(struct pipe_metadata_prepared *prepared)
+{
+  struct input_metadata *m = &prepared->input_metadata;
+  const char *ext;
+  ssize_t ret;
+  int format = ART_E_ERROR;
+  struct evbuffer *raw;
+  size_t artwork_image_size = 0;
+  char *artwork_image = NULL;
+
+  CHECK_NULL(L_PLAYER, raw = evbuffer_new());
+
+  format = artwork_read_byurl(raw, m->artwork_url);
+  if (format <= 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not read artwork from URL '%s'\n", m->artwork_url);
+    goto error;
+  }
+
+  artwork_image_size = evbuffer_get_length(raw);
+  artwork_image = malloc(artwork_image_size);
+  if (!artwork_image) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not allocate memory for artwork from URL '%s'\n", m->artwork_url);
+    goto error;
+  }
+  ret = evbuffer_remove(raw, artwork_image, artwork_image_size);
+  if (ret < 0 || (size_t)ret != artwork_image_size) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not extract artwork from evbuffer for URL '%s'\n", m->artwork_url);
+    goto error;
+  }
+  evbuffer_free(raw);
+  raw = NULL;
+
+  if (format == ART_FMT_JPEG)
+    ext = ".jpg";
+  else if (format == ART_FMT_PNG)
+    ext = ".png";
+  else {
+    DPRINTF(E_LOG, L_PLAYER, "Unsupported picture format from artwork URL '%s'\n", m->artwork_url);
+    goto error;
+  }
+
+  free(m->artwork_url);
+  m->artwork_url = NULL;
+
+  prepared->pict_tmpfile_fd = pict_tmpfile_recreate(
+    prepared->pict_tmpfile_path, sizeof(prepared->pict_tmpfile_path), prepared->pict_tmpfile_fd, ext
+  );
+  if (prepared->pict_tmpfile_fd < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not open tmpfile for pipe artwork '%s': %s\n",
+      prepared->pict_tmpfile_path, strerror(errno)
+    );
+    goto error;
+  }
+
+  ret = write(prepared->pict_tmpfile_fd, artwork_image, artwork_image_size);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Error writing artwork from metadata pipe to '%s': %s\n",
+      prepared->pict_tmpfile_path, strerror(errno)
+    );
+    goto error;
+  }
+  else if (ret != artwork_image_size) {
+    DPRINTF(E_LOG, L_PLAYER, "Incomplete write of artwork to '%s' (%zd/%d)\n",
+      prepared->pict_tmpfile_path, ret, artwork_image_size
+    );
+    goto error;
+  }
+
+  DPRINTF(E_DBG, L_PLAYER, "Wrote pipe artwork to '%s'\n", prepared->pict_tmpfile_path);
+
+  m->artwork_url = safe_asprintf("file:%s", prepared->pict_tmpfile_path);
+  free(artwork_image);
+
+  return 0;
+
+ error:
+  if (m->artwork_url) free(m->artwork_url);
+  m->artwork_url = NULL;
+  if (raw) evbuffer_free(raw);
+  if (artwork_image) free(artwork_image);
+  return -1;
+}
+
 static int
 parse_picture(struct pipe_metadata_prepared *prepared, uint8_t *data, int data_len)
 {
@@ -691,7 +835,7 @@ void extract_key_value(const char *input_string, char **key, char **value) {
 }
 
 // Parse one metadata item from Music Assistant
-// TODO: @bradkeifer - check and improve memory management to ensure key and value are freed properly
+// TODO: @bradkeifer - check memory management to ensure key and value are freed properly
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -717,19 +861,22 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, key, value);
 
   if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
-      message = PIPE_METADATA_MSG_METADATA;
-      prepared->input_metadata.album = value;
+      message = PIPE_METADATA_MSG_PARTIAL_METADATA;
+      prepared->input_metadata.album = value; // we should not free value now. The consumer must free it later.
+      free(key);
   }
   else if (!strncmp(key,MASS_METADATA_ARTIST_KEY, strlen(MASS_METADATA_ARTIST_KEY))) {
-      message = PIPE_METADATA_MSG_METADATA;
-      prepared->input_metadata.artist = value;
+      message = PIPE_METADATA_MSG_PARTIAL_METADATA;
+      prepared->input_metadata.artist = value; // we should not free value now. The consumer must free it later.
+      free(key);
   }
   else if (!strncmp(key,MASS_METADATA_TITLE_KEY, strlen(MASS_METADATA_TITLE_KEY))) {
-      message = PIPE_METADATA_MSG_METADATA;
-      prepared->input_metadata.title = value;
+      message = PIPE_METADATA_MSG_PARTIAL_METADATA;
+      prepared->input_metadata.title = value; // we should not free value now. The consumer must free it later.
+      free(key);
   }
   else if (!strncmp(key,MASS_METADATA_DURATION_KEY, strlen(MASS_METADATA_DURATION_KEY))) {
-      message = PIPE_METADATA_MSG_METADATA;
+      message = PIPE_METADATA_MSG_PARTIAL_METADATA;
       ret = safe_atoi32(value, &duration_sec);
       if (ret < 0) {
           DPRINTF(E_LOG, L_PLAYER, "%s:Invalid duration value in Music Assistant metadata: '%s'\n", __func__, value);
@@ -738,6 +885,8 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           return -1;
       }
       prepared->input_metadata.len_ms = duration_sec * 1000;
+      free(key);
+      free(value);
   }
   else if (!strncmp(key,MASS_METADATA_PROGRESS_KEY, strlen(MASS_METADATA_PROGRESS_KEY))) {
       message = PIPE_METADATA_MSG_PROGRESS;
@@ -749,10 +898,18 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           return -1;
       }
       prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
+      free(key);
+      free(value);
   }
   else if (!strncmp(key,MASS_METADATA_ARTWORK_KEY, strlen(MASS_METADATA_ARTWORK_KEY))) {
-      message = PIPE_METADATA_MSG_METADATA;
-      prepared->input_metadata.artwork_url = value;
+      message = PIPE_METADATA_MSG_PARTIAL_METADATA;
+      prepared->input_metadata.artwork_url = value; // we should not free value now. The consumer must free it later.
+      free(key);
+      ret = parse_artwork_url(prepared);
+      if (ret < 0) {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, value);
+          return -1;
+      }
   }
   else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
     message = PIPE_METADATA_MSG_VOLUME;
@@ -763,11 +920,37 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
         free(value);
         return -1;
     }
+    free(key);
+    free(value);
     DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
-      if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0)
+      if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {
          message = PIPE_METADATA_MSG_METADATA;
+         free(key);
+         free(value);
+      }
+      else if (strncmp(value, "STOP", strlen("STOP")) == 0) {
+         message = PIPE_METADATA_MSG_STOP;
+         free(key);
+         free(value);
+      }
+      else if (strncmp(value, "PAUSE", strlen("PAUSE")) == 0) {
+         message = PIPE_METADATA_MSG_PAUSE;
+         free(key);
+         free(value);
+      }
+      else if (strncmp(value, "PLAY", strlen("PLAY")) == 0) {
+         message = PIPE_METADATA_MSG_PLAY;
+         free(key);
+         free(value);
+      }
+      else {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Unsupported action value in Music Assistant metadata: '%s'\n", __func__, value);
+          free(key);
+          free(value);
+          return -1;
+      }
   }
   else {
       DPRINTF(E_LOG, L_PLAYER, "%s:Unknown key in Music Assistant metadata: '%s=%s'\n", __func__, key, value);
@@ -776,8 +959,6 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       return -1;
   }
   *out_msg = message;
-  if (key) free(key);
-  if (value) free(value); // this will destroy the values stored in char *'s like prepared->input_metadata for artwork_url
   return 0;
 }
 
@@ -1037,7 +1218,7 @@ pipe_metadata_watch_del(void *arg)
   if (!pipe_metadata.pipe)
     return;
 
-  evbuffer_free(pipe_metadata.evbuf);
+  if (pipe_metadata.evbuf) evbuffer_free(pipe_metadata.evbuf);
   watch_del(pipe_metadata.pipe);
   pipe_free(pipe_metadata.pipe);
   pipe_metadata.pipe = NULL;
@@ -1094,6 +1275,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
 
   DPRINTF(E_DBG, L_PLAYER, "%s:Parsed metadata pipe message mask: 0x%x\n", __func__, message);
 
+  // We are receiving progress updates from Music Assistant before we receive metadata, and that may be a problem.
   if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PROGRESS | PIPE_METADATA_MSG_PICTURE)) {
     pipe_metadata.is_new = 1; // Trigger notification to player in playback loop
     DPRINTF(E_DBG, L_PLAYER, 
@@ -1108,6 +1290,20 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   if (message & PIPE_METADATA_MSG_FLUSH) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Flushing playback from metadata pipe command\n", __func__);
     player_playback_flush();
+  }
+  if (message & PIPE_METADATA_MSG_PAUSE) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Pausing playback from metadata pipe command\n", __func__);
+    // Cannot call player_playback_pause() from this thread - not sure why, but comment to that effect
+    // in player.c
+    worker_execute((void *)player_playback_pause, NULL, 0, 0); // get the worker thread to pause the player
+  }
+  if (message & PIPE_METADATA_MSG_PLAY) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:(Re)starting playback from metadata pipe command\n", __func__);
+    player_playback_start();
+  }
+  if (message & PIPE_METADATA_MSG_STOP) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from metadata pipe command\n", __func__);
+    player_playback_stop();
   }
 
  readd:
@@ -1349,11 +1545,10 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 
 // Thread: main
 
-// Listener for player events to stop program execution when playback stops
+// Listener for player events
 static void
 mass_player_listener_cb(short event_mask, void *ctx)
 {
-  // If playback stopped, reset the autostart pipe id
   struct player_status status;
   int ret;
 
@@ -1374,6 +1569,7 @@ mass_timer_cb(int fd, short what, void *arg)
   uint64_t elapsed_ms = 0;
   uint64_t begin_ms, now_ms, playing_ms = 0;
   struct player_status status;
+  struct ntp_stamp ntp_stamp;
   int ret;
 
   ret = player_get_status(&status);
@@ -1382,9 +1578,16 @@ mass_timer_cb(int fd, short what, void *arg)
     return;
   }
 
+  ret = timing_get_clock_ntp(&ntp_stamp);
+  if (ret < 0) {
+      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get current ntp timestamp\n");
+      return;
+  }
+
   DPRINTF(E_DBG, L_PLAYER,
-    "%s(): player status:%s, volume:%d, pos_ms:%u\n", 
-    __func__, play_status_str(status.status), status.volume, status.pos_ms
+    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
+    __func__, play_status_str(status.status), status.volume, status.pos_ms,
+    ntp_stamp.sec, ntp_stamp.frac
   );
 
   if (status.status == PLAY_PLAYING) {
@@ -1399,14 +1602,14 @@ mass_timer_cb(int fd, short what, void *arg)
   else if (player_started && status.status == PLAY_PAUSED) {
     if (!player_paused) {
       player_paused = true;
-      clock_gettime(CLOCK_MONOTONIC, &paused_start_ts); // reset paused time
+      clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
       /* Music Assistant looks for "set pause" or "Pause at" */
       DPRINTF(E_INFO, L_PLAYER, 
         "%s(): Pause at %d, starting paused timer\n", __func__, status.pos_ms
       );
     }
     else {
-      clock_gettime(CLOCK_MONOTONIC, &now);
+      clock_gettime(CLOCK_REALTIME, &now);
       begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
       now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
       elapsed_ms = now_ms - begin_ms;
@@ -1414,25 +1617,9 @@ mass_timer_cb(int fd, short what, void *arg)
         "%s(): paused milliseconds:%" PRIu64 " ms\n", __func__, elapsed_ms
       );
 
-      if (elapsed_ms >= MASS_MS_TILL_EXIT) {
-        /* This can only be a temporary method, because it is legitimate for Music Assistant to pause playback */
-        /* We need to find another way to detect end of play from Music Assistant */
-        DPRINTF(E_INFO, L_PLAYER, 
-          "%s():end of stream reached. Paused for %" PRIu64 " ms, stopping playback and exiting\n", 
-          __func__, elapsed_ms
-        );
-
-        player_playback_stop();
-
-        // stop the timer event. mass_deinit() will free it
-        evtimer_del(mass_timer_event);
-
-        // break the main event loop, which will trigger graceful program exit
-        event_base_loopbreak(evbase_main);
-      }
     }
   }
-  else { // should not happen, but just in case
+  else { // should not happen, but guard just in case
     DPRINTF(E_WARN, L_PLAYER, "%s():%s: Not playing or paused\n", __func__, play_status_str(status.status));
     // reset all
     player_started = false;
