@@ -6,7 +6,7 @@ Based on [owntones](https://github.com/owntone/owntone-server) (all rights reser
 
 ## Pre-built binaries
 
-Pre-built binaries for Linux (x86_64) and macOS (Intel and Apple Silicon) are automatically built via GitHub Actions and available as build artifacts on the repository.
+Pre-built binaries for Linux (x86_64) and macOS (Apple Silicon/ARM64) are automatically built via GitHub Actions and available as build artifacts on the repository.
 
 ## Debian build
 
