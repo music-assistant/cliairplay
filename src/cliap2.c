@@ -145,6 +145,7 @@ usage(char *program)
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
   printf("  --loglevel <number>       Log level (0-5)\n");
+  printf("  --logfile <filename>      Log filename. Not supplying this argument will result in logging to stderr only.\n");
   printf("  --logdomains <dom,dom..>  Log domains\n");
   printf("  --config <file>           Use <file> as the configuration file\n");
   printf("  --name <name>             Name of the airplay 2 device\n");
@@ -522,6 +523,7 @@ main(int argc, char **argv)
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
+    { "logfile",       1, NULL, 516 },
     { "logdomains",    1, NULL, 501 },
     { "config",        1, NULL, 502 },
     { "name",          1, NULL, 503 },
@@ -553,6 +555,10 @@ main(int argc, char **argv)
           fprintf(stderr, "Error: loglevel must be an integer in '--loglevel %s'\n", optarg);
         else
           loglevel = option;
+        break;
+
+      case 516: // logfile
+        logfile = optarg;
         break;
 
       case 501: // logdomains
@@ -681,7 +687,6 @@ main(int argc, char **argv)
     loglevel = cfg_getint(cfg_getsec(cfg, "general"), "loglevel");
   if (!logformat)
     logformat = cfg_getstr(cfg_getsec(cfg, "general"), "logformat");
-  logfile = cfg_getstr(cfg_getsec(cfg, "general"), "logfile");
 
   ret = logger_init(logfile, logdomains, loglevel, logformat);
   if (ret != 0) {
