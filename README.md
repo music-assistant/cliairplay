@@ -4,6 +4,10 @@ Command line interface for audio streaming to AirPlay 2 devices
 
 Based on [owntones](https://github.com/owntone/owntone-server) (all rights reserved).
 
+## Pre-built binaries
+
+Pre-built binaries for Linux (x86_64 and ARM64) and macOS (Apple Silicon/ARM64) are automatically built via GitHub Actions and available as build artifacts on the repository.
+
 ## Debian build
 
 NOTE: This is in early stage development and will be subject to change.
@@ -48,38 +52,50 @@ Visit https://brew.sh/ and follow the instructions. Alternatively run the instal
 3. Install required Homebrew packages. This installs the closest macOS equivalents to the Debian packages listed above:
 
 ```zsh
-brew update
 brew install git autoconf automake libtool gettext gawk pkg-config \
-  libconfuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
-  libsodium json-c curl openssl@1.1 protobuf-c
+  confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+  libsodium json-c curl openssl@3 protobuf-c bison
 ```
 
 Notes:
 
-- Replace `openssl@1.1` with `openssl` if you want OpenSSL 3. Use `brew info openssl` to check versions.
+- OpenSSL 3 is recommended as OpenSSL 1.1 reached end-of-life in September 2023.
+- Bison from Homebrew is required as macOS ships with an outdated version (2.3).
 - macOS uses CoreAudio instead of ALSA (`libasound2-dev`). The project should detect and skip ALSA on macOS; if it doesn't, look for a configure flag to disable ALSA support.
 
-4. Export Homebrew paths so `./configure` finds brewed libraries (portable for Intel/Apple Silicon):
+4. Export Homebrew paths so `./configure` finds libraries (portable for Intel/Apple Silicon):
 
 ```zsh
 export BREW_PREFIX="$(brew --prefix)"
-export OPENSSL_PREFIX="$(brew --prefix openssl@1.1)"    # or $(brew --prefix openssl)
+export OPENSSL_PREFIX="$(brew --prefix openssl@3)"
 export LIBXML2_PREFIX="$(brew --prefix libxml2)"
 export ZLIB_PREFIX="$(brew --prefix zlib)"
+export LIBGCRYPT_PREFIX="$(brew --prefix libgcrypt)"
+export LIBGPG_ERROR_PREFIX="$(brew --prefix libgpg-error)"
+export LIBUNISTRING_PREFIX="$(brew --prefix libunistring)"
+export LIBICONV_PREFIX="$(brew --prefix libiconv)"
 
-export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig:$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-export LDFLAGS="-L$OPENSSL_PREFIX/lib -L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib $LDFLAGS"
-export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include $CPPFLAGS"
+export PKG_CONFIG_PATH="$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LDFLAGS="-L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib -L$LIBICONV_PREFIX/lib"
+export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
+export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
+export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
+export PATH="/opt/homebrew/opt/bison/bin:$PATH"
+
+# For static linking of OpenSSL (recommended for distribution)
+export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 ```
 
 5. Build the project:
 
 ```zsh
 git submodule update --init
-autoreconf -i
+autoreconf -fi
 ./configure
 make
 ```
+
+The binary will be created at `src/cliap2`.
 
 If `./configure` fails to find libraries, check the `PKG_CONFIG_PATH` and the `--with-...` flags in `./configure --help` and point them to the Homebrew prefixes above.
 
