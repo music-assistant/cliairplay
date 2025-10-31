@@ -3952,10 +3952,10 @@ player_init(struct timespec *req_start_ts)
 
   // Create the playback timer
 #ifdef HAVE_TIMERFD
-  pb_timer_fd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC | TFD_NONBLOCK);
+  pb_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
   ret = pb_timer_fd;
 #else
-  ret = timer_create(CLOCK_REALTIME, NULL, &pb_timer);
+  ret = timer_create(CLOCK_MONOTONIC, NULL, &pb_timer);
 #endif
   if (ret < 0)
     {
