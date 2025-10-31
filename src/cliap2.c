@@ -517,6 +517,8 @@ main(int argc, char **argv)
   uint32_t latency = 0;
   int volume = 0;
   struct keyval *txt_kv = NULL;
+  struct ntp_timestamp ns;
+  struct timespec now_ts;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
@@ -847,7 +849,7 @@ main(int argc, char **argv)
     }
 
   /* Spawn player thread */
-  ret = player_init();
+  ret = player_init(&ap2_device_info.start_ts);
   if (ret != 0)
     {
       DPRINTF(E_FATAL, L_MAIN, "Player thread failed to start\n");
