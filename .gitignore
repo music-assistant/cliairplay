@@ -115,6 +115,4 @@ cliap2
 
 # Test harness
 test.sh
-
-# Directory for debugging notes/files
-debug/
+.DS_Store
