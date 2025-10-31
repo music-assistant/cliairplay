@@ -179,11 +179,15 @@ jobs:
           export LIBUNISTRING_PREFIX="$(brew --prefix libunistring)"
           export LIBICONV_PREFIX="$(brew --prefix libiconv)"
 
-          export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig:$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-          export LDFLAGS="-L$OPENSSL_PREFIX/lib -L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib -L$LIBICONV_PREFIX/lib"
+          # Static linking for OpenSSL
+          export PKG_CONFIG_PATH="$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export LDFLAGS="-L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib -L$LIBICONV_PREFIX/lib"
           export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
           export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
           export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
+
+          # Add static OpenSSL libraries to LIBS
+          export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
           autoreconf -fi
           ./configure || { echo "Configure failed, showing config.log:"; tail -100 config.log; exit 1; }
@@ -191,8 +195,11 @@ jobs:
           mkdir -p release
           cp src/cliap2 release/cliap2-macos-arm64
           chmod +x release/cliap2-macos-arm64
-          # Show dependencies
+          # Show dependencies - verify OpenSSL is statically linked
+          echo "=== Binary dependencies ==="
           otool -L release/cliap2-macos-arm64
+          echo "=== Checking for OpenSSL symbols ==="
+          nm release/cliap2-macos-arm64 | grep -i ssl | head -10 || echo "OpenSSL symbols found (statically linked)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

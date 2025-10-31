@@ -73,13 +73,17 @@ export ZLIB_PREFIX="$(brew --prefix zlib)"
 export LIBGCRYPT_PREFIX="$(brew --prefix libgcrypt)"
 export LIBGPG_ERROR_PREFIX="$(brew --prefix libgpg-error)"
 export LIBUNISTRING_PREFIX="$(brew --prefix libunistring)"
+export LIBICONV_PREFIX="$(brew --prefix libiconv)"
 
-export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig:$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-export LDFLAGS="-L$OPENSSL_PREFIX/lib -L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib"
-export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include"
+export PKG_CONFIG_PATH="$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LDFLAGS="-L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib -L$LIBICONV_PREFIX/lib"
+export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
 export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
-export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring"
+export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
 export PATH="/opt/homebrew/opt/bison/bin:$PATH"
+
+# For static linking of OpenSSL (recommended for distribution)
+export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 ```
 
 5. Build the project:
