@@ -20,12 +20,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git autotools-dev autoconf automake libtool gettext gawk \
+            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf \
             libconfuse-dev libunistring-dev \
             libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
             libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
             libevent-dev libplist-dev libsodium-dev libjson-c-dev \
-            libcurl4-openssl-dev libprotobuf-c-dev pkg-config
+            libcurl4-openssl-dev libprotobuf-c-dev pkg-config bison flex
 
       - name: Build for x86_64
         run: |
@@ -62,10 +62,9 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew update
           brew install \
             autoconf automake libtool gettext gawk pkg-config \
-            libconfuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
             libsodium json-c curl openssl@3 protobuf-c bison
 
       - name: Build for macOS ${{ matrix.arch }}
