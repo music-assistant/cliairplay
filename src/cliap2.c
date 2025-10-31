@@ -148,17 +148,17 @@ usage(char *program)
   printf("  --logfile <filename>      Log filename. Not supplying this argument will result in logging to stderr only.\n");
   printf("  --logdomains <dom,dom..>  Log domains\n");
   printf("  --config <file>           Use <file> as the configuration file\n");
-  printf("  --name <name>             Name of the airplay 2 device\n");
-  printf("  --hostname <hostname>     Hostname of AirPlay 2 device\n");
-  printf("  --address <address>       IP address to bind to for AirPlay 2 service\n");
-  printf("  --port <port>             Port number to bind to for AirPlay 2 service\n");
-  printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service\n");
-  printf("  --pipe                    filename of named pipe to read streamed audio\n");
-  printf("  --ntp                     Print current NTP time and exit\n");
+  printf("  --name <name>             Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
+  printf("  --hostname <hostname>     Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
+  printf("  --address <address>       IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --port <port>             Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --pipe                    filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
+  printf("  --ntp                     Print current NTP time and exit.\n");
   printf("  --wait                    Start playback after <wait> milliseconds\n");
-  printf("  --ntpstart                Start playback at NTP <start> + <wait>\n");
+  printf("  --ntpstart                Start playback at NTP <start> + <wait>. Mandatory in absence of --ntpstart.\n");
   printf("  --latency                 Latency to apply in frames\n");
-  printf("  --volume                  Initial volume (0-100)\n");
+  printf("  --volume                  Initial volume (0-100). Mandatory in absence of --ntpstart.\n");
   printf("  -v, --version             Display version information and exit\n");
   printf("\n\n");
   printf("Available log domains:\n");
@@ -488,7 +488,7 @@ int
 main(int argc, char **argv)
 {
   int option;
-  char *configfile = CONFFILE;
+  char *configfile = NULL; // default to no config file
   bool background = false;
   bool testrun = false;
   bool mdns_no_rsp = true;
@@ -670,7 +670,6 @@ main(int argc, char **argv)
 
     return EXIT_FAILURE;
   }
-  // logger_detach();  // Eliminate logging to stderr
 
   ret = conffile_load(configfile);
   if (ret != 0) {
