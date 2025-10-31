@@ -18,7 +18,7 @@ AC_PROG_CC
 AC_PROG_CC_C_O
 AC_PROG_SED
 AC_PROG_MKDIR_P
-LT_INIT([disable-static])
+LT_INIT([])
 
 AC_PATH_PROG([GPERF], [[gperf]])
 AS_IF([[test -z "$GPERF"]],

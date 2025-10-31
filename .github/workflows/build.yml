@@ -1,0 +1,127 @@
+name: Build cliap2 for all supported platforms
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git autotools-dev autoconf automake libtool gettext gawk \
+            libconfuse-dev libunistring-dev \
+            libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
+            libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
+            libevent-dev libplist-dev libsodium-dev libjson-c-dev \
+            libcurl4-openssl-dev libprotobuf-c-dev pkg-config
+
+      - name: Build for x86_64
+        run: |
+          autoreconf -fi
+          ./configure
+          make -j$(nproc)
+          mkdir -p release
+          cp src/cliap2 release/cliap2-linux-x86_64
+          chmod +x release/cliap2-linux-x86_64
+          # Show file type and dependencies
+          file release/cliap2-linux-x86_64
+          ldd release/cliap2-linux-x86_64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliap2-linux-x86_64
+          path: release/
+
+  macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install \
+            autoconf automake libtool gettext gawk pkg-config \
+            libconfuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+            libsodium json-c curl openssl@3 protobuf-c bison
+
+      - name: Build for macOS ${{ matrix.arch }}
+        run: |
+          export PATH="$(brew --prefix bison)/bin:$PATH"
+          export OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          export LIBXML2_PREFIX="$(brew --prefix libxml2)"
+          export ZLIB_PREFIX="$(brew --prefix zlib)"
+          export LIBGCRYPT_PREFIX="$(brew --prefix libgcrypt)"
+          export LIBGPG_ERROR_PREFIX="$(brew --prefix libgpg-error)"
+          export LIBUNISTRING_PREFIX="$(brew --prefix libunistring)"
+
+          export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig:$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export LDFLAGS="-L$OPENSSL_PREFIX/lib -L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib"
+          export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include"
+          export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
+          export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring"
+
+          autoreconf -fi
+          ./configure
+          make -j$(sysctl -n hw.ncpu)
+          mkdir -p release
+          cp src/cliap2 release/cliap2-macos-${{ matrix.arch }}
+          chmod +x release/cliap2-macos-${{ matrix.arch }}
+          # Show dependencies
+          otool -L release/cliap2-macos-${{ matrix.arch }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliap2-macos-${{ matrix.arch }}
+          path: release/
+
+  create-release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Automated Build ${{ github.sha }}
+          draft: false
+          prerelease: true
+          files: |
+            artifacts/cliap2-linux-x86_64/*
+            artifacts/cliap2-macos-x86_64/*
+            artifacts/cliap2-macos-arm64/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
