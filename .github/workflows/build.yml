@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  linux:
+  linux-x86_64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -62,6 +62,76 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cliap2-linux-x86_64
+          path: release/
+
+  linux-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apply FFmpeg 8.0 compatibility patch
+        run: |
+          cat > /tmp/ffmpeg8.patch << 'EOF'
+          --- a/owntone-server/src/transcode.c
+          +++ b/owntone-server/src/transcode.c
+          @@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
+             // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
+             // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
+             // which has the effect that a volume replaygain filter works. Note that
+             // ffmpeg itself uses another method in process_input() in ffmpeg.c.
+          +#if LIBAVFORMAT_VERSION_MAJOR < 60
+             av_format_inject_global_side_data(ctx->ifmt_ctx);
+          +#endif
+
+             ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
+             if (ret < 0)
+          EOF
+          patch -p1 < /tmp/ffmpeg8.patch
+
+      - name: Setup ARM64 cross-compilation
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config bison flex
+
+      - name: Install ARM64 libraries
+        run: |
+          sudo apt-get install -y \
+            libconfuse-dev:arm64 libunistring-dev:arm64 \
+            libavcodec-dev:arm64 libavformat-dev:arm64 libavfilter-dev:arm64 libswscale-dev:arm64 libavutil-dev:arm64 \
+            libasound2-dev:arm64 libxml2-dev:arm64 libgcrypt20-dev:arm64 zlib1g-dev:arm64 \
+            libevent-dev:arm64 libplist-dev:arm64 libsodium-dev:arm64 libjson-c-dev:arm64 \
+            libcurl4-openssl-dev:arm64 libprotobuf-c-dev:arm64
+
+      - name: Build for ARM64
+        run: |
+          # Set up cross-compilation environment
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+
+          autoreconf -fi
+          ./configure --host=aarch64-linux-gnu \
+            CC=aarch64-linux-gnu-gcc \
+            CXX=aarch64-linux-gnu-g++ \
+            PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
+            PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR
+          make -j$(nproc)
+          mkdir -p release
+          cp src/cliap2 release/cliap2-linux-aarch64
+          chmod +x release/cliap2-linux-aarch64
+          # Show file type
+          file release/cliap2-linux-aarch64
+          aarch64-linux-gnu-readelf -d src/cliap2 | grep NEEDED || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliap2-linux-aarch64
           path: release/
 
   macos:
@@ -131,7 +201,7 @@ jobs:
           path: release/
 
   create-release:
-    needs: [linux, macos]
+    needs: [linux-x86_64, linux-aarch64, macos]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     steps:
@@ -152,6 +222,7 @@ jobs:
           prerelease: true
           files: |
             artifacts/cliap2-linux-x86_64/*
+            artifacts/cliap2-linux-aarch64/*
             artifacts/cliap2-macos-arm64/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
