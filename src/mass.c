@@ -135,6 +135,7 @@ enum pipe_metadata_msg
   PIPE_METADATA_MSG_PARTIAL_METADATA = (1 << 5),
   PIPE_METADATA_MSG_STOP             = (1 << 6),
   PIPE_METADATA_MSG_PAUSE            = (1 << 7),
+  PIPE_METADATA_MSG_PLAY             = (1 << 8),
 };
 
 struct pipe
@@ -938,6 +939,11 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
          free(key);
          free(value);
       }
+      else if (strncmp(value, "PLAY", strlen("PLAY")) == 0) {
+         message = PIPE_METADATA_MSG_PLAY;
+         free(key);
+         free(value);
+      }
       else {
           DPRINTF(E_LOG, L_PLAYER, "%s:Unsupported action value in Music Assistant metadata: '%s'\n", __func__, value);
           free(key);
@@ -1212,7 +1218,7 @@ pipe_metadata_watch_del(void *arg)
   if (!pipe_metadata.pipe)
     return;
 
-  evbuffer_free(pipe_metadata.evbuf);
+  if (pipe_metadata.evbuf) evbuffer_free(pipe_metadata.evbuf);
   watch_del(pipe_metadata.pipe);
   pipe_free(pipe_metadata.pipe);
   pipe_metadata.pipe = NULL;
@@ -1287,7 +1293,13 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_PAUSE) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Pausing playback from metadata pipe command\n", __func__);
-    player_playback_pause();
+    // Cannot call player_playback_pause() from this thread - not sure why, but comment to that effect
+    // in player.c
+    worker_execute((void *)player_playback_pause, NULL, 0, 0); // get the worker thread to pause the player
+  }
+  if (message & PIPE_METADATA_MSG_PLAY) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:(Re)starting playback from metadata pipe command\n", __func__);
+    player_playback_start();
   }
   if (message & PIPE_METADATA_MSG_STOP) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from metadata pipe command\n", __func__);
@@ -1532,11 +1544,10 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 
 // Thread: main
 
-// Listener for player events to stop program execution when playback stops
+// Listener for player events
 static void
 mass_player_listener_cb(short event_mask, void *ctx)
 {
-  // If playback stopped, reset the autostart pipe id
   struct player_status status;
   int ret;
 

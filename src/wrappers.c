@@ -443,6 +443,11 @@ free_queue_item(struct db_queue_item *qi, int content_only)
     // For mass, we don't need to free any content, because we never malloc'ed for any content
     // but let's re-evaluate once metadata is implemented.
 
+    if (qi == NULL) {
+        DPRINTF(E_WARN, L_DB, "%s:No db_queue_item to free\n", __func__);
+        return; // No db_queue_item to free
+    }
+
     DPRINTF(E_INFO, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged.\n", 
         __func__, qi->id, content_only, PACKAGE_NAME);
 
