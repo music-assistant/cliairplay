@@ -316,7 +316,7 @@ parse_keyval(const char *str, struct keyval *kv)
           break;
         case 1:
           value = inner_token;
-          DPRINTF(E_SPAM, L_MAIN, "Adding keyval: %s=%s\n", key, value);
+          DPRINTF(E_DBG, L_MAIN, "Adding keyval: %s=%s\n", key, value);
           keyval_add(kv, key, value);
           break;
         default:
@@ -517,8 +517,6 @@ main(int argc, char **argv)
   uint32_t latency = 0;
   int volume = 0;
   struct keyval *txt_kv = NULL;
-  struct ntp_timestamp ns;
-  struct timespec now_ts;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
@@ -543,6 +541,10 @@ main(int argc, char **argv)
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
+      case 514: // testrun
+        testrun = true;
+        break;
+
       case 500: // loglevel
         ret = safe_atoi32(optarg, &option);
         if (ret < 0)
@@ -557,6 +559,11 @@ main(int argc, char **argv)
 
       case 502: //config
         configfile = optarg;
+        break;
+
+      case 513: // version
+        version();
+        return EXIT_SUCCESS;
         break;
 
       case 503: // name
@@ -619,15 +626,6 @@ main(int argc, char **argv)
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        break;
-
-      case 513: // version
-        version();
-        return EXIT_SUCCESS;
-        break;
-
-      case 514: // testrun
-        testrun = true;
         break;
 
       case 515: // named pipe filename
@@ -744,6 +742,8 @@ main(int argc, char **argv)
     ap2_device_info.address = address;
     ap2_device_info.port = port;
     ap2_device_info.txt = txt_kv;
+    ap2_device_info.ntpstart = ntpstart;
+    ap2_device_info.wait = wait;
     ap2_device_info.latency = latency;
     ap2_device_info.volume = volume;
   }
@@ -847,7 +847,7 @@ main(int argc, char **argv)
     }
 
   /* Spawn player thread */
-  ret = player_init(&ap2_device_info.start_ts);
+  ret = player_init();
   if (ret != 0)
     {
       DPRINTF(E_FATAL, L_MAIN, "Player thread failed to start\n");

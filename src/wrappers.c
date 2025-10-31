@@ -343,8 +343,7 @@ db_file_fetch_byid(int id)
 {
     struct media_file_info *ret = NULL;
 
-    // This function gets called at time of playback start up to obtain information about
-    // where to start playback (in milliseconds) from the seek field of the media_file_info struct.
+    // It has been tested that it is ok to do nothing
     return ret; 
 }
 

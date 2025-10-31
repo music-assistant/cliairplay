@@ -10,7 +10,6 @@ typedef struct ap2_device_info
   struct keyval *txt;
   uint64_t ntpstart;
   uint32_t wait;
-  struct timespec start_ts;
   uint32_t latency;
   int volume;
 } ap2_device_info_t;
