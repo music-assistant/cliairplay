@@ -1573,7 +1573,7 @@ mass_timer_cb(int fd, short what, void *arg)
   }
 
   DPRINTF(E_DBG, L_PLAYER,
-    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%" PRIu32 "\n", 
+    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
     __func__, play_status_str(status.status), status.volume, status.pos_ms,
     ntp_stamp.sec, ntp_stamp.frac
   );

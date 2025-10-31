@@ -728,12 +728,15 @@ main(int argc, char **argv)
     // Add wait time in milliseconds
     ap2_device_info.start_ts.tv_sec += wait / 1000;
     ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
-    DPRINTF(E_DBG, L_MAIN, "Calculated timespec start time: sec=%" PRIu64 ".%" PRIu64 ". On basis of ntpstart of %" PRIu32 ".%" PRIu32 " and wait of %dms\n", 
-      (uint64_t)(ap2_device_info.start_ts.tv_sec), (uint64_t)(ap2_device_info.start_ts.tv_nsec), ns.sec, ns.frac, wait);
+    DPRINTF(E_DBG, L_MAIN, 
+      "Calculated timespec start time: sec=%" PRIu64 ".%" PRIu64 ". On basis of ntpstart of %" 
+      PRIu32 ".%.10" PRIu32 " and wait of %dms\n", 
+      (uint64_t)(ap2_device_info.start_ts.tv_sec), (uint64_t)(ap2_device_info.start_ts.tv_nsec), 
+      ns.sec, ns.frac, wait);
     DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%" PRIu64 ".%" PRIu64 "\n", 
       (uint64_t)(now_ts.tv_sec), (uint64_t)(now_ts.tv_nsec));
     timespec_to_ntp(&ap2_device_info.start_ts, &ns);
-    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%" PRIu32 "\n", ns.sec, ns.frac);
+    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);
 
     
     ap2_device_info.name = name;
