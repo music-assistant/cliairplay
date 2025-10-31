@@ -65,7 +65,7 @@ jobs:
           path: release/
 
   linux-aarch64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,42 +91,28 @@ jobs:
           EOF
           patch -p1 < /tmp/ffmpeg8.patch
 
-      - name: Setup ARM64 cross-compilation
+      - name: Install build dependencies
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             build-essential git autotools-dev autoconf automake libtool gettext gawk gperf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu pkg-config bison flex
-
-      - name: Install ARM64 libraries
-        run: |
-          sudo apt-get install -y \
-            libconfuse-dev:arm64 libunistring-dev:arm64 \
-            libavcodec-dev:arm64 libavformat-dev:arm64 libavfilter-dev:arm64 libswscale-dev:arm64 libavutil-dev:arm64 \
-            libasound2-dev:arm64 libxml2-dev:arm64 libgcrypt20-dev:arm64 zlib1g-dev:arm64 \
-            libevent-dev:arm64 libplist-dev:arm64 libsodium-dev:arm64 libjson-c-dev:arm64 \
-            libcurl4-openssl-dev:arm64 libprotobuf-c-dev:arm64
+            libconfuse-dev libunistring-dev \
+            libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
+            libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
+            libevent-dev libplist-dev libsodium-dev libjson-c-dev \
+            libcurl4-openssl-dev libprotobuf-c-dev pkg-config bison flex
 
       - name: Build for ARM64
         run: |
-          # Set up cross-compilation environment
-          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
-          export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
-
           autoreconf -fi
-          ./configure --host=aarch64-linux-gnu \
-            CC=aarch64-linux-gnu-gcc \
-            CXX=aarch64-linux-gnu-g++ \
-            PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
-            PKG_CONFIG_LIBDIR=$PKG_CONFIG_LIBDIR
+          ./configure
           make -j$(nproc)
           mkdir -p release
           cp src/cliap2 release/cliap2-linux-aarch64
           chmod +x release/cliap2-linux-aarch64
-          # Show file type
+          # Show file type and dependencies
           file release/cliap2-linux-aarch64
-          aarch64-linux-gnu-readelf -d src/cliap2 | grep NEEDED || true
+          ldd release/cliap2-linux-aarch64
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
