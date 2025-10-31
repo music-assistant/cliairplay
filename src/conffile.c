@@ -396,20 +396,22 @@ conffile_load(char *file)
 
   cfg_set_error_function(cfg, logger_confuse);
 
-  ret = cfg_parse(cfg, file);
+  if (file) { // makes config file optional
+    ret = cfg_parse(cfg, file);
 
-  if (ret == CFG_FILE_ERROR)
-    {
-      DPRINTF(E_FATAL, L_CONF, "Could not open config file %s\n", file);
+    if (ret == CFG_FILE_ERROR)
+      {
+        DPRINTF(E_FATAL, L_CONF, "Could not open config file %s\n", file);
 
-      goto out_fail;
-    }
-  else if (ret == CFG_PARSE_ERROR)
-    {
-      DPRINTF(E_FATAL, L_CONF, "Parse error in config file %s\n", file);
+        goto out_fail;
+      }
+    else if (ret == CFG_PARSE_ERROR)
+      {
+        DPRINTF(E_FATAL, L_CONF, "Parse error in config file %s\n", file);
 
-      goto out_fail;
-    }
+        goto out_fail;
+      }
+  }
 
   return 0;
 
