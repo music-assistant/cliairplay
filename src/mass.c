@@ -1605,7 +1605,7 @@ mass_timer_cb(int fd, short what, void *arg)
       clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
       /* Music Assistant looks for "set pause" or "Pause at" */
       DPRINTF(E_INFO, L_PLAYER, 
-        "%s(): Pause at %d, starting paused timer\n", __func__, status.pos_ms
+        "%s(): Pause at %d ms, starting paused timer\n", __func__, status.pos_ms
       );
     }
     else {
