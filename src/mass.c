@@ -81,17 +81,17 @@
 #include "mass.h"
 #include "wrappers.h"
 
-#define MASS_UPDATE_INTERVAL_SEC 1 // every second
-#define MASS_MS_TILL_EXIT 5000 // exit after 5 seconds of pause
-#define MASS_METADATA_KEYVAL_SEP "="  // Key-value separator in metadata
+#define MASS_UPDATE_INTERVAL_SEC   1 // every second
+#define MASS_METADATA_KEYVAL_SEP   "="  // Key-value separator in metadata
 #define MASS_METADATA_PROGRESS_KEY "PROGRESS"
 #define MASS_METADATA_VOLUME_KEY   "VOLUME"
 #define MASS_METADATA_ARTWORK_KEY  "ARTWORK"
 #define MASS_METADATA_ALBUM_KEY    "ALBUM"
 #define MASS_METADATA_TITLE_KEY    "TITLE"
 #define MASS_METADATA_ARTIST_KEY   "ARTIST"
-#define MASS_METADATA_DURATION_KEY  "DURATION"
-#define MASS_METADATA_ACTION_KEY    "ACTION"
+#define MASS_METADATA_DURATION_KEY "DURATION"
+#define MASS_METADATA_ACTION_KEY   "ACTION"
+#define MASS_METADATA_PIN_KEY      "PIN"
 
 /* from cliap2.c */
 extern mass_named_pipes_t mass_named_pipes;
@@ -137,6 +137,7 @@ enum pipe_metadata_msg
   PIPE_METADATA_MSG_STOP             = (1 << 6),
   PIPE_METADATA_MSG_PAUSE            = (1 << 7),
   PIPE_METADATA_MSG_PLAY             = (1 << 8),
+  PIPE_METADATA_MSG_PIN              = (1 << 9),
 };
 
 struct pipe
@@ -164,6 +165,8 @@ struct pipe_metadata_prepared
   char pict_tmpfile_path[sizeof(PIPE_TMPFILE_TEMPLATE)];
   // Volume
   int volume;
+  // PIN
+  char *pin; // 4 digit PIN
   // Mutex to share the prepared metadata
   pthread_mutex_t lock;
 };
@@ -835,7 +838,6 @@ void extract_key_value(const char *input_string, char **key, char **value) {
 }
 
 // Parse one metadata item from Music Assistant
-// TODO: @bradkeifer - check memory management to ensure key and value are freed properly
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -924,6 +926,21 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     free(value);
     DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
   }
+  else if (!strncmp(key,MASS_METADATA_PIN_KEY, strlen(MASS_METADATA_PIN_KEY))) {
+    message = PIPE_METADATA_MSG_PIN;
+    uint32_t pin;
+    ret = safe_atou32(value, &pin);
+    if (ret < 0 || ret > 9999) { // PIN's limited to 4 digits
+        DPRINTF(E_LOG, L_PLAYER, "%s:Invalid PIN value in Music Assistant metadata: '%s'\n", __func__, value);
+        free(key);
+        free(value);
+        return -1;
+    }
+    asprintf(&prepared->pin, "%0.4u", pin);
+    free(key);
+    free(value);
+    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %0.4s\n", __func__, prepared->pin);
+  }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {
          message = PIPE_METADATA_MSG_METADATA;
@@ -959,75 +976,6 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       return -1;
   }
   *out_msg = message;
-  return 0;
-}
-
-static int
-parse_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
-{
-  struct input_metadata *m = &prepared->input_metadata;
-  uint32_t type;
-  uint32_t code;
-  uint8_t *data;
-  int data_len;
-  char **dstptr;
-  enum pipe_metadata_msg message;
-  int ret;
-
-  ret = parse_item_xml(&type, &code, &data, &data_len, item);
-  if (ret < 0)
-    return -1;
-
-  dstptr = NULL;
-  message = PIPE_METADATA_MSG_METADATA;
-
-  if (code == dmap_str2val("asal"))
-    dstptr = &m->album;
-  else if (code == dmap_str2val("asar"))
-    dstptr = &m->artist;
-  else if (code == dmap_str2val("minm"))
-    dstptr = &m->title;
-  else if (code == dmap_str2val("asgn"))
-    dstptr = &m->genre;
-  else if (code == dmap_str2val("prgr"))
-    message = PIPE_METADATA_MSG_PROGRESS;
-  else if (code == dmap_str2val("pvol"))
-    message = PIPE_METADATA_MSG_VOLUME;
-  else if (code == dmap_str2val("PICT"))
-    message = PIPE_METADATA_MSG_PICTURE;
-  else if (code == dmap_str2val("pfls"))
-    message = PIPE_METADATA_MSG_FLUSH;
-  else
-    goto ignore;
-
-  if (message != PIPE_METADATA_MSG_FLUSH && (!data || data_len == 0))
-    {
-      log_incoming(E_DBG, "Missing or pending Shairport metadata payload", type, code, data_len);
-      goto ignore;
-    }
-
-  ret = 0;
-  if (message == PIPE_METADATA_MSG_PROGRESS)
-    ret = parse_progress(prepared, (char *)data);
-  else if (message == PIPE_METADATA_MSG_VOLUME)
-    ret = parse_volume(prepared, (char *)data);
-  else if (message == PIPE_METADATA_MSG_PICTURE)
-    ret= parse_picture(prepared, data, data_len);
-  else if (dstptr)
-    swap_pointers(dstptr, (char **)&data);
-
-  if (ret < 0)
-    goto ignore;
-
-  log_incoming(E_DBG, "Applying Shairport metadata", type, code, data_len);
-
-  *out_msg = message;
-  free(data);
-  return 0;
-
- ignore:
-  *out_msg = 0;
-  free(data);
   return 0;
 }
 
@@ -1092,6 +1040,7 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 {
   struct pipe *pipe = arg;
   struct player_status status;
+  struct player_speaker_info speaker_info;
   int ret;
 
   ret = player_get_status(&status);
@@ -1286,6 +1235,12 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   if (message & PIPE_METADATA_MSG_VOLUME) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Setting volume from metadata pipe to %d\n", __func__, pipe_metadata.prepared.volume);
     player_volume_set(pipe_metadata.prepared.volume);
+  }
+  if (message & PIPE_METADATA_MSG_PIN) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from metadata pipe to %s\n", __func__, pipe_metadata.prepared.pin);
+    player_raop_verification_kickoff(&pipe_metadata.prepared.pin);
+    free(pipe_metadata.prepared.pin);
+
   }
   if (message & PIPE_METADATA_MSG_FLUSH) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Flushing playback from metadata pipe command\n", __func__);

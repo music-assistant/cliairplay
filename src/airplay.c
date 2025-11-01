@@ -3972,6 +3972,9 @@ airplay_device_authorize(struct output_device *device, const char *pin, int call
   if (!rs)
     return -1;
 
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:Calling sequence_start(AIRPLAY_SEQ_PAIR_SETUP,...) for %s with PIN %s\n",
+    __func__, device->name, pin
+  );
   sequence_start(AIRPLAY_SEQ_PAIR_SETUP, rs, (void *)pin, "device_authorize");
 
   return 1;
