@@ -35,7 +35,7 @@
 #define AIRPLAY_SERVICE_TYPE "_airplay._tcp"
 
 extern ap2_device_info_t ap2_device_info;
-extern char* gnamed_pipe;
+extern mass_named_pipes_t mass_named_pipes;
 
 /*
  * Wrappers for db.c
@@ -309,7 +309,7 @@ db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id,
             item->shuffle_pos = 1;
             item->data_kind = DATA_KIND_PIPE; // this is all we support for the moment
             item->media_kind = MEDIA_KIND_MUSIC; // we only support audio
-            item->path = gnamed_pipe;
+            item->path = mass_named_pipes.audio_pipe;
             item->bitrate = 0; // I don't think value matters for us.
             item->samplerate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
             item->channels = 2;

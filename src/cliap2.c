@@ -79,7 +79,7 @@ struct event_base *evbase_main;
 static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
-char* gnamed_pipe = NULL;
+mass_named_pipes_t mass_named_pipes = {0, 0};
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -144,22 +144,23 @@ usage(char *program)
   printf("\n");
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
-  printf("  --loglevel <number>       Log level (0-5)\n");
-  printf("  --logfile <filename>      Log filename. Not supplying this argument will result in logging to stderr only.\n");
-  printf("  --logdomains <dom,dom..>  Log domains\n");
-  printf("  --config <file>           Use <file> as the configuration file\n");
-  printf("  --name <name>             Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --hostname <hostname>     Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --address <address>       IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --port <port>             Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --txt <txt>               txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --pipe                    filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
-  printf("  --ntp                     Print current NTP time and exit.\n");
-  printf("  --wait                    Start playback after <wait> milliseconds\n");
-  printf("  --ntpstart                Start playback at NTP <start> + <wait>. Mandatory in absence of --ntpstart.\n");
-  printf("  --latency                 Latency to apply in frames\n");
-  printf("  --volume                  Initial volume (0-100). Mandatory in absence of --ntpstart.\n");
-  printf("  -v, --version             Display version information and exit\n");
+  printf("  --loglevel <number>               Log level (0-5)\n");
+  printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
+  printf("  --logdomains <dom,dom..>          Log domains\n");
+  printf("  --config <file>                   Use <file> as the configuration file\n");
+  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
+  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
+  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
+  printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
+  printf("  --ntp                             Print current NTP time and exit.\n");
+  printf("  --wait                            Start playback after <wait> milliseconds\n");
+  printf("  --ntpstart                        Start playback at NTP <start> + <wait>. Mandatory in absence of --ntpstart.\n");
+  printf("  --latency                         Latency to apply in frames. Not yet implemented.\n");
+  printf("  --volume                          Initial volume (0-100). Mandatory in absence of --ntpstart.\n");
+  printf("  -v, --version                     Display version information and exit\n");
   printf("\n\n");
   printf("Available log domains:\n");
   logger_domains();
@@ -367,24 +368,6 @@ int check_pipe(const char *pipe_path)
   return 0;
 }
 
-// Check for valid named pipe(s).
-// @param name the filename of the audio streaming named pipe
-// @returns 0 on success, -1 on failure
-static
-int check_pipes(const char *pipe_path)
-{
-  if (check_pipe(pipe_path) == 0) {
-    int ret;
-    char *metadata_path = NULL;
-
-    asprintf(&metadata_path, "%s.metadata", pipe_path);
-    ret = check_pipe(metadata_path);
-    free(metadata_path);
-    return ret;
-  }
-  return -1;
-}
-
 // Create named pipe.
 // @param name the filename of the named pipe
 // @returns 0 on success, -1 on failure
@@ -496,6 +479,7 @@ main(int argc, char **argv)
   bool mdns_no_cname = true;
   bool mdns_no_web = true;
   bool mdns_no_mpd = true;
+  bool metadata_pipe_defaulted = false;
   int loglevel = -1;
   char *logdomains = NULL;
   char *logfile = NULL;
@@ -539,6 +523,7 @@ main(int argc, char **argv)
     { "version",       0, NULL, 513 },
     { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
     { "pipe",          1, NULL, 515 },
+    { "command_pipe",  1, NULL, 517 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -637,7 +622,11 @@ main(int argc, char **argv)
         break;
 
       case 515: // named pipe filename
-        gnamed_pipe = optarg;
+        mass_named_pipes.audio_pipe = optarg;
+        break;
+
+      case 517: // command/metadata named pipe filename
+        mass_named_pipes.metadata_pipe = optarg;
         break;
 
         default:
@@ -655,7 +644,7 @@ main(int argc, char **argv)
       hostname == (char *)NULL ||
       address == (char*)NULL ||
       txt == (char*)NULL ||
-      gnamed_pipe == (char*)NULL ||
+      mass_named_pipes.audio_pipe == (char*)NULL ||
       ntpstart == 0 ||
       volume == 0
       )
@@ -702,11 +691,20 @@ main(int argc, char **argv)
       remove_pipes(TESTRUN_PIPE);
       return EXIT_FAILURE;
     }
-    gnamed_pipe = TESTRUN_PIPE;
+    mass_named_pipes.audio_pipe = TESTRUN_PIPE;
   }
   else {
     // Check that named pipe exists for audio streaming. Metadata one too?
-    ret = check_pipes(gnamed_pipe);
+    ret = check_pipe(mass_named_pipes.audio_pipe);
+    if (ret < 0) {
+      return EXIT_FAILURE;
+    }
+    if (!mass_named_pipes.metadata_pipe) {
+      // Adopt the default
+      metadata_pipe_defaulted = true;
+      asprintf(&mass_named_pipes.metadata_pipe, "%s%s", mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX);
+    }
+    ret = check_pipe(mass_named_pipes.metadata_pipe);
     if (ret < 0) {
       return EXIT_FAILURE;
     }
@@ -954,6 +952,10 @@ main(int argc, char **argv)
 
  txt_fail:
   if (txt_kv) keyval_clear(txt_kv);
+
+  if (metadata_pipe_defaulted) {
+    free(mass_named_pipes.metadata_pipe);
+  }
 
   DPRINTF(E_LOG, L_MAIN, "Exiting.\n");
   conffile_unload();
