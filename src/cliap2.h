@@ -10,6 +10,7 @@ typedef struct ap2_device_info
   const char *address;
   int port;
   struct keyval *txt;
+  const char *auth_key;
   uint64_t ntpstart;
   uint32_t wait;
   struct timespec start_ts;

@@ -1238,7 +1238,9 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_PIN) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from metadata pipe to %s\n", __func__, pipe_metadata.prepared.pin);
-    player_raop_verification_kickoff(&pipe_metadata.prepared.pin);
+    // We only support AirPlay2 at the moment. The below code will need to be changed if we add support
+    // for RAOP.
+    player_verification_kickoff(&pipe_metadata.prepared.pin, OUTPUT_TYPE_AIRPLAY);
     free(pipe_metadata.prepared.pin);
 
   }
@@ -1590,6 +1592,9 @@ mass_timer_cb(int fd, short what, void *arg)
 int
 mass_init(void)
 {
+  // Maybe we can add a call to player_device_add(device) in here somewhere to initiate device connection before
+  // audio is streamed to the named pipe. Currently, device connection is initiatied on receipt of data on the 
+  // audio named pipe.
   DPRINTF(E_DBG, L_PLAYER, "mass_init()\n");
 
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
@@ -1599,6 +1604,8 @@ mass_init(void)
   if (!tid_pipe) {
     // main thread
     // Create a persistent event timer in the main event loop to monitor and report playback status
+    // Using the main thread may not be necessary anymore - test moving this into the pipe thread at some time
+    // to understand the implications.
     mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
     DPRINTF(E_DBG, L_PLAYER, 
       "%s:Activating persistent event timer with timeval %d sec, %d usec\n,",

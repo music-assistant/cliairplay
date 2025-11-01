@@ -52,7 +52,7 @@ static cfg_opt_t sec_general[] =
     CFG_STR_LIST("trusted_networks", "{lan}", CFGF_NONE),
     CFG_BOOL("ipv6", cfg_false, CFGF_NONE),
     CFG_STR("bind_address", NULL, CFGF_NONE),
-    CFG_BOOL("speaker_autoselect", cfg_false, CFGF_NONE),
+    CFG_BOOL("speaker_autoselect", cfg_true, CFGF_NONE),
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     CFG_BOOL("high_resolution_clock", cfg_false, CFGF_NONE),
 #else
@@ -70,7 +70,7 @@ static cfg_opt_t sec_general[] =
 /* library section structure */
 static cfg_opt_t sec_library[] =
   {
-    CFG_STR("name", "My Music on %h", CFGF_NONE),
+    CFG_STR("name", "Music Assistant", CFGF_NONE),
     CFG_INT("port", 3689, CFGF_NONE),
     CFG_STR("password", NULL, CFGF_NONE),
     CFG_STR_LIST("directories", NULL, CFGF_NONE),

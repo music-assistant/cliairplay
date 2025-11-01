@@ -1494,8 +1494,6 @@ device_auth_kickoff(void *arg, int *retval)
     }
 
   // We're async, so we don't care about return values or callbacks with result
-  DPRINTF(E_DBG, L_PLAYER, "%s:Device: %d sending PIN: %s to outputs_device_authorize()\n", 
-    __func__, device->name, cmdarg->auth.pin);
   outputs_device_authorize(device, cmdarg->auth.pin, NULL);
 
   *retval = 0;
@@ -2137,8 +2135,11 @@ playback_start_item(void *arg, int *retval)
 
 	  *retval = outputs_device_start(device, device_activate_cb, false);
     DPRINTF(E_DBG, L_PLAYER, 
-      "%s:outputs_device_start(device, device_activate_cb, false) returned %d for device %s, requires auth:%s\n",
-      __func__, *retval, device->name, device->requires_auth ? "true" : "false"
+      "%s:retval %d, Device %s, state: %d, requires auth:%s, prevent playback:%s, busy:%s\n",
+      __func__, *retval, device->name, device->state,
+      device->requires_auth ? "true" : "false",
+      device->prevent_playback ? "true" : "false",
+      device->busy ? "true" : "false"
     );
 	  if (*retval < 0)
 	    continue;
@@ -3866,6 +3867,25 @@ player_raop_verification_kickoff(char **arglist)
     }
 
   cmdarg->auth.type = OUTPUT_TYPE_RAOP;
+  memcpy(cmdarg->auth.pin, arglist[0], 4);
+
+  commands_exec_async(cmdbase, device_auth_kickoff, cmdarg);
+
+}
+
+void
+player_verification_kickoff(char **arglist, enum output_types type)
+{
+  union player_arg *cmdarg;
+
+  cmdarg = calloc(1, sizeof(union player_arg));
+  if (!cmdarg)
+    {
+      DPRINTF(E_LOG, L_PLAYER, "Could not allocate player_command\n");
+      return;
+    }
+
+  cmdarg->auth.type = type;
   memcpy(cmdarg->auth.pin, arglist[0], 4);
 
   commands_exec_async(cmdbase, device_auth_kickoff, cmdarg);

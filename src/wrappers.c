@@ -387,7 +387,11 @@ db_perthread_deinit(void)
 int
 db_speaker_save(struct output_device *device)
 {
-    // It has been tested that it is ok to do nothing
+    if (device->auth_key) {
+        DPRINTF(E_DBG, L_DB, "%s:Device %s has authorization key '%s'\n", 
+            __func__, device->name, device->auth_key
+        );
+    }
     return 0;
 }
 
@@ -397,7 +401,7 @@ db_speaker_get(struct output_device *device, uint64_t id)
     device->id = id;
     device->selected = 1;
     device->volume = ap2_device_info.volume;
-    //device->auth_key = ?? // might need to pass this as command line argument for some devices
+    device->auth_key = (char *)ap2_device_info.auth_key; // lose the const qualifier
     device->selected_format = MEDIA_FORMAT_ALAC;
 
     return 0;
@@ -472,6 +476,12 @@ db_escape_string(const char *str)
 /*
  * Wrappers for mdns.c
  */
+
+ // Immediately call the mdns_browse_cb with the information about the 
+ // airplay device we want to stream to.
+ // TODO: @bradkeifer - see if we can trigger device connection after
+ // the callback is complete. At the moment, device connection is triggered 
+ // on receipt of first audio streaming data on the named pipe.
 int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
