@@ -1645,6 +1645,7 @@ device_activate_cb(struct output_device *device, enum output_device_state status
   if (status == OUTPUT_STATE_PASSWORD)
     {
       DPRINTF(E_LOG, L_PLAYER, "The %s device '%s' requires a valid PIN or password\n", device->type_name, device->name);
+      // We need to figure out how to prevent playback starting until such time as PIN or password has been supplied??
 
       outputs_device_deselect(device);
 
@@ -2114,6 +2115,10 @@ playback_start_item(void *arg, int *retval)
   // Start sessions on selected devices. We shouldn't see any callbacks to
   // device_shutdown_cb, since the unselected devices shouldn't have sessions.
   *retval = outputs_start(device_activate_cb, device_shutdown_cb, false);
+  DPRINTF(E_DBG, L_PLAYER, 
+    "%s:outputs_start(device_activate_cb, device_shutdown_cb, false) returned %d\n",
+    __func__, *retval
+  );
   if (*retval < 0)
     DPRINTF(E_WARN, L_PLAYER, "All selected speakers failed to start\n");
 
@@ -2129,6 +2134,13 @@ playback_start_item(void *arg, int *retval)
 	    continue;
 
 	  *retval = outputs_device_start(device, device_activate_cb, false);
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:retval %d, Device %s, state: %d, requires auth:%s, prevent playback:%s, busy:%s\n",
+      __func__, *retval, device->name, device->state,
+      device->requires_auth ? "true" : "false",
+      device->prevent_playback ? "true" : "false",
+      device->busy ? "true" : "false"
+    );
 	  if (*retval < 0)
 	    continue;
 
@@ -3855,6 +3867,25 @@ player_raop_verification_kickoff(char **arglist)
     }
 
   cmdarg->auth.type = OUTPUT_TYPE_RAOP;
+  memcpy(cmdarg->auth.pin, arglist[0], 4);
+
+  commands_exec_async(cmdbase, device_auth_kickoff, cmdarg);
+
+}
+
+void
+player_verification_kickoff(char **arglist, enum output_types type)
+{
+  union player_arg *cmdarg;
+
+  cmdarg = calloc(1, sizeof(union player_arg));
+  if (!cmdarg)
+    {
+      DPRINTF(E_LOG, L_PLAYER, "Could not allocate player_command\n");
+      return;
+    }
+
+  cmdarg->auth.type = type;
   memcpy(cmdarg->auth.pin, arglist[0], 4);
 
   commands_exec_async(cmdbase, device_auth_kickoff, cmdarg);

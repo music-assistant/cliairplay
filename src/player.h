@@ -203,6 +203,9 @@ player_device_remove(void *device);
 void
 player_raop_verification_kickoff(char **arglist);
 
+void
+player_verification_kickoff(char **arglist, enum output_types type);
+
 const char *
 player_pmap(void *p);
 

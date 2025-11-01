@@ -147,12 +147,13 @@ usage(char *program)
   printf("  --loglevel <number>               Log level (0-5)\n");
   printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
   printf("  --logdomains <dom,dom..>          Log domains\n");
-  printf("  --config <file>                   Use <file> as the configuration file\n");
+  printf("  --config <file>                   Use <file> for the configuration file.\n");
   printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
   printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
   printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
   printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
   printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --auth <auth_key>                 Authorization key.\n");
   printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
@@ -524,6 +525,7 @@ main(int argc, char **argv)
     { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
     { "pipe",          1, NULL, 515 },
     { "command_pipe",  1, NULL, 517 },
+    { "auth",          1, NULL, 518 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -629,6 +631,10 @@ main(int argc, char **argv)
         mass_named_pipes.metadata_pipe = optarg;
         break;
 
+      case 518: // authorization key
+        ap2_device_info.auth_key = optarg;
+        break;
+
         default:
       case '?':
         usage(argv[0]);
@@ -683,7 +689,6 @@ main(int argc, char **argv)
     conffile_unload();
     return EXIT_FAILURE;
   }
-  // logger_detach();  // Eliminate logging to stderr
 
   if (testrun) {
     ret = create_pipes(TESTRUN_PIPE);
@@ -694,7 +699,7 @@ main(int argc, char **argv)
     mass_named_pipes.audio_pipe = TESTRUN_PIPE;
   }
   else {
-    // Check that named pipe exists for audio streaming. Metadata one too?
+    // Check that named pipes exist for audio streaming and metadata
     ret = check_pipe(mass_named_pipes.audio_pipe);
     if (ret < 0) {
       return EXIT_FAILURE;
