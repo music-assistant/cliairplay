@@ -1303,7 +1303,8 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_STOP) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from metadata pipe command\n", __func__);
-    player_playback_stop();
+    // We want to gracefully exit when we receive the STOP command.
+    event_base_loopbreak(evbase_main);
   }
 
  readd:
