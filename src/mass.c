@@ -94,7 +94,7 @@
 #define MASS_METADATA_ACTION_KEY    "ACTION"
 
 /* from cliap2.c */
-extern char* gnamed_pipe;
+extern mass_named_pipes_t mass_named_pipes;
 extern struct event_base *evbase_main;
 
 /* from player.c */
@@ -1325,7 +1325,7 @@ pipe_metadata_watch_add(void *arg)
   char path[PATH_MAX];
   int ret;
 
-  ret = snprintf(path, sizeof(path), "%s.metadata", base_path);
+  ret = snprintf(path, sizeof(path), "%s", base_path);
   if ((ret < 0) || (ret > sizeof(path)))
     return;
 
@@ -1390,9 +1390,9 @@ pipelist_create(void)
   int id;
   int ret;
 
-  DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", gnamed_pipe);
+  DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", mass_named_pipes.audio_pipe);
   head = NULL;
-  pipe = pipe_create(gnamed_pipe, 1, PIPE_PCM, pipe_read_cb);
+  pipe = pipe_create(mass_named_pipes.audio_pipe, 1, PIPE_PCM, pipe_read_cb);
   pipelist_add(&head, pipe);
 
   return head;
@@ -1450,7 +1450,9 @@ setup(struct input_source *source)
   pipe->fd = fd;
   pipe->is_autostarted = (source->id == pipe_autostart_id);
 
-  worker_execute(pipe_metadata_watch_add, source->path, strlen(source->path) + 1, 0);
+  // We override default owntones behaviour and allow specification of the metadata named pipe
+  worker_execute(pipe_metadata_watch_add, mass_named_pipes.metadata_pipe, strlen(mass_named_pipes.metadata_pipe) + 1, 0);
+  // worker_execute(pipe_metadata_watch_add, source->path, strlen(source->path) + 1, 0);
 
   source->input_ctx = pipe;
 
