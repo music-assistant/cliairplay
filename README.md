@@ -14,23 +14,22 @@ NOTE: This is in early stage development and will be subject to change.
 
 Install required tools and libraries - minimal list yet to be confirmed:
 
-```
+```bash
 sudo apt-get install \
-  build-essential git autotools-dev autoconf automake libtool gettext gawk \
-  libconfuse-dev libunistring-dev \
-  libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
-  libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
-  libevent-dev libplist-dev libsodium-dev libjson-c-dev \
-  libcurl4-openssl-dev libprotobuf-c-dev
+  build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
+  uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
+  libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
+  libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
+  libavfilter-dev
 ```
 
 Then run the following:
 
-```
+```bash
 git clone https://github.com/music-assistant/cliairplay.git
 cd cliairplay
 git submodule update --init
-autoreconf -i
+autoreconf -fi
 ./configure
 make
 ```
@@ -62,6 +61,7 @@ Notes:
 - OpenSSL 3 is recommended as OpenSSL 1.1 reached end-of-life in September 2023.
 - Bison from Homebrew is required as macOS ships with an outdated version (2.3).
 - macOS uses CoreAudio instead of ALSA (`libasound2-dev`). The project should detect and skip ALSA on macOS; if it doesn't, look for a configure flag to disable ALSA support.
+- The complete, but minimal list of required Homebrew packages is still work in progress
 
 4. Export Homebrew paths so `./configure` finds libraries (portable for Intel/Apple Silicon):
 

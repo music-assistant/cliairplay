@@ -39,12 +39,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf \
-            libconfuse-dev libunistring-dev \
-            libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
-            libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
-            libevent-dev libplist-dev libsodium-dev libjson-c-dev \
-            libcurl4-openssl-dev libprotobuf-c-dev pkg-config bison flex
+            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
+            uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
+            libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
+            libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
+            libavfilter-dev
 
       - name: Build for x86_64
         run: |
@@ -95,15 +94,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf \
-            libconfuse-dev libunistring-dev \
-            libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
-            libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
-            libevent-dev libplist-dev libsodium-dev libjson-c-dev \
-            libcurl4-openssl-dev libprotobuf-c-dev pkg-config bison flex
+            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
+            uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
+            libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
+            libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
+            libavfilter-dev
 
       - name: Build for ARM64
         run: |
+          # export LIBAV_PREFIX="$(dpkg-query -S libavformat.a | gawk 'BEGIN { RS = ":" } {print $1}' | tail -1 | sed 's/\/libavformat.a//')"
+          # export LIBAV_LIBS="$LIBAV_PREFIX/libavcodec.a $LIBAV_PREFIX/libavformat.a $LIBAV_PREFIX/libavfilter.a $LIBAV_PREFIX/libavutil.a $LIBAV_PREFIX/libswscale.a -llzma -lgnutls"
+
           autoreconf -fi
           ./configure
           make -j$(nproc)
@@ -149,7 +150,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install \
+          brew reinstall \
             autoconf automake libtool gettext gawk pkg-config \
             confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
             libsodium json-c curl openssl@3 protobuf-c bison libiconv

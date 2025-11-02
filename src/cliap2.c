@@ -410,7 +410,7 @@ int create_pipes(const char *pipe_path)
     int ret;
     char *metadata_path = NULL;
 
-    asprintf(&metadata_path, "%s.metadata", pipe_path);
+    ret = asprintf(&metadata_path, "%s.metadata", pipe_path);
     ret = create_pipe(metadata_path);
     free(metadata_path);
     return ret;
@@ -455,10 +455,11 @@ int remove_pipes(const char *pipe_path)
 {
   int audio_error, metadata_error = 0;
   char *metadata_path = NULL;
+  int ret;
 
   audio_error = remove_pipe(pipe_path);
 
-  asprintf(&metadata_path, "%s.metadata", pipe_path);
+  ret = asprintf(&metadata_path, "%s.metadata", pipe_path);
   metadata_error = remove_pipe(metadata_path);
   free(metadata_path);
 
@@ -707,7 +708,12 @@ main(int argc, char **argv)
     if (!mass_named_pipes.metadata_pipe) {
       // Adopt the default
       metadata_pipe_defaulted = true;
-      asprintf(&mass_named_pipes.metadata_pipe, "%s%s", mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX);
+      ret = asprintf(&mass_named_pipes.metadata_pipe, "%s%s", 
+        mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
+      );
+      if (ret < 0) {
+        return EXIT_FAILURE;
+      }
     }
     ret = check_pipe(mass_named_pipes.metadata_pipe);
     if (ret < 0) {
@@ -736,11 +742,11 @@ main(int argc, char **argv)
     ap2_device_info.start_ts.tv_sec += wait / 1000;
     ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
     DPRINTF(E_DBG, L_MAIN, 
-      "Calculated timespec start time: sec=%d.%d. On basis of ntpstart of %" 
+      "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
       PRIu32 ".%.10" PRIu32 " and wait of %dms\n", 
       ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec, 
       ns.sec, ns.frac, wait);
-    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%d.%d\n", 
+    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
       now_ts.tv_sec, now_ts.tv_nsec);
     timespec_to_ntp(&ap2_device_info.start_ts, &ns);
     DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);

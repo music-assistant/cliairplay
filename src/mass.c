@@ -656,7 +656,7 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
     goto error;
   }
   else if (ret != artwork_image_size) {
-    DPRINTF(E_LOG, L_PLAYER, "Incomplete write of artwork to '%s' (%zd/%d)\n",
+    DPRINTF(E_LOG, L_PLAYER, "Incomplete write of artwork to '%s' (%zd/%ld)\n",
       prepared->pict_tmpfile_path, ret, artwork_image_size
     );
     goto error;
@@ -936,10 +936,10 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
         free(value);
         return -1;
     }
-    asprintf(&prepared->pin, "%0.4u", pin);
+    ret = asprintf(&prepared->pin, "%.4u", pin);
     free(key);
     free(value);
-    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %0.4s\n", __func__, prepared->pin);
+    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %.4s\n", __func__, prepared->pin);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {
@@ -1208,7 +1208,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
       goto readd;
     }
   
-  DPRINTF(E_DBG, L_PLAYER, "%s:Received %d bytes of metadata\n", __func__, len);
+  DPRINTF(E_DBG, L_PLAYER, "%s:Received %ld bytes of metadata\n", __func__, len);
 
   // .parsed is shared with the input thread (see metadata_get), so use mutex.
   // Note that this means _parse() must not do anything that could cause a
@@ -1555,7 +1555,7 @@ mass_timer_cb(int fd, short what, void *arg)
       player_started = true;
     }
     DPRINTF(E_INFO, L_PLAYER, 
-      "%s(): elapsed milliseconds:%" PRIu64 " ms. volume:%d state:%s\n",
+      "%s(): elapsed milliseconds:%" PRIu32 " ms. volume:%d state:%s\n",
       __func__, status.pos_ms, status.volume, play_status_str(status.status)
     );
   }
@@ -1608,7 +1608,7 @@ mass_init(void)
     // to understand the implications.
     mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
     DPRINTF(E_DBG, L_PLAYER, 
-      "%s:Activating persistent event timer with timeval %d sec, %d usec\n,",
+      "%s:Activating persistent event timer with timeval %" PRId64 " sec, %" PRId64 " usec\n,",
       __func__, mass_tv.tv_sec, mass_tv.tv_usec
     );
     evtimer_add(mass_timer_event, &mass_tv);
