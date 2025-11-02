@@ -101,6 +101,12 @@ jobs:
             libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
             libevent-dev libplist-dev libsodium-dev libjson-c-dev \
             libcurl4-openssl-dev libprotobuf-c-dev pkg-config bison flex
+      
+      - name: Check FFmpeg version
+        run: |
+          pkg-config --modversion libavcodec
+          ffmpeg -version
+          find /usr -name "libav*.a" -print
 
       - name: Build for ARM64
         run: |

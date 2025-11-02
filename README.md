@@ -14,11 +14,11 @@ NOTE: This is in early stage development and will be subject to change.
 
 Install required tools and libraries - minimal list yet to be confirmed:
 
-```
+```bash
 sudo apt-get install \
   build-essential git autotools-dev autoconf automake libtool gettext gawk \
   libconfuse-dev libunistring-dev \
-  libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \
+  libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev liblzma-dev \
   libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
   libevent-dev libplist-dev libsodium-dev libjson-c-dev \
   libcurl4-openssl-dev libprotobuf-c-dev
@@ -26,11 +26,11 @@ sudo apt-get install \
 
 Then run the following:
 
-```
+```bash
 git clone https://github.com/music-assistant/cliairplay.git
 cd cliairplay
 git submodule update --init
-autoreconf -i
+autoreconf -fi
 ./configure
 make
 ```

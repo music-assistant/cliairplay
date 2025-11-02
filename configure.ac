@@ -12,8 +12,9 @@ AM_INIT_AUTOMAKE([foreign subdir-objects 1.11])
 AM_SILENT_RULES([yes])
 
 # Use static linking for select libraries
-: ${LIBAV_CFLAGS="-static"}
-: ${LIBAV_LDFLAGS="-llibavcodec.a -llibavformat.a -llibavfilter.a -llibavutil.a -llibwscale.a"}
+# Still debugging - the -L stuff below cannot remain as is.
+# : ${LIBAV_CFLAGS="-static"}
+# : ${LIBAV_LIBS="-lavcodec -lavformat -lavfilter -lavutil -lswscale -llzma"}
 
 AC_USE_SYSTEM_EXTENSIONS
 
@@ -47,6 +48,74 @@ AX_PROG_BISON([AC_DEFINE([YACC], [bison], [GNU bison found])],
 dnl Enable all warnings by default.
 AM_CPPFLAGS="-Wall"
 AC_SUBST([AM_CPPFLAGS])
+
+dnl Checks for header files.
+AC_CHECK_HEADERS_ONCE([regex.h pthread_np.h])
+AC_CHECK_HEADERS([sys/wait.h sys/param.h dirent.h getopt.h stdint.h], [],
+	[AC_MSG_ERROR([[Missing header required to build OwnTone]])])
+AC_CHECK_HEADERS([time.h], [],
+	[AC_MSG_ERROR([[Missing header required to build OwnTone]])])
+AC_CHECK_FUNCS_ONCE([posix_fadvise pipe2 gettid])
+AC_CHECK_FUNCS([strptime strtok_r], [],
+	[AC_MSG_ERROR([[Missing function required to build OwnTone]])])
+
+dnl check for clock_gettime or replace it
+AC_SEARCH_LIBS([clock_gettime], [rt],
+	[AC_DEFINE([HAVE_CLOCK_GETTIME], 1,
+		[Define to 1 if have clock_gettime function])],
+	[AC_CHECK_HEADER([mach/mach_time.h],
+	[AC_DEFINE([HAVE_MACH_CLOCK], 1,
+		[Define to 1 if mach kernel clock replacement available])],
+	[AC_MSG_ERROR([[Missing clock_gettime and any replacement]])])])
+
+dnl check for timer_settime or replace it
+AC_SEARCH_LIBS([timer_settime], [rt],
+	[AC_DEFINE([HAVE_TIMER_SETTIME], 1,
+		[Define to 1 if have timer_settime function])],
+	[AC_CHECK_HEADER([mach/mach_time.h],
+	[AC_DEFINE([HAVE_MACH_TIMER], 1,
+		[Define to 1 if mach kernel clock replacement available])],
+	[AC_MSG_ERROR([[Missing timer_settime and any replacement]])])])
+
+AC_SEARCH_LIBS([pthread_exit], [pthread], [],
+	[AC_MSG_ERROR([[pthreads library is required]])])
+AC_SEARCH_LIBS([pthread_setname_np], [pthread],
+	[dnl Validate pthread_setname_np with 2 args (some have 1)
+	 AC_MSG_CHECKING([[for two-parameter pthread_setname_np]])
+	 AC_LINK_IFELSE([AC_LANG_PROGRAM([[@%:@include <pthread.h>]],
+		[[pthread_setname_np(pthread_self(), "name");]])],
+		[AC_MSG_RESULT([yes])
+		 AC_DEFINE([HAVE_PTHREAD_SETNAME_NP], 1,
+			[Define to 1 if you have pthread_setname_np])],
+		[AC_MSG_RESULT([[no]])])],
+	[AC_SEARCH_LIBS([pthread_set_name_np], [pthread],
+		[AC_CHECK_FUNCS([pthread_set_name_np])])])
+AC_SEARCH_LIBS([pthread_getname_np], [pthread],
+	[AC_DEFINE([HAVE_PTHREAD_GETNAME_NP], 1,
+		[Define to 1 if you have pthread_getname_np])]
+	[AC_SEARCH_LIBS([pthread_get_name_np], [pthread],
+		[AC_DEFINE([HAVE_PTHREAD_GETNAME_NP], 1,
+			[Define to 1 if you have pthread_get_name_np])])])
+AC_SEARCH_LIBS([pthread_getthreadid_np], [pthread],
+	[AC_DEFINE([HAVE_PTHREAD_GETTHREADID_NP], 1,
+		[Define to 1 if you have pthread_getthreadid_np])])
+AC_SEARCH_LIBS([uuid_generate_random], [uuid],
+	[AC_DEFINE([HAVE_UUID], 1,
+		[Define to 1 if you have uuid_generate_random])])
+AC_SEARCH_LIBS([copy_file_range], [c],
+	[AC_DEFINE([HAVE_COPY_FILE_RANGE], 1,
+		[Define to 1 if you have copy_file_range])])
+AC_SEARCH_LIBS([fcopyfile], [c],
+	[AC_DEFINE([HAVE_FCOPYFILE], 1,
+		[Define to 1 if you have fcopyfile])])
+
+AC_SEARCH_LIBS([log10], [m])
+AC_SEARCH_LIBS([lrint], [m])
+AC_SEARCH_LIBS([fabs], [m])
+
+dnl Large File Support (LFS)
+AC_SYS_LARGEFILE
+AC_TYPE_OFF_T
 
 # Checks for libraries.
 AC_SUBST([COMMON_LIBS])
@@ -181,78 +250,6 @@ OWNTONE_MODULES_CHECK([OWNTONE], [LIBAV],
 	])
 
 AC_CHECK_SIZEOF([void *])
-
-# Checks for header files.
-AC_CHECK_HEADERS_ONCE([regex.h pthread_np.h])
-AC_CHECK_HEADERS([sys/wait.h sys/param.h dirent.h getopt.h stdint.h], [],
-	[AC_MSG_ERROR([[Missing header required to build OwnTone]])])
-AC_CHECK_HEADERS([time.h], [],
-	[AC_MSG_ERROR([[Missing header required to build OwnTone]])])
-AC_CHECK_FUNCS_ONCE([posix_fadvise pipe2 gettid])
-AC_CHECK_FUNCS([strptime strtok_r], [],
-	[AC_MSG_ERROR([[Missing function required to build OwnTone]])])
-
-# check for clock_gettime or replace it
-AC_SEARCH_LIBS([clock_gettime], [rt],
-	[AC_DEFINE([HAVE_CLOCK_GETTIME], 1,
-		[Define to 1 if have clock_gettime function])],
-	[AC_CHECK_HEADER([mach/mach_time.h],
-	[AC_DEFINE([HAVE_MACH_CLOCK], 1,
-		[Define to 1 if mach kernel clock replacement available])],
-	[AC_MSG_ERROR([[Missing clock_gettime and any replacement]])])])
-
-# check for timer_settime or replace it
-AC_SEARCH_LIBS([timer_settime], [rt],
-	[AC_DEFINE([HAVE_TIMER_SETTIME], 1,
-		[Define to 1 if have timer_settime function])],
-	[AC_CHECK_HEADER([mach/mach_time.h],
-	[AC_DEFINE([HAVE_MACH_TIMER], 1,
-		[Define to 1 if mach kernel clock replacement available])],
-	[AC_MSG_ERROR([[Missing timer_settime and any replacement]])])])
-
-AC_SEARCH_LIBS([pthread_exit], [pthread], [],
-	[AC_MSG_ERROR([[pthreads library is required]])])
-AC_SEARCH_LIBS([pthread_setname_np], [pthread],
-	[# Validate pthread_setname_np with 2 args (some have 1)
-	 AC_MSG_CHECKING([[for two-parameter pthread_setname_np]])
-	 AC_LINK_IFELSE([AC_LANG_PROGRAM([[@%:@include <pthread.h>]],
-		[[pthread_setname_np(pthread_self(), "name");]])],
-		[AC_MSG_RESULT([yes])
-		 AC_DEFINE([HAVE_PTHREAD_SETNAME_NP], 1,
-			[Define to 1 if you have pthread_setname_np])],
-		[AC_MSG_RESULT([[no]])])],
-	[AC_SEARCH_LIBS([pthread_set_name_np], [pthread],
-		[AC_CHECK_FUNCS([pthread_set_name_np])])])
-AC_SEARCH_LIBS([pthread_getname_np], [pthread],
-	[AC_DEFINE([HAVE_PTHREAD_GETNAME_NP], 1,
-		[Define to 1 if you have pthread_getname_np])]
-	[AC_SEARCH_LIBS([pthread_get_name_np], [pthread],
-		[AC_DEFINE([HAVE_PTHREAD_GETNAME_NP], 1,
-			[Define to 1 if you have pthread_get_name_np])])])
-AC_SEARCH_LIBS([pthread_getthreadid_np], [pthread],
-	[AC_DEFINE([HAVE_PTHREAD_GETTHREADID_NP], 1,
-		[Define to 1 if you have pthread_getthreadid_np])])
-AC_SEARCH_LIBS([uuid_generate_random], [uuid],
-	[AC_DEFINE([HAVE_UUID], 1,
-		[Define to 1 if you have uuid_generate_random])])
-AC_SEARCH_LIBS([copy_file_range], [c],
-	[AC_DEFINE([HAVE_COPY_FILE_RANGE], 1,
-		[Define to 1 if you have copy_file_range])])
-AC_SEARCH_LIBS([fcopyfile], [c],
-	[AC_DEFINE([HAVE_FCOPYFILE], 1,
-		[Define to 1 if you have fcopyfile])])
-
-AC_SEARCH_LIBS([log10], [m])
-AC_SEARCH_LIBS([lrint], [m])
-AC_SEARCH_LIBS([fabs], [m])
-
-# Large File Support (LFS)
-AC_SYS_LARGEFILE
-AC_TYPE_OFF_T
-
-# Checks for typedefs, structures, and compiler characteristics.
-
-# Checks for library functions.
 
 dnl --- Begin configuring the options ---
 dnl Install config file
