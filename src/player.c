@@ -886,7 +886,7 @@ session_update_read(int nsamples)
       if (is_less_than(&pb_req_start_ts, &pb_session.start_ts)) {
         // Requested start time is in the past, so just use now
         DPRINTF(E_WARN, L_PLAYER,
-          "%s: Requested start time %d.%d is earlier than now %d.%d\n",
+          "%s: Requested start time %ld.%ld is earlier than now %ld.%ld\n",
           __func__, pb_req_start_ts.tv_sec, pb_req_start_ts.tv_nsec, 
           pb_session.start_ts.tv_sec, pb_session.start_ts.tv_nsec
         );
@@ -897,7 +897,7 @@ session_update_read(int nsamples)
         pb_session.pts = pb_req_start_ts;
       }
       DPRINTF(E_DBG, L_PLAYER, 
-        "%s:Initial pb_session.pts set to %d.%d for pb_session.pos=%" PRIu32 "\n",
+        "%s:Initial pb_session.pts set to %ld.%ld for pb_session.pos=%" PRIu32 "\n",
         __func__, pb_session.pts.tv_sec, pb_session.pts.tv_nsec, pb_session.pos);
     }
 
