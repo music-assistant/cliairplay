@@ -939,7 +939,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     ret = asprintf(&prepared->pin, "%.4u", pin);
     free(key);
     free(value);
-    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %0.4s\n", __func__, prepared->pin);
+    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %.4s\n", __func__, prepared->pin);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {

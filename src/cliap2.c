@@ -708,7 +708,9 @@ main(int argc, char **argv)
     if (!mass_named_pipes.metadata_pipe) {
       // Adopt the default
       metadata_pipe_defaulted = true;
-      asprintf(&mass_named_pipes.metadata_pipe, "%s%s", mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX);
+      (void) asprintf(&mass_named_pipes.metadata_pipe, "%s%s", 
+        mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
+      );
     }
     ret = check_pipe(mass_named_pipes.metadata_pipe);
     if (ret < 0) {
