@@ -14,6 +14,7 @@ AM_SILENT_RULES([yes])
 # Use static linking
 # : ${CFLAGS="-static"}
 : ${LIBAV_CFLAGS="-static"}
+: ${LIBAV_LDFLAGS="-llibavformat.a"}
 
 AC_USE_SYSTEM_EXTENSIONS
 
