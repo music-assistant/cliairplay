@@ -21,9 +21,6 @@ sudo apt-get install \
   libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
   libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
   libavfilter-dev
-  # liblzma-dev \
-  # libasound2-dev \
-  # libprotobuf-c-dev
 ```
 
 Then run the following:
@@ -64,6 +61,7 @@ Notes:
 - OpenSSL 3 is recommended as OpenSSL 1.1 reached end-of-life in September 2023.
 - Bison from Homebrew is required as macOS ships with an outdated version (2.3).
 - macOS uses CoreAudio instead of ALSA (`libasound2-dev`). The project should detect and skip ALSA on macOS; if it doesn't, look for a configure flag to disable ALSA support.
+- The complete, but minimal list of required Homebrew packages is still work in progress
 
 4. Export Homebrew paths so `./configure` finds libraries (portable for Intel/Apple Silicon):
 
