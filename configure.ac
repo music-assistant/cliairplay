@@ -11,11 +11,6 @@ AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign subdir-objects 1.11])
 AM_SILENT_RULES([yes])
 
-# Use static linking for select libraries
-# Still debugging - the -L stuff below cannot remain as is.
-# : ${LIBAV_CFLAGS="-static"}
-# : ${LIBAV_LIBS="-lavcodec -lavformat -lavfilter -lavutil -lswscale -llzma"}
-
 AC_USE_SYSTEM_EXTENSIONS
 
 # Checks for programs.

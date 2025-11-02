@@ -16,12 +16,14 @@ Install required tools and libraries - minimal list yet to be confirmed:
 
 ```bash
 sudo apt-get install \
-  build-essential git autotools-dev autoconf automake libtool gettext gawk \
-  libconfuse-dev libunistring-dev \
-  libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev liblzma-dev \
-  libasound2-dev libxml2-dev libgcrypt20-dev zlib1g-dev \
-  libevent-dev libplist-dev libsodium-dev libjson-c-dev \
-  libcurl4-openssl-dev libprotobuf-c-dev
+  build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
+  uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
+  libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
+  libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
+  libavfilter-dev
+  # liblzma-dev \
+  # libasound2-dev \
+  # libprotobuf-c-dev
 ```
 
 Then run the following:
