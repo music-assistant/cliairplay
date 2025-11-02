@@ -156,7 +156,7 @@ AC_ARG_WITH([libav], [AS_HELP_STRING([--with-libav],
 # libav/ffmpeg requires many feature checks
 OWNTONE_MODULES_CHECK([OWNTONE], [LIBAV],
 	[libavformat$LIBAV libavcodec$LIBAV libavutil$LIBAV libavfilter$LIBAV],
-	[av_init_packet], [libavcodec/avcodec.h],
+	[av_packet_alloc], [libavcodec/avcodec.h],
 	[# Checks for misc libav and ffmpeg API differences
 	 AC_MSG_CHECKING([whether libav libraries are ffmpeg])
 	 AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <libavcodec/avcodec.h>
