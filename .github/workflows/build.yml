@@ -149,7 +149,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install \
+          brew reinstall \
             autoconf automake libtool gettext gawk pkg-config \
             confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
             libsodium json-c curl openssl@3 protobuf-c bison libiconv
