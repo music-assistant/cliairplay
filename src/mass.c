@@ -5,7 +5,7 @@
  * to provide an interface between Music Assistant and the airplay
  * player codebase from owtnones.
  * Raw PCM data is read from a named pipe and streamed to the airplay player
- * Metadata and commands are read from a second named pipe
+ * Metadata and commands are read from a second named pipe and processed
  * Player status is reported back to Music Assistant on stderr
  *
  * original code:
@@ -94,6 +94,7 @@
 #define MASS_METADATA_PIN_KEY      "PIN"
 
 /* from cliap2.c */
+extern ap2_device_info_t ap2_device_info;
 extern mass_named_pipes_t mass_named_pipes;
 extern struct event_base *evbase_main;
 
@@ -195,9 +196,6 @@ static pthread_t tid_pipe;
 static struct event_base *evbase_pipe;
 static struct commands_base *cmdbase;
 
-// for timer events
-static struct event_base *evbase_timer;
-
 // From config - the sample rate and bps of the pipe input
 static int pipe_sample_rate;
 static int pipe_bits_per_sample;
@@ -223,36 +221,6 @@ struct ntp_stamp
 };
 
 /* -------------------------------- HELPERS --------------------------------- */
-
-// These might be more at home in dmap_common.c
-static inline uint32_t
-dmap_str2val(const char s[4])
-{
-  return ((s[0] << 24) | (s[1] << 16) | (s[2] << 8) | (s[3] << 0));
-}
-
-static void
-dmap_val2str(char buf[5], uint32_t val)
-{
-  buf[0] = (val >> 24) & 0xff;
-  buf[1] = (val >> 16) & 0xff;
-  buf[2] = (val >> 8) & 0xff;
-  buf[3] = val & 0xff;
-  buf[4] = 0;
-}
-
-static const char *pipetype_str(enum pipetype type)
-{
-  switch (type)
-    {
-    case PIPE_PCM:
-      return "PCM";
-    case PIPE_METADATA:
-      return "Metadata";
-    default:
-      return "Unknown";
-    }
-}
 
 static const char *play_status_str(enum play_status status)
 {
@@ -496,94 +464,6 @@ pict_tmpfile_recreate(char *path, size_t path_size, int fd, const char *ext)
   return fd;
 }
 
-static int
-parse_progress(struct pipe_metadata_prepared *prepared, char *progress)
-{
-  struct input_metadata *m = &prepared->input_metadata;
-  char *s;
-  char *ptr;
-  // Below must be signed to avoid casting in the calculations of pos_ms/len_ms
-  int64_t start;
-  int64_t pos;
-  int64_t end;
-
-  if (!(s = strtok_r(progress, "/", &ptr)))
-    goto error;
-  safe_atoi64(s, &start);
-
-  if (!(s = strtok_r(NULL, "/", &ptr)))
-    goto error;
-  safe_atoi64(s, &pos);
-
-  if (!(s = strtok_r(NULL, "/", &ptr)))
-    goto error;
-  safe_atoi64(s, &end);
-
-  if (!start || !pos || !end)
-    goto error;
-
-  // Note that negative positions are allowed and supported. A negative position
-  // of e.g. -1000 means that the track will start in one second.
-  m->pos_is_updated = true;
-  m->pos_ms = (pos - start) * 1000 / pipe_sample_rate;
-  m->len_ms = (end > start) ? (end - start) * 1000 / pipe_sample_rate : 0;
-
-  DPRINTF(E_DBG, L_PLAYER, "Received Shairport metadata progress: %" PRIi64 "/%" PRIi64 "/%" PRIi64 " => %d/%u ms\n", start, pos, end, m->pos_ms, m->len_ms);
-
-  return 0;
-
- error:
-  DPRINTF(E_LOG, L_PLAYER, "Received unexpected Shairport metadata progress: %s\n", progress);
-  return -1;
-}
-
-static int
-parse_volume(struct pipe_metadata_prepared *prepared, const char *volume)
-{
-  char *volume_next;
-  float airplay_volume;
-  int local_volume;
-
-  errno = 0;
-  airplay_volume = strtof(volume, &volume_next);
-
-  if ((errno == ERANGE) || (volume == volume_next))
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Invalid Shairport airplay volume in string (%s): %s\n", volume,
-	      (errno == ERANGE ? strerror(errno) : "First token is not a number."));
-      goto error;
-    }
-
-  if (strcmp(volume_next, ",0.00,0.00,0.00") != 0)
-    {
-      DPRINTF(E_DBG, L_PLAYER, "Not applying Shairport airplay volume while software volume control is enabled (%s)\n", volume);
-      goto error; // Not strictly an error but goes through same flow
-    }
-
-  if (((int) airplay_volume) == -144)
-    {
-      DPRINTF(E_DBG, L_PLAYER, "Applying Shairport airplay volume ('mute', value: %.2f)\n", airplay_volume);
-      prepared->volume = 0;
-    }
-  else if (airplay_volume >= -30.0 && airplay_volume <= 0.0)
-    {
-      local_volume = (int)(100.0 + (airplay_volume / 30.0 * 100.0));
-
-      DPRINTF(E_DBG, L_PLAYER, "Applying Shairport airplay volume (percent: %d, value: %.2f)\n", local_volume, airplay_volume);
-      prepared->volume = local_volume;
-    }
-  else
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Shairport airplay volume out of range (-144.0, [-30.0 - 0.0]): %.2f\n", airplay_volume);
-      goto error;
-    }
-
-  return 0;
-
- error:
-  return -1;
-}
-
 /* Retrieves artwork from a URL and writes the artwork to a tmpfile
  * associated with the named pipes used for streaming and metadata.
  * The tmpfile path is stored in prepared->pict_tmpfile_path and can be used by the airplay output module.
@@ -677,130 +557,6 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
   return -1;
 }
 
-static int
-parse_picture(struct pipe_metadata_prepared *prepared, uint8_t *data, int data_len)
-{
-  struct input_metadata *m = &prepared->input_metadata;
-  const char *ext;
-  ssize_t ret;
-
-  free(m->artwork_url);
-  m->artwork_url = NULL;
-
-  if (data_len < 2 || data_len > PIPE_PICTURE_SIZE_MAX)
-    {
-      DPRINTF(E_WARN, L_PLAYER, "Unsupported picture size (%d) from Shairport metadata pipe\n", data_len);
-      goto error;
-    }
-
-  if (data[0] == 0xff && data[1] == 0xd8)
-    ext = ".jpg";
-  else if (data[0] == 0x89 && data[1] == 0x50)
-    ext = ".png";
-  else
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Unsupported picture format from Shairport metadata pipe\n");
-      goto error;
-    }
-
-  prepared->pict_tmpfile_fd = pict_tmpfile_recreate(prepared->pict_tmpfile_path, sizeof(prepared->pict_tmpfile_path), prepared->pict_tmpfile_fd, ext);
-  if (prepared->pict_tmpfile_fd < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Could not open tmpfile for pipe artwork '%s': %s\n", prepared->pict_tmpfile_path, strerror(errno));
-      goto error;
-    }
-
-  ret = write(prepared->pict_tmpfile_fd, data, data_len);
-  if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Error writing artwork from metadata pipe to '%s': %s\n", prepared->pict_tmpfile_path, strerror(errno));
-      goto error;
-    }
-  else if (ret != data_len)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Incomplete write of artwork to '%s' (%zd/%d)\n", prepared->pict_tmpfile_path, ret, data_len);
-      goto error;
-    }
-
-  DPRINTF(E_DBG, L_PLAYER, "Wrote pipe artwork to '%s'\n", prepared->pict_tmpfile_path);
-
-  m->artwork_url = safe_asprintf("file:%s", prepared->pict_tmpfile_path);
-
-  return 9;
-
- error:
-  return -1;
-}
-
-static void
-log_incoming(int severity, const char *msg, uint32_t type, uint32_t code, int data_len)
-{
-  char typestr[5];
-  char codestr[5];
-
-  dmap_val2str(typestr, type);
-  dmap_val2str(codestr, code);
-
-  DPRINTF(severity, L_PLAYER, "%s (type=%s, code=%s, len=%d)\n", msg, typestr, codestr, data_len);
-}
-
-/* Example of xml item:
-
-<item><type>73736e63</type><code>6d647374</code><length>9</length>
-<data encoding="base64">
-NDE5OTg3OTU0</data></item>
-*/
-static int
-parse_item_xml(uint32_t *type, uint32_t *code, uint8_t **data, int *data_len, const char *item)
-{
-  xml_node *xml;
-  const char *s;
-
-//  DPRINTF(E_DBG, L_PLAYER, "Got pipe metadata item: '%s'\n", item);
-
-  xml = xml_from_string(item);
-  if (!xml)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Could not parse pipe metadata item: %s\n", item);
-      goto error;
-    }
-
-  *type = 0;
-  if ((s = xml_get_val(xml, "item/type")))
-    sscanf(s, "%8x", type);
-
-  *code = 0;
-  if ((s = xml_get_val(xml, "item/code")))
-    sscanf(s, "%8x", code);
-
-  if (*type == 0 || *code == 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "No type (%d) or code (%d) in pipe metadata: %s\n", *type, *code, item);
-      goto error;
-    }
-
-  *data = NULL;
-  *data_len = 0;
-  if ((s = xml_get_val(xml, "item/data")))
-    {
-      *data = b64_decode(data_len, s);
-      if (*data == NULL)
-	{
-	  DPRINTF(E_LOG, L_PLAYER, "Base64 decode of '%s' failed\n", s);
-	  goto error;
-	}
-    }
-
-  log_incoming(E_SPAM, "Read Shairport metadata", *type, *code, *data_len);
-
-  xml_free(xml);
-  return 0;
-
- error:
-  xml_free(xml);
-  return -1;
-}
-
 static
 void extract_key_value(const char *input_string, char **key, char **value) {
     char *delimiter_pos = strchr(input_string, '='); // Find the '=' delimiter
@@ -841,12 +597,6 @@ void extract_key_value(const char *input_string, char **key, char **value) {
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
-  struct input_metadata *m = &prepared->input_metadata;
-  uint32_t type;
-  uint32_t code;
-  uint8_t *data;
-  int data_len;
-  char **dstptr;
   enum pipe_metadata_msg message;
   int ret;
   char *key, *value = NULL;
@@ -864,17 +614,17 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
 
   if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
-      prepared->input_metadata.album = value; // we should not free value now. The consumer must free it later.
+      prepared->input_metadata.album = value; // The consumer must free value
       free(key);
   }
   else if (!strncmp(key,MASS_METADATA_ARTIST_KEY, strlen(MASS_METADATA_ARTIST_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
-      prepared->input_metadata.artist = value; // we should not free value now. The consumer must free it later.
+      prepared->input_metadata.artist = value; // The consumer must free value
       free(key);
   }
   else if (!strncmp(key,MASS_METADATA_TITLE_KEY, strlen(MASS_METADATA_TITLE_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
-      prepared->input_metadata.title = value; // we should not free value now. The consumer must free it later.
+      prepared->input_metadata.title = value; // The consumer must free value
       free(key);
   }
   else if (!strncmp(key,MASS_METADATA_DURATION_KEY, strlen(MASS_METADATA_DURATION_KEY))) {
@@ -905,7 +655,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   }
   else if (!strncmp(key,MASS_METADATA_ARTWORK_KEY, strlen(MASS_METADATA_ARTWORK_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
-      prepared->input_metadata.artwork_url = value; // we should not free value now. The consumer must free it later.
+      prepared->input_metadata.artwork_url = value; // The consumer must free value
       free(key);
       ret = parse_artwork_url(prepared);
       if (ret < 0) {
@@ -1040,7 +790,6 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 {
   struct pipe *pipe = arg;
   struct player_status status;
-  struct player_speaker_info speaker_info;
   int ret;
 
   ret = player_get_status(&status);
@@ -1310,11 +1059,34 @@ pipe_metadata_watch_add(void *arg)
 static void
 pipe_thread_start(void)
 {
+  // struct player_speaker_info spk;
+  // int ret;
+
   CHECK_NULL(L_PLAYER, evbase_pipe = event_base_new());
   CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_pipe, NULL));
   CHECK_ERR(L_PLAYER, pthread_create(&tid_pipe, NULL, pipe_thread_run, NULL));
 
   thread_setname(tid_pipe, "pipe");
+  
+  // See if we can trigger early device connection, rather than waiting for audio data on the named pipe
+  // if (ap2_device_info.address) {
+  //   DPRINTF(E_DBG, L_PLAYER, "%s:About to call player_speaker_get_byaddress(&spk, %s) for %s\n", 
+  //     __func__, ap2_device_info.address, ap2_device_info.name
+  //   );
+       // This blocks and locks up the app.
+  //   ret = player_speaker_get_byaddress(&spk, ap2_device_info.address); // This must block
+  //   DPRINTF(E_DBG, L_PLAYER, "%s:player_speaker_get_byaddress() returned %d\n", __func__, ret);
+  //   DPRINTF(E_DBG, L_PLAYER, "%s:Speaker %" PRIu64 " has name %s\n", __func__, spk.id, spk.name);
+  //   if (spk.id) {
+  //     DPRINTF(E_DBG, L_PLAYER, "%s:About to enable speaker %" PRIu64 ", %s", __func__, spk.id, spk.name);
+  //     ret = player_speaker_enable(spk.id);
+  //     DPRINTF(E_DBG, L_PLAYER, "%s:player_speaker_enable() returned %d\n", __func__, ret);
+  //   }
+  // }
+  // else {
+  //   DPRINTF(E_LOG, L_PLAYER, "%s:No address for our speaker device\n", __func__);
+  // }
+
 }
 
 static void
@@ -1336,17 +1108,12 @@ pipe_thread_stop(void)
   tid_pipe = 0;
 }
 
-// For Music Assistant we will treat stdin as a PCM pipe
+// For Music Assistant the audio pipe will always be a PCM pipe
 static struct pipe *
 pipelist_create(void)
 {
-  struct query_params qp;
-  struct db_media_file_info dbmfi;
   struct pipe *head;
   struct pipe *pipe;
-  char filter[32];
-  int id;
-  int ret;
 
   DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", mass_named_pipes.audio_pipe);
   head = NULL;
@@ -1359,8 +1126,11 @@ pipelist_create(void)
 // Queries the db to see if any pipes are present in the library. If so, starts
 // the pipe thread to watch the pipes. If no pipes in library, it will shut down
 // the pipe thread.
-// For Music Assistant integration, we will always have at least one pipe (stdin)
+// For Music Assistant integration, we always have a named pipe
 // which is handled by pipelist_create(), so we should always get a pipelist.
+// Once we confirm the named pipe, we:
+// - start the pipe thread; and
+// - look for any changes of named pipes to watch (perhaps not necessary for Music Assistant??)
 static void
 pipe_listener_cb(short event_mask, void *ctx)
 {
@@ -1383,8 +1153,9 @@ pipe_listener_cb(short event_mask, void *ctx)
 
   if (!tid_pipe)
     pipe_thread_start();
-
+  
   commands_exec_async(cmdbase, pipe_watch_update, cmdarg);
+  
 }
 
 
@@ -1504,30 +1275,12 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 }
 
 // Thread: main
-
-// Listener for player events
-static void
-mass_player_listener_cb(short event_mask, void *ctx)
-{
-  struct player_status status;
-  int ret;
-
-  ret = player_get_status(&status);
-  if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s: could not get player status\n", __func__);
-    return;
-  }
-
-  DPRINTF(E_DBG, L_PLAYER, "%s: player status:%s\n", __func__, play_status_str(status.status));
-
-}
-
 static void
 mass_timer_cb(int fd, short what, void *arg)
 {
   struct timespec now;
   uint64_t elapsed_ms = 0;
-  uint64_t begin_ms, now_ms, playing_ms = 0;
+  uint64_t begin_ms, now_ms = 0;
   struct player_status status;
   struct ntp_stamp ntp_stamp;
   int ret;
@@ -1585,7 +1338,6 @@ mass_timer_cb(int fd, short what, void *arg)
     player_started = false;
     player_paused = false;
     elapsed_ms = 0;
-    playing_ms = 0;
   }
 }
 
@@ -1617,7 +1369,7 @@ mass_init(void)
   pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
   if (pipe_autostart)
     {
-      pipe_listener_cb(0, NULL); // We will noe be in the pipe thread once this returns
+      pipe_listener_cb(0, NULL); // We will be in the pipe thread once this returns
       CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
     }
 
