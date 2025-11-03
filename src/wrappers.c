@@ -860,16 +860,3 @@ artwork_read_byurl(struct evbuffer *evbuf, const char *url)
   free(kv);
   return format;
 }
-
-/*
- * Wrappers for dmap_common.c
- * Maybe we don't need to wrapper these at all. Let's try including owntones dmap_common.c directly first.
- */
-// int
-// dmap_encode_queue_metadata(struct evbuffer *songlist, struct evbuffer *song, struct db_queue_item *queue_item)
-// {
-//     DPRINTF(E_LOG, L_DB, "$s(songlist=%p, song=%p, queue_item->id=%d) not yet fully implemented.\n", 
-//         __func__, songlist, song, queue_item->id);
-    
-//     return -1;
-// }
