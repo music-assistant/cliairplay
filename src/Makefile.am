@@ -78,8 +78,9 @@ cliap2_CPPFLAGS = \
     -DCONFDIR=\".\" \
 	-DSTATEDIR=\"$(localstatedir)\"
 
+# TODO: @bradkeifer Eliminate debug flags before first production release
 cliap2_CFLAGS = \
-    -ggdb -Og
+    -ggdb -Og -Wall
 
 cliap2_LDADD = \
 	$(OWNTONE_LIBS) \
