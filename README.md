@@ -20,24 +20,6 @@ sudo apt-get install \
   libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
   libavfilter-dev
 
-# Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
-cat > /tmp/ffmpeg8.patch << 'EOF'
---- a/owntone-server/src/transcode.c
-+++ b/owntone-server/src/transcode.c
-@@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
-    // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-    // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-    // which has the effect that a volume replaygain filter works. Note that
-    // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-+#if LIBAVFORMAT_VERSION_MAJOR < 60
-    av_format_inject_global_side_data(ctx->ifmt_ctx);
-+#endif
-
-    ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-    if (ret < 0)
-EOF
-patch -p1 < /tmp/ffmpeg8.patch
-
 ```
 
 Then run the following:
