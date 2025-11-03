@@ -10,9 +10,7 @@ Pre-built binaries for Linux (x86_64 and ARM64) and macOS (Apple Silicon/ARM64) 
 
 ## Debian build
 
-NOTE: This is in early stage development and will be subject to change.
-
-Install required tools and libraries - minimal list yet to be confirmed:
+Install required tools and libraries:
 
 ```bash
 sudo apt-get install \
@@ -21,6 +19,25 @@ sudo apt-get install \
   libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
   libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
   libavfilter-dev
+
+# Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
+cat > /tmp/ffmpeg8.patch << 'EOF'
+--- a/owntone-server/src/transcode.c
++++ b/owntone-server/src/transcode.c
+@@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
+    // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
+    // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
+    // which has the effect that a volume replaygain filter works. Note that
+    // ffmpeg itself uses another method in process_input() in ffmpeg.c.
++#if LIBAVFORMAT_VERSION_MAJOR < 60
+    av_format_inject_global_side_data(ctx->ifmt_ctx);
++#endif
+
+    ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
+    if (ret < 0)
+EOF
+patch -p1 < /tmp/ffmpeg8.patch
+
 ```
 
 Then run the following:
@@ -61,7 +78,6 @@ Notes:
 - OpenSSL 3 is recommended as OpenSSL 1.1 reached end-of-life in September 2023.
 - Bison from Homebrew is required as macOS ships with an outdated version (2.3).
 - macOS uses CoreAudio instead of ALSA (`libasound2-dev`). The project should detect and skip ALSA on macOS; if it doesn't, look for a configure flag to disable ALSA support.
-- The complete, but minimal list of required Homebrew packages is still work in progress
 
 4. Export Homebrew paths so `./configure` finds libraries (portable for Intel/Apple Silicon):
 
@@ -80,10 +96,29 @@ export LDFLAGS="-L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib
 export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
 export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
 export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
-export PATH="/opt/homebrew/opt/bison/bin:$PATH"
+export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 
 # For static linking of OpenSSL (recommended for distribution)
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
+
+# Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
+cat > /tmp/ffmpeg8.patch << 'EOF'
+--- a/owntone-server/src/transcode.c
++++ b/owntone-server/src/transcode.c
+@@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
+    // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
+    // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
+    // which has the effect that a volume replaygain filter works. Note that
+    // ffmpeg itself uses another method in process_input() in ffmpeg.c.
++#if LIBAVFORMAT_VERSION_MAJOR < 60
+    av_format_inject_global_side_data(ctx->ifmt_ctx);
++#endif
+
+    ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
+    if (ret < 0)
+EOF
+patch -p1 < /tmp/ffmpeg8.patch
+
 ```
 
 5. Build the project:
