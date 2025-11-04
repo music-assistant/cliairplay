@@ -879,13 +879,11 @@ pipe_watch_update(void *arg, int *retval)
 
       if (!pipelist_find(pipe_watch_list, pipe->id))
 	{
-	  DPRINTF(E_DBG, L_PLAYER, "Pipe watch added: '%s'\n", pipe->path);
 	  watch_add(pipe);
 	  pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
 	}
       else
 	{
-	  DPRINTF(E_DBG, L_PLAYER, "Pipe watch exists: '%s'\n", pipe->path);
 	  pipe_free(pipe);
 	}
     }
@@ -1041,7 +1039,6 @@ pipe_metadata_watch_add(void *arg)
   pipe_metadata.pipe = pipe_create(path, 0, PIPE_METADATA, pipe_metadata_read_cb);
   pipe_metadata.evbuf = evbuffer_new();
 
-  DPRINTF(E_DBG, L_PLAYER, "%s: watch_add for %s\n", __func__, path);
   ret = watch_add(pipe_metadata.pipe);
   if (ret < 0)
     {
@@ -1059,8 +1056,6 @@ pipe_metadata_watch_add(void *arg)
 static void
 pipe_thread_start(void)
 {
-  // struct player_speaker_info spk;
-  // int ret;
 
   CHECK_NULL(L_PLAYER, evbase_pipe = event_base_new());
   CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_pipe, NULL));
@@ -1068,25 +1063,6 @@ pipe_thread_start(void)
 
   thread_setname(tid_pipe, "pipe");
   
-  // See if we can trigger early device connection, rather than waiting for audio data on the named pipe
-  // if (ap2_device_info.address) {
-  //   DPRINTF(E_DBG, L_PLAYER, "%s:About to call player_speaker_get_byaddress(&spk, %s) for %s\n", 
-  //     __func__, ap2_device_info.address, ap2_device_info.name
-  //   );
-       // This blocks and locks up the app.
-  //   ret = player_speaker_get_byaddress(&spk, ap2_device_info.address); // This must block
-  //   DPRINTF(E_DBG, L_PLAYER, "%s:player_speaker_get_byaddress() returned %d\n", __func__, ret);
-  //   DPRINTF(E_DBG, L_PLAYER, "%s:Speaker %" PRIu64 " has name %s\n", __func__, spk.id, spk.name);
-  //   if (spk.id) {
-  //     DPRINTF(E_DBG, L_PLAYER, "%s:About to enable speaker %" PRIu64 ", %s", __func__, spk.id, spk.name);
-  //     ret = player_speaker_enable(spk.id);
-  //     DPRINTF(E_DBG, L_PLAYER, "%s:player_speaker_enable() returned %d\n", __func__, ret);
-  //   }
-  // }
-  // else {
-  //   DPRINTF(E_LOG, L_PLAYER, "%s:No address for our speaker device\n", __func__);
-  // }
-
 }
 
 static void
@@ -1115,7 +1091,7 @@ pipelist_create(void)
   struct pipe *head;
   struct pipe *pipe;
 
-  DPRINTF(E_DBG, L_PLAYER, "Adding %s to the pipelist\n", mass_named_pipes.audio_pipe);
+  DPRINTF(E_DBG, L_PLAYER, "%s:Adding %s to the pipelist\n", __func__, mass_named_pipes.audio_pipe);
   head = NULL;
   pipe = pipe_create(mass_named_pipes.audio_pipe, 1, PIPE_PCM, pipe_read_cb);
   pipelist_add(&head, pipe);
