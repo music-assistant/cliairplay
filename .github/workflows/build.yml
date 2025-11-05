@@ -21,7 +21,7 @@ jobs:
         run: |
           pwd \
           && ls -la \
-          && ls -la owntones-server
+          && ls -la owntone-server
 
       # Output build artifacts to /github/workspace on the container.
       - name: Containerised Build
