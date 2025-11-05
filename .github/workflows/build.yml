@@ -18,7 +18,7 @@ jobs:
 
       # Output build artifacts to /github/workspace on the container.
       - name: Containerized Build
-        uses: ./.github/actions/build-action
+        uses: ./.github/actions/build_action
 
         # - name: Build binary in Docker and extract
         # run: |
