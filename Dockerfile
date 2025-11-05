@@ -2,25 +2,10 @@
 
 FROM debian:bookworm-slim AS cliap2-builder
 
-# Docker image for building the cliap2 binary
-ARG REPO
-ARG BRANCH
-ARG TARGETARCH
-
 ENV LANG C.UTF-8
-WORKDIR /tmp
 
 # Let's see if standard image has acceptable sources.list
 RUN cat /etc/apt/sources.list
-
-# And echo our input arguments
-RUN echo REPO=$REPO \\
-    && echo BRANCH=$BRANCH \\
-    && echo TARGETARCH=$TARGETARCH \\
-    && echo 1=$1 \\
-    && echo 2=$2 \\
-    && echo 3=$3 \\
-    && ls -l /github/workspace
 
 # Install build dependencies for cliap2
 # RUN apt-get update && apt-get install -y --no-install-recommends \
