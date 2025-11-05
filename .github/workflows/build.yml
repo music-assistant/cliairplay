@@ -14,7 +14,7 @@ jobs:
       - name: Build binary in Docker and extract
         run: |
           pwd
-          docker build --file Dockerfile.binary --build-arg REPO=${{ github.repositoryUrl }} --build-arg BRANCH=${{ github.ref_name }} --build-arg ARCH=linux-aarch64 --output type=local,dest=. .
+          docker build --build-arg REPO=${{ github.repositoryUrl }} --build-arg BRANCH=${{ github.ref_name }} --build-arg ARCH=linux-aarch64 --output type=local,dest=. .
           mv myapp myapp-linux-aarch64
 
 
