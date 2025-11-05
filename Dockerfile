@@ -38,7 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN set -x \
     && uname -a \
-    && git submodule update --init \
     && autoreconf -fi \
     && ./configure \
     && make \
