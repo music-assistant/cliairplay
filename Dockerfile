@@ -38,10 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN set -x \
     && uname -a \
-    && autoreconf -fi \
-    && ./configure \
-    && make \
-    && ls -l src/cliap2
+    && pwd \
+    && ls -la
+    # && autoreconf -fi \
+    # && ./configure \
+    # && make \
+    # && ls -l src/cliap2
 
 # # Now need to work out how to commit the built binary back into $REPO's $BRANCH
 # COPY src/cliap2 .
