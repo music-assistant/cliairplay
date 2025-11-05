@@ -122,7 +122,7 @@ timing_get_clock_ntp(struct ntp_timestamp *ns)
 static void
 ntptime(void)
 {
-  struct ntp_timestamp ns;
+  struct ntp_timestamp ns = {0, 0};
   uint64_t t;
 
   timing_get_clock_ntp(&ns);
@@ -347,7 +347,7 @@ int check_pipe(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
+          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
           return 0;
       } 
       else {
@@ -381,7 +381,7 @@ int create_pipe(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
+          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
           return 0;
       } 
       else {
@@ -431,7 +431,7 @@ int remove_pipe(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_DBG, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
+          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
           ret = unlink(pipe_path);
           if (ret != 0) {
             DPRINTF(E_LOG, L_MAIN, "%s:Cannot removed named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
@@ -460,8 +460,13 @@ int remove_pipes(const char *pipe_path)
   audio_error = remove_pipe(pipe_path);
 
   ret = asprintf(&metadata_path, "%s.metadata", pipe_path);
-  metadata_error = remove_pipe(metadata_path);
-  free(metadata_path);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "Unable to malloc memory. %s\n", strerror(errno));
+  }
+  else {
+    metadata_error = remove_pipe(metadata_path);
+    free(metadata_path);
+  }
 
   if (audio_error < 0 || metadata_error < 0) {
     return -1;
@@ -474,19 +479,12 @@ main(int argc, char **argv)
 {
   int option;
   char *configfile = NULL; // default to no config file
-  bool background = false;
   bool testrun = false;
-  bool mdns_no_rsp = true;
-  bool mdns_no_daap = true;
-  bool mdns_no_cname = true;
-  bool mdns_no_web = true;
-  bool mdns_no_mpd = true;
   bool metadata_pipe_defaulted = false;
   int loglevel = -1;
   char *logdomains = NULL;
   char *logfile = NULL;
   char *logformat = NULL;
-  char **buildopts;
   const char *av_version;
   const char *gcry_version;
   sigset_t sigs;
@@ -494,10 +492,12 @@ main(int argc, char **argv)
 #ifdef HAVE_KQUEUE
   struct kevent ke_sigs[4];
 #endif
-  int i;
   int ret;
   int port = -1;
-  const char *name, *hostname, *address, *txt = NULL;
+  const char *name = NULL;
+  const char *hostname = NULL;
+  const char *address = NULL;
+  const char *txt = NULL;
 
   uint64_t ntpstart = 0;
   uint32_t wait = 0;
@@ -767,10 +767,10 @@ main(int argc, char **argv)
   event_set_log_callback(logger_libevent);
 
   if (testrun) {
-    DPRINTF(E_LOG, L_MAIN, "%s version %s test run\n", PACKAGE, VERSION);
+    DPRINTF(E_INFO, L_MAIN, "%s version %s test run\n", PACKAGE, VERSION);
   }
   else {
-    DPRINTF(E_LOG, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
+    DPRINTF(E_INFO, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
   }
 
 #if HAVE_DECL_AV_VERSION_INFO
@@ -931,18 +931,18 @@ main(int argc, char **argv)
     }
   }
 
-  DPRINTF(E_LOG, L_MAIN, "Stopping gracefully\n");
+  DPRINTF(E_INFO, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;
 
   event_free(sig_event);
 
  sig_event_fail:
  signalfd_fail:
-  DPRINTF(E_LOG, L_MAIN, "Player deinit\n");
+  DPRINTF(E_INFO, L_MAIN, "Player deinit\n");
   player_deinit();
 
  player_fail:
-  DPRINTF(E_LOG, L_MAIN, "Worker deinit\n");
+  DPRINTF(E_INFO, L_MAIN, "Worker deinit\n");
   worker_deinit();
 
  worker_fail:
@@ -968,7 +968,7 @@ main(int argc, char **argv)
     free(mass_named_pipes.metadata_pipe);
   }
 
-  DPRINTF(E_LOG, L_MAIN, "Exiting.\n");
+  DPRINTF(E_INFO, L_MAIN, "Exiting.\n");
   conffile_unload();
   logger_deinit();
 

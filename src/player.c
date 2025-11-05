@@ -1060,7 +1060,7 @@ event_read_metadata(struct input_metadata *metadata)
   uint64_t delay;
   int ret;
 
-  DPRINTF(E_DBG, L_PLAYER, "event_read_metadata()\n");
+  DPRINTF(E_SPAM, L_PLAYER, "event_read_metadata()\n");
 
   // Add the metadata to the register of pending events with a trigger position
   // that corresponds to OUTPUTS_BUFFER_DURATION into the future. If we have
@@ -1137,7 +1137,7 @@ event_play_metadata()
 {
   int i;
 
-  DPRINTF(E_DBG, L_PLAYER, "event_play_metadata()\n");
+  DPRINTF(E_SPAM, L_PLAYER, "event_play_metadata()\n");
 
   for (i = 0; i < ARRAY_SIZE(metadata_pending); i++)
     {
@@ -1930,13 +1930,13 @@ get_status(void *arg, int *retval)
   switch (player_state)
     {
       case PLAY_STOPPED:
-	DPRINTF(E_DBG, L_PLAYER, "Player status: stopped\n");
+	DPRINTF(E_SPAM, L_PLAYER, "Player status: stopped\n");
 
 	status->status  = PLAY_STOPPED;
 	break;
 
       case PLAY_PAUSED:
-	DPRINTF(E_DBG, L_PLAYER, "Player status: paused\n");
+	DPRINTF(E_SPAM, L_PLAYER, "Player status: paused\n");
 
 	status->status  = PLAY_PAUSED;
 	status->id      = pb_session.playing_now->id;
@@ -1950,13 +1950,13 @@ get_status(void *arg, int *retval)
       case PLAY_PLAYING:
 	if (pb_session.playing_now->play_start == 0 || pb_session.pos < pb_session.playing_now->play_start)
 	  {
-	    DPRINTF(E_DBG, L_PLAYER, "Player status: playing (buffering)\n");
+	    DPRINTF(E_SPAM, L_PLAYER, "Player status: playing (buffering)\n");
 
 	    status->status = PLAY_PAUSED;
 	  }
 	else
 	  {
-	    DPRINTF(E_DBG, L_PLAYER, "Player status: playing\n");
+	    DPRINTF(E_SPAM, L_PLAYER, "Player status: playing\n");
 
 	    status->status = PLAY_PLAYING;
 	  }
