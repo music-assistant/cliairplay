@@ -2,7 +2,7 @@
 
 FROM debian:bookworm-slim AS cliap2-builder
 
-ENV LANG C.UTF-8
+ENV LANG=C.UTF-8
 
 # Create our Debian package sources list
 RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
