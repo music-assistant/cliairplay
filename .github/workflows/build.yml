@@ -15,6 +15,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+      
+      - name: Explore
+        run: |
+          pwd && ls -l
 
       # Output build artifacts to /github/workspace on the container.
       - name: Containerized Build
