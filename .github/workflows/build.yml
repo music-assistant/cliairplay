@@ -11,11 +11,15 @@ jobs:
   linux-aarch64:
     runs-on: ubuntu-latest
     steps:
-      - name: Build binary in Docker and extract
-        run: |
-          pwd
-          docker build --build-arg REPO=${{ github.repositoryUrl }} --build-arg BRANCH=${{ github.ref_name }} --build-arg ARCH=linux-aarch64 --output type=local,dest=. .
-          mv myapp myapp-linux-aarch64
+      # Output build artifacts to /github/workspace on the container.
+      - name: Containerized Build
+        uses: ./.github/actions/build-action
+
+        # - name: Build binary in Docker and extract
+        # run: |
+        #   pwd
+        #   docker build --build-arg REPO=${{ github.repositoryUrl }} --build-arg BRANCH=${{ github.ref_name }} --build-arg ARCH=linux-aarch64 --output type=local,dest=. .
+        #   mv myapp myapp-linux-aarch64
 
 
 

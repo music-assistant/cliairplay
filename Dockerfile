@@ -19,7 +19,8 @@ RUN echo REPO=$REPO \\
     && echo TARGETARCH=$TARGETARCH \\
     && echo 1=$1 \\
     && echo 2=$2 \\
-    && echo 3=$3
+    && echo 3=$3 \\
+    && ls -l /github/workspace
 
 # Install build dependencies for cliap2
 # RUN apt-get update && apt-get install -y --no-install-recommends \
