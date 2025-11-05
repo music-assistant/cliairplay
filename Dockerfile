@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 
+FROM debian:bookworm-slim AS cliap2-builder
+
 # Docker image for building the cliap2 binary
 ARG REPO
 ARG BRANCH
 ARG TARGETARCH
-
-FROM debian:bookworm-slim AS cliap2-builder
 
 ENV LANG C.UTF-8
 WORKDIR /tmp
