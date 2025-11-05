@@ -39,7 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN set -x \
     && uname -a \
     && pwd \
-    && ls -la
+    && ls -la \
+    && find . -name cliairplay -print
     # && autoreconf -fi \
     # && ./configure \
     # && make \
