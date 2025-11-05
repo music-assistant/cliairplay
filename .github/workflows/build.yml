@@ -18,7 +18,7 @@ jobs:
       
       - name: Explore
         run: |
-          pwd && ls -l
+          pwd && ls -la
 
       # Output build artifacts to /github/workspace on the container.
       - name: Containerized Build
