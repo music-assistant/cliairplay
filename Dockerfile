@@ -54,11 +54,13 @@ RUN set -x \
     && echo ACLOCAL_PATH=$ACLOCAL_PATH \
     && ls -la \
     && ls -la m4 \
-    && autoreconf --install -I /usr/share/aclocal -I ./m4 \
-    && aclocal -I /usr/share/aclocal -I ./m4 --install \
+    && litoolize --force --copy --automake \
+    && aclocal \
+    && autoheader \
+    && automake --add-missing --copy --force-missing \
+    && autoconf
     && ls -la m4 \
-    && autoreconf -fi -I /usr/share/aclocal -I ./m4 \
-    && ls -la m4 \
+    && ls -la build-aux \
     && ./configure \
     && make \
     && ls -l src/cliap2 \
