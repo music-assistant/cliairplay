@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm AS cliap2-builder
+FROM debian:bullseye AS cliap2-builder
 
 ARG TARGETARCH
 
