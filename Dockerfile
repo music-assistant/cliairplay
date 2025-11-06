@@ -58,12 +58,12 @@ RUN set -x \
     && aclocal \
     && autoheader \
     && automake --add-missing --copy --force-missing \
-    && autoconf
+    && autoconf \
     && ls -la m4 \
-    && ls -la build-aux \
-    && ./configure \
-    && make \
-    && ls -l src/cliap2 \
-    && cp -v src/cliap2 ./cliap2-$TARGETARCH
+    && ls -la build-aux 
+    # && ./configure \
+    # && make \
+    # && ls -l src/cliap2 \
+    # && cp -v src/cliap2 ./cliap2-$TARGETARCH
 
 CMD ["./cliap2-$TARGETARCH"]
