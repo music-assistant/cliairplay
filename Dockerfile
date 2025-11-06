@@ -55,12 +55,13 @@ RUN set -x \
     && ls -la \
     && ls -la m4 \
     && libtoolize --force --copy --automake \
+    && ls -l build-aux \
     && aclocal \
     && autoheader \
     && automake --add-missing --copy --force-missing \
     && ls -la m4 \
     && ls -la build-aux \
-    && autoconf --prepend-include=m4 --verbose --force \
+    && autoconf --prepend-include=m4 --include=/usr/share/aclocal --verbose --force \
     && ls -la m4 \
     && ls -la build-aux 
     # && ./configure \
