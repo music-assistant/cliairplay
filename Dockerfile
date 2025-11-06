@@ -61,6 +61,8 @@ RUN set -x \
     && automake --add-missing --copy \
     && ls -la m4 \
     && ls -la build-aux \
+    && cat configure.ac \
+    && aclocal \
     && autoconf --prepend-include=m4 --include=/usr/share/aclocal --verbose --force \
     && ls -la m4 \
     && ls -la build-aux 
