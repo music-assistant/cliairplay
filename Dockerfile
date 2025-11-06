@@ -44,18 +44,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavfilter-dev \
     && rm -rf /var/lib/apt/lists/*
 
+COPY . /tmp
+
+WORKDIR /tmp
+
 RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
     && find . -name cliairplay -print
 
-WORKDIR /tmp
-
-RUN git clone $REPO \
-    && git fetch origin \
-    && get checkout $BRANCH \
-    && ls -laR
+# RUN git clone $REPO \
+#     && git fetch origin \
+#     && get checkout $BRANCH \
+#     && ls -laR
 
     # && autoreconf -fi \
     # && ./configure \
