@@ -51,8 +51,11 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && aclocal -I /usr/share/aclocal -I m4 --install \
-    && autoreconf -fi -I m4 -I /usr/share/aclocal \
+    && ls -la m4 \
+    && aclocal -I /usr/share/aclocal -I ./m4 --install \
+    && ls -la m4 \
+    && autoreconf -fi -I ./m4 -I /usr/share/aclocal \
+    && ls -la m4 \
     && ./configure \
     && make \
     && ls -l src/cliap2 \
