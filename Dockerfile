@@ -46,10 +46,10 @@ COPY . /tmp
 WORKDIR /tmp
 
 RUN set -x \
-    && autoreconf -fi
-    # && ./configure \
-    # && make \
-    # && ls -l src/cliap2 \
-    # && cp -v src/cliap2 ./cliap2-$TARGETARCH
+    && autoreconf -fi \
+    && ./configure \
+    && make \
+    && ls -l src/cliap2 \
+    && cp -v src/cliap2 ./cliap2-$TARGETARCH
 
 CMD ["./cliap2-$TARGETARCH"]
