@@ -40,8 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libplist-dev \
     libgcrypt20-dev \
     libgpg-error-dev \
-    libavfilter-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libavfilter-dev
 
 COPY . /tmp
 
@@ -50,11 +49,15 @@ WORKDIR /tmp
 RUN set -x \
     && uname -a \
     && pwd \
+    && echo ACLOCAL_PATH=$ACLOCAL_PATH \
+    && export ACLOCAL_PATH=/usr/share/aclocal:./m4 \
+    && echo ACLOCAL_PATH=$ACLOCAL_PATH \
     && ls -la \
     && ls -la m4 \
+    && autoreconf --install -I /usr/share/aclocal -I ./m4 \
     && aclocal -I /usr/share/aclocal -I ./m4 --install \
     && ls -la m4 \
-    && autoreconf -fi -I ./m4 -I /usr/share/aclocal \
+    && autoreconf -fi -I /usr/share/aclocal -I ./m4 \
     && ls -la m4 \
     && ./configure \
     && make \
