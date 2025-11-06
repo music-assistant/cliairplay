@@ -2,8 +2,6 @@
 
 FROM debian:bookworm-slim AS cliap2-builder
 
-ARG REPO
-ARG BRANCH
 ARG TARGETARCH
 
 ENV LANG=C.UTF-8
@@ -52,19 +50,11 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && find . -name cliairplay -print
+    && autoreconf -fi \
+    && ./configure \
+    && make \
+    && ls -l src/cliap2
 
-# RUN git clone $REPO \
-#     && git fetch origin \
-#     && get checkout $BRANCH \
-#     && ls -laR
+COPY src/cliap2 ./cliap2-$TARGETARCH
 
-    # && autoreconf -fi \
-    # && ./configure \
-    # && make \
-    # && ls -l src/cliap2
-
-# # Now need to work out how to commit the built binary back into $REPO's $BRANCH
-# COPY src/cliap2 .
-
-# CMD ["./cliap2"]
+CMD ["./cliap2-$TARGETARCH"]
