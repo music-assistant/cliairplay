@@ -21,21 +21,20 @@ AC_PROG_MKDIR_P
 LT_INIT([])
 
 AC_PATH_PROG([GPERF], [[gperf]])
-# AS_IF([[test -z "$GPERF"]],
-# 	[AS_IF([[test -f "$srcdir/src/dmap_fields_hash.h"]],
-# 		[AM_MISSING_PROG([GPERF], [[gperf]])
-# 		AC_MSG_NOTICE([[
+AS_IF([[test -z "$GPERF"]],
+	[AS_IF([[test -f "$srcdir/src/dmap_fields_hash.h"]],
+		[AM_MISSING_PROG([GPERF], [[gperf]])
+		AC_MSG_NOTICE([[
 
-# GNU gperf not found, but it's output appears to be present.
-# If you modify any .gperf files, you will need to install it.]])],
-# 		[AC_MSG_ERROR([[GNU gperf required, please install it.]])])
-# 	])
+GNU gperf not found, but it's output appears to be present.
+If you modify any .gperf files, you will need to install it.]])],
+		[AC_MSG_ERROR([[GNU gperf required, please install it.]])])
+	])
 
-AM_PROG_LEX([noyywrap])
-# AX_PROG_FLEX([AC_DEFINE([LEX], [flex], [flex found])],
-# 	[AS_IF([test ! -f "$srcdir/src/parsers/smartpl_lexer.c"],
-# 		[AC_MSG_ERROR([flex required, please install it])])
-# 	])
+AX_PROG_FLEX([AC_DEFINE([LEX], [flex], [flex found])],
+	[AS_IF([test ! -f "$srcdir/src/parsers/smartpl_lexer.c"],
+		[AC_MSG_ERROR([flex required, please install it])])
+	])
 AX_PROG_BISON([AC_DEFINE([YACC], [bison], [GNU bison found])],
 	[AS_IF([test ! -f "$srcdir/src/parsers/smartpl_parser.c"],
 		[AC_MSG_ERROR([GNU bison required, please install it])])
