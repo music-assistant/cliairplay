@@ -58,7 +58,9 @@ RUN set -x \
     && aclocal \
     && autoheader \
     && automake --add-missing --copy --force-missing \
-    && autoconf \
+    && ls -la m4 \
+    && ls -la build-aux \
+    && autoconf --prepend-include=m4 --verbose --force \
     && ls -la m4 \
     && ls -la build-aux 
     # && ./configure \
