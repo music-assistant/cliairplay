@@ -50,6 +50,7 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
+    && aclocal \
     && autoreconf -fi \
     && ./configure \
     && make \
