@@ -51,9 +51,8 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && autoconf -V \
-    && autoreconf -V \
-    && autoreconf -fi \
+    && aclocal -I m4 --install \
+    && autoreconf -fi -I m4\
     && ./configure \
     && make \
     && ls -l src/cliap2 \
