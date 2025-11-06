@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     autotools-dev \
     autoconf \
+    autoconf-archive \
     automake \
     libtool \
     gettext \
@@ -50,7 +51,9 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && autoconf -fiv \
+    && autoconf -V \\
+    && autoreconf - V \\
+    && autoreconf -fi \
     && ./configure \
     && make \
     && ls -l src/cliap2 \
