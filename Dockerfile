@@ -24,7 +24,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf-archive \
     automake \
     libtool \
-    libtool-bin \
     gettext \
     gawk gperf \
     flex \
@@ -55,11 +54,11 @@ RUN set -x \
     && echo ACLOCAL_PATH=$ACLOCAL_PATH \
     && ls -la \
     && ls -la m4 \
-    && libtoolize --force --copy --automake \
+    && libtoolize --copy --automake \
     && ls -l build-aux \
     && aclocal \
     && autoheader \
-    && automake --add-missing --copy --force-missing \
+    && automake --add-missing --copy \
     && ls -la m4 \
     && ls -la build-aux \
     && autoconf --prepend-include=m4 --include=/usr/share/aclocal --verbose --force \
