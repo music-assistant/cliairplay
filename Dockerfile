@@ -16,8 +16,7 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
 
 # Install build dependencies for cliap2
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-RUN apt-get update && apt-get install -y  \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     autotools-dev \
@@ -52,8 +51,8 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && aclocal -I m4 --install \
-    && autoreconf -fi -I m4\
+    && aclocal -I /usr/share/aclocal -I m4 --install \
+    && autoreconf -fi -I m4 -I /usr/share/aclocal \
     && ./configure \
     && make \
     && ls -l src/cliap2 \
