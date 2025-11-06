@@ -2,7 +2,15 @@
 
 FROM debian:bookworm-slim AS cliap2-builder
 
+ARG REPO
+ARG BRANCH
+ARG TARGETARCH
+
 ENV LANG=C.UTF-8
+
+RUN echo REPO=$REPO \
+    && echo BRANCH=$BRANCH \
+    && echo TARGETARCH=$TARGETARCH
 
 # Create our Debian package sources list
 RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
@@ -41,6 +49,14 @@ RUN set -x \
     && pwd \
     && ls -la \
     && find . -name cliairplay -print
+
+WORKDIR /tmp
+
+RUN git clone $REPO \
+    && git fetch origin \
+    && get checkout $BRANCH \
+    && ls -laR
+
     # && autoreconf -fi \
     # && ./configure \
     # && make \
