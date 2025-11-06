@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm AS cliap2-builder
+FROM debian:trixie AS cliap2-builder
 
 ARG TARGETARCH
 
@@ -46,6 +46,7 @@ COPY . /tmp
 WORKDIR /tmp
 
 RUN set -x \
+    && autoreconf --version \
     && autoreconf -fi \
     && ./configure \
     && make \
