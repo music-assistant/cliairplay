@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bullseye AS cliap2-builder
+FROM debian:bookworm-slim AS cliap2-builder
 
 ARG TARGETARCH
 
@@ -11,9 +11,9 @@ RUN echo REPO=$REPO \
     && echo TARGETARCH=$TARGETARCH
 
 # Create our Debian package sources list
-# RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-#     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-#     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
 
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,6 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgcrypt20-dev \
     libgpg-error-dev \
     libavfilter-dev
+
+# Let's understand our build environment and find why our builds are failing
+RUN dpkg-query -l --no-pager
 
 COPY . /tmp
 
