@@ -52,7 +52,7 @@ RUN set -x \
     && pwd \
     && ls -la \
     && autoconf -V \
-    && autoreconf - V \
+    && autoreconf -V \
     && autoreconf -fi \
     && ./configure \
     && make \
