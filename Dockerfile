@@ -54,7 +54,7 @@ RUN set -x \
     && echo ACLOCAL_PATH=$ACLOCAL_PATH \
     && ls -la \
     && ls -la m4 \
-    && litoolize --force --copy --automake \
+    && libtoolize --force --copy --automake \
     && aclocal \
     && autoheader \
     && automake --add-missing --copy --force-missing \
