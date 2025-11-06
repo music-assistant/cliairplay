@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm AS cliap2-builder
+FROM debian:trixie AS cliap2-builder
 
 ARG TARGETARCH
 
@@ -11,9 +11,9 @@ RUN echo REPO=$REPO \
     && echo TARGETARCH=$TARGETARCH
 
 # Create our Debian package sources list
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+# RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+#     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+#     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
 
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     autotools-dev \
     autoconf \
-    autoconf-archive \
     automake \
     libtool \
     gettext \
@@ -47,25 +46,7 @@ COPY . /tmp
 WORKDIR /tmp
 
 RUN set -x \
-    && uname -a \
-    && pwd \
-    && echo ACLOCAL_PATH=$ACLOCAL_PATH \
-    && export ACLOCAL_PATH=/usr/share/aclocal:./m4 \
-    && echo ACLOCAL_PATH=$ACLOCAL_PATH \
-    && ls -la \
-    && ls -la m4 \
-    && libtoolize --copy --automake \
-    && ls -l build-aux \
-    && aclocal \
-    && autoheader \
-    && automake --add-missing --copy \
-    && ls -la m4 \
-    && ls -la build-aux \
-    && cat configure.ac \
-    && aclocal \
-    && autoconf --prepend-include=m4 --include=/usr/share/aclocal --verbose --force \
-    && ls -la m4 \
-    && ls -la build-aux 
+    && autoreconf -fi
     # && ./configure \
     # && make \
     # && ls -l src/cliap2 \
