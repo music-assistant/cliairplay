@@ -50,8 +50,7 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && aclocal \
-    && autoreconf -fi \
+    && autoconf -fiv \
     && ./configure \
     && make \
     && ls -l src/cliap2 \
