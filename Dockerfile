@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf-archive \
     automake \
     libtool \
+    libtool-bin \
     gettext \
     gawk gperf \
     flex \
