@@ -51,8 +51,8 @@ RUN set -x \
     && uname -a \
     && pwd \
     && ls -la \
-    && autoconf -V \\
-    && autoreconf - V \\
+    && autoconf -V \
+    && autoreconf - V \
     && autoreconf -fi \
     && ./configure \
     && make \
