@@ -25,7 +25,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cliap2-linux-aarch64
-          path: release/
+          path: ${{ github.workspace }}
 
 
 
@@ -79,13 +79,13 @@ jobs:
       - name: Install build dependencies
         run: |
           brew install \
-            autoconf automake libtool pkgconf gettext gawk \
-            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist libiconv \
-            libsodium json-c curl openssl@3 protobuf-c bison
+            autoconf automake libtool gettext gawk pkg-config \
+            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+            libsodium json-c curl openssl@3 protobuf-c bison libiconv
 
       - name: Build for macOS ARM64
         run: |
-          export PATH="$(brew --prefix bison)/bin:$(brew --prefix libiconv)/bin:$PATH"
+          export PATH="$(brew --prefix bison)/bin:$PATH"
           export OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           export LIBXML2_PREFIX="$(brew --prefix libxml2)"
           export ZLIB_PREFIX="$(brew --prefix zlib)"
