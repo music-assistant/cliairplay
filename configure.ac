@@ -18,18 +18,8 @@ AC_PROG_CC
 AC_PROG_CC_C_O
 AC_PROG_SED
 AC_PROG_MKDIR_P
-LT_INIT([])
 
 AC_PATH_PROG([GPERF], [[gperf]])
-# AS_IF([[test -z "$GPERF"]],
-# 	[AS_IF([[test -f "$srcdir/src/dmap_fields_hash.h"]],
-# 		[AM_MISSING_PROG([GPERF], [[gperf]])
-# 		AC_MSG_NOTICE([[
-
-# GNU gperf not found, but it's output appears to be present.
-# If you modify any .gperf files, you will need to install it.]])],
-# 		[AC_MSG_ERROR([[GNU gperf required, please install it.]])])
-# 	])
 
 AX_PROG_FLEX([AC_DEFINE([LEX], [flex], [flex found])],
 	[AS_IF([test ! -f "$srcdir/src/parsers/smartpl_lexer.c"],
