@@ -42,6 +42,7 @@ jobs:
       - name: Containerised Build
         run: |
           docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
+          echo about to run docker run --rm -v ${{ github.workspace }}:. .
           docker run --rm -v ${{ github.workspace }}:. .
 
       - name: Upload artifacts
