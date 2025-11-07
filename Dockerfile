@@ -11,10 +11,11 @@ RUN echo REPO=$REPO \
     && echo TARGETARCH=$TARGETARCH
 
 # Create our Debian package sources list
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-backports main" >> /etc/apt/sources.list
+RUN ls -lR /etc/apt
+# RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+#     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+#     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+#     echo "deb http://deb.debian.org/debian bookworm-backports main" >> /etc/apt/sources.list
 
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
