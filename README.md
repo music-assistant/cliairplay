@@ -52,7 +52,7 @@ Visit https://brew.sh/ and follow the instructions. Alternatively run the instal
 ```zsh
 brew install git autoconf automake libtool pkgconf gettext gawk \
   confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
-  libsodium json-c curl openssl@3 protobuf-c bison
+  libiconv libsodium json-c curl openssl@3 protobuf-c bison
 ```
 
 Notes:

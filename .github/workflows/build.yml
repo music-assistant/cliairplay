@@ -19,8 +19,8 @@ jobs:
 
       - name: Containerised Build
         run: |
-          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=my-builder .
-          docker run --rm -v ${{ github.workspace }}:/work my-builder
+          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
+          docker run --rm -v ${{ github.workspace }}:/work .
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -41,8 +41,8 @@ jobs:
 
       - name: Containerised Build
         run: |
-          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=my-builder .
-          docker run --rm -v ${{ github.workspace }}:/work my-builder
+          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
+          docker run --rm -v ${{ github.workspace }}:/work .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -82,7 +82,7 @@ jobs:
         run: |
           brew reinstall \
             autoconf automake libtool pkgconf gettext gawk \
-            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist libiconv \
             libsodium json-c curl openssl@3 protobuf-c bison
 
       - name: Build for macOS ARM64
