@@ -53,8 +53,8 @@ RUN dpkg-query -l --no-pager
 
 COPY . /tmp
 
-# WORKDIR /tmp
-WORKDIR /tmp/owntone-server
+WORKDIR /tmp
+# WORKDIR /tmp/owntone-server
 
 RUN set -x \
     && autoreconf --version \
