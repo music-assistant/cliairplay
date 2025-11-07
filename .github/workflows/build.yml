@@ -84,6 +84,7 @@ jobs:
           export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
           export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
           export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
+          export ACLOCAL_PATH="$BREW_PREFIX/share/gettext/m4"
 
           export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
