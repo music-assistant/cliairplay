@@ -6,16 +6,13 @@ ARG TARGETARCH
 
 ENV LANG=C.UTF-8
 
-RUN echo REPO=$REPO \
-    && echo BRANCH=$BRANCH \
-    && echo TARGETARCH=$TARGETARCH
+RUN echo TARGETARCH=$TARGETARCH
 
-# Create our Debian package sources list
-RUN ls -lR /etc/apt
-# RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-#     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-#     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-#     echo "deb http://deb.debian.org/debian bookworm-backports main" >> /etc/apt/sources.list
+# Create our Debian package sources list - this is copied from Music Assistant Dockerfile.base
+# but, there is an existing source.list config in bookworm-slim, so not sure why this is necessary
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
 
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,14 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autotools-dev \
     autoconf \
     automake \
-    libtool \
-    libtool-bin \
-    libtext-charwidth-perl \
-    libtext-glob-perl \
-    libtext-iconv-perl \
-    libtext-wrapi18n-perl \
+    pkgconf \
     gettext \
-    gawk gperf \
+    gawk \
+    gperf \
     flex \
     bison \
     uuid-dev \
@@ -48,17 +41,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgpg-error-dev \
     libavfilter-dev
 
-# Let's understand our build environment and find why our builds are failing
-RUN dpkg-query -l --no-pager
-
 COPY . /tmp
 
 WORKDIR /tmp
-# WORKDIR /tmp/owntone-server
 
 RUN set -x \
-    && autoreconf --version \
-    && aclocal --version \
     && autoreconf -fi \
     && ./configure \
     && make \
