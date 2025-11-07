@@ -14,12 +14,11 @@ Install required tools and libraries:
 
 ```bash
 sudo apt-get install \
-  build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
+  build-essential git autotools-dev autoconf automake libtool pkgconf gettext gawk gperf flex bison \
   uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
   libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
   libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
   libavfilter-dev
-
 ```
 
 Then run the following:
@@ -50,9 +49,9 @@ Visit https://brew.sh/ and follow the instructions. Alternatively run the instal
 3. Install required Homebrew packages. This installs the closest macOS equivalents to the Debian packages listed above:
 
 ```zsh
-brew install git autoconf automake libtool gettext gawk pkg-config \
+brew install git autoconf automake libtool pkgconf gettext gawk \
   confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
-  libsodium json-c curl openssl@3 protobuf-c bison
+  libiconv libsodium json-c curl openssl@3 protobuf-c bison
 ```
 
 Notes:
@@ -79,34 +78,26 @@ export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PRE
 export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
 export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
 export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
+export ACLOCAL_PATH="$BREW_PREFIX/share/gettext/m4"
 
-# For static linking of OpenSSL (recommended for distribution)
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
-
-# Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
-cat > /tmp/ffmpeg8.patch << 'EOF'
---- a/owntone-server/src/transcode.c
-+++ b/owntone-server/src/transcode.c
-@@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
-    // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-    // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-    // which has the effect that a volume replaygain filter works. Note that
-    // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-+#if LIBAVFORMAT_VERSION_MAJOR < 60
-    av_format_inject_global_side_data(ctx->ifmt_ctx);
-+#endif
-
-    ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-    if (ret < 0)
-EOF
-patch -p1 < /tmp/ffmpeg8.patch
-
 ```
-
-5. Build the project:
+5. Clone the repo
 
 ```zsh
+git clone https://github.com/music-assistant/cliairplay.git
+cd cliairplay
 git submodule update --init
+```
+
+6. Apply FFmpeg 8.0 compatibility patch
+```zsh
+patch -p1 < patches/ffmpeg8.patch
+```
+
+6. Build the project:
+
+```zsh
 autoreconf -fi
 ./configure
 make

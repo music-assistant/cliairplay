@@ -8,118 +8,46 @@ on:
   workflow_dispatch:
 
 jobs:
-  linux-x86_64:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Apply FFmpeg 8.0 compatibility patch
-        run: |
-          cat > /tmp/ffmpeg8.patch << 'EOF'
-          --- a/owntone-server/src/transcode.c
-          +++ b/owntone-server/src/transcode.c
-          @@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
-             // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-             // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-             // which has the effect that a volume replaygain filter works. Note that
-             // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-          +#if LIBAVFORMAT_VERSION_MAJOR < 60
-             av_format_inject_global_side_data(ctx->ifmt_ctx);
-          +#endif
-
-             ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-             if (ret < 0)
-          EOF
-          patch -p1 < /tmp/ffmpeg8.patch
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
-            uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
-            libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
-            libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
-            libavfilter-dev
-
-      - name: Build for x86_64
-        run: |
-          autoreconf -fi
-          ./configure
-          make -j$(nproc)
-          mkdir -p release
-          cp src/cliap2 release/cliap2-linux-x86_64
-          chmod +x release/cliap2-linux-x86_64
-          # Show file type and dependencies
-          file release/cliap2-linux-x86_64
-          ldd release/cliap2-linux-x86_64
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: cliap2-linux-x86_64
-          path: release/
-
   linux-aarch64:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref_name }}
           submodules: recursive
 
-      - name: Apply FFmpeg 8.0 compatibility patch
+      - name: Containerised Build
         run: |
-          cat > /tmp/ffmpeg8.patch << 'EOF'
-          --- a/owntone-server/src/transcode.c
-          +++ b/owntone-server/src/transcode.c
-          @@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
-             // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-             // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-             // which has the effect that a volume replaygain filter works. Note that
-             // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-          +#if LIBAVFORMAT_VERSION_MAJOR < 60
-             av_format_inject_global_side_data(ctx->ifmt_ctx);
-          +#endif
-
-             ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-             if (ret < 0)
-          EOF
-          patch -p1 < /tmp/ffmpeg8.patch
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git autotools-dev autoconf automake libtool gettext gawk gperf flex bison \
-            uuid-dev zlib1g-dev libcurl4-openssl-dev libsodium-dev \
-            libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
-            libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
-            libavfilter-dev
-
-      - name: Build for ARM64
-        run: |
-          # export LIBAV_PREFIX="$(dpkg-query -S libavformat.a | gawk 'BEGIN { RS = ":" } {print $1}' | tail -1 | sed 's/\/libavformat.a//')"
-          # export LIBAV_LIBS="$LIBAV_PREFIX/libavcodec.a $LIBAV_PREFIX/libavformat.a $LIBAV_PREFIX/libavfilter.a $LIBAV_PREFIX/libavutil.a $LIBAV_PREFIX/libswscale.a -llzma -lgnutls"
-
-          autoreconf -fi
-          ./configure
-          make -j$(nproc)
-          mkdir -p release
-          cp src/cliap2 release/cliap2-linux-aarch64
-          chmod +x release/cliap2-linux-aarch64
-          # Show file type and dependencies
-          file release/cliap2-linux-aarch64
-          ldd release/cliap2-linux-aarch64
-
+          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
+          
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cliap2-linux-aarch64
-          path: release/
+          path: ${{ github.workspace }}
+
+
+
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          submodules: recursive
+
+      - name: Containerised Build
+        run: |
+          docker build --build-arg TARGETARCH=linux-x86_64 --output type=local,dest=. .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliap2-linux-x86_64
+          path: ${{ github.workspace }}
+
 
   macos:
     runs-on: macos-14
@@ -129,35 +57,19 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Apply FFmpeg 8.0 compatibility patch
-        run: |
-          cat > /tmp/ffmpeg8.patch << 'EOF'
-          --- a/owntone-server/src/transcode.c
-          +++ b/owntone-server/src/transcode.c
-          @@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
-             // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-             // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-             // which has the effect that a volume replaygain filter works. Note that
-             // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-          +#if LIBAVFORMAT_VERSION_MAJOR < 60
-             av_format_inject_global_side_data(ctx->ifmt_ctx);
-          +#endif
-
-             ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-             if (ret < 0)
-          EOF
-          patch -p1 < /tmp/ffmpeg8.patch
-
       - name: Install build dependencies
         run: |
-          brew reinstall \
-            autoconf automake libtool gettext gawk pkg-config \
-            confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
-            libsodium json-c curl openssl@3 protobuf-c bison libiconv
+          brew install git autoconf automake libtool pkgconf gettext gawk \
+          confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
+          libiconv libsodium json-c curl openssl@3 protobuf-c bison
+
+      - name: Apply FFmpeg 8.0 compatibility patch
+        run: |
+          patch -p1 < patches/ffmpeg8.patch || cat owntone-server/src/transcode.c.rej
 
       - name: Build for macOS ARM64
         run: |
-          export PATH="$(brew --prefix bison)/bin:$PATH"
+          export BREW_PREFIX="$(brew --prefix)"
           export OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           export LIBXML2_PREFIX="$(brew --prefix libxml2)"
           export ZLIB_PREFIX="$(brew --prefix zlib)"
@@ -166,14 +78,14 @@ jobs:
           export LIBUNISTRING_PREFIX="$(brew --prefix libunistring)"
           export LIBICONV_PREFIX="$(brew --prefix libiconv)"
 
-          # Static linking for OpenSSL
           export PKG_CONFIG_PATH="$LIBXML2_PREFIX/lib/pkgconfig:$ZLIB_PREFIX/lib/pkgconfig:$LIBGCRYPT_PREFIX/lib/pkgconfig:$LIBGPG_ERROR_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           export LDFLAGS="-L$LIBXML2_PREFIX/lib -L$ZLIB_PREFIX/lib -L$LIBGCRYPT_PREFIX/lib -L$LIBGPG_ERROR_PREFIX/lib -L$LIBICONV_PREFIX/lib"
           export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
           export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
           export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
+          export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
+          export ACLOCAL_PATH="$BREW_PREFIX/share/gettext/m4"
 
-          # Add static OpenSSL libraries to LIBS
           export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
           autoreconf -fi
