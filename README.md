@@ -50,7 +50,7 @@ Visit https://brew.sh/ and follow the instructions. Alternatively run the instal
 3. Install required Homebrew packages. This installs the closest macOS equivalents to the Debian packages listed above:
 
 ```zsh
-brew install git autoconf automake libtool gettext gawk pkg-config \
+brew install git autoconf automake libtool pkgconf gettext gawk \
   confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
   libsodium json-c curl openssl@3 protobuf-c bison
 ```

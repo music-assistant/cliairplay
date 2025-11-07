@@ -79,9 +79,9 @@ jobs:
       - name: Install build dependencies
         run: |
           brew reinstall \
-            autoconf automake libtool gettext gawk pkg-config \
+            autoconf automake libtool pkgconf gettext gawk \
             confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
-            libsodium json-c curl openssl@3 protobuf-c bison libiconv
+            libsodium json-c curl openssl@3 protobuf-c bison
 
       - name: Build for macOS ARM64
         run: |
@@ -100,6 +100,7 @@ jobs:
           export CPPFLAGS="-I$OPENSSL_PREFIX/include -I$LIBXML2_PREFIX/include -I$ZLIB_PREFIX/include -I$LIBGCRYPT_PREFIX/include -I$LIBGPG_ERROR_PREFIX/include -I$LIBICONV_PREFIX/include"
           export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
           export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
+          export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 
           # Add static OpenSSL libraries to LIBS
           export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
