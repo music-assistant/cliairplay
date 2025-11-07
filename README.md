@@ -91,7 +91,7 @@ git submodule update --init
 
 6. Apply FFmpeg 8.0 compatibility patch
 ```zsh
-patch -p1 < patches/ffmpeg8.patch || cat owntone-server/src/transcode.c.rej
+patch -p1 < patches/ffmpeg8.patch
 ```
 
 6. Build the project:
