@@ -12,7 +12,7 @@ RUN echo TARGETARCH=$TARGETARCH
 # but, there is an existing source.list config in bookworm-slim, so not sure why this is necessary
 RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
 
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
