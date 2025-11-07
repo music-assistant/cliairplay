@@ -96,7 +96,7 @@ git submodule update --init
 cat > /tmp/ffmpeg8.patch << 'EOF'
 --- a/owntone-server/src/transcode.c
 +++ b/owntone-server/src/transcode.c
-@@ -1441,8 +1441,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality
+@@ -1441,8 +1441,10 @@
     // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
     // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
     // which has the effect that a volume replaygain filter works. Note that
