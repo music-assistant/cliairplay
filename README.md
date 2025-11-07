@@ -80,7 +80,6 @@ export LIBUNISTRING_CFLAGS="-I$LIBUNISTRING_PREFIX/include"
 export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PREFIX/lib -liconv"
 export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 
-# For static linking of OpenSSL (recommended for distribution)
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
 ```
