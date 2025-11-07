@@ -51,9 +51,9 @@ RUN set -x \
     && ./configure \
     && make \
     && mkdir -p release \
-    && cp -v src/cliap2 release/cliap2-$TARGETARCH \
-    && chmod +x release/cliap2-$TARGETARCH \
-    && file release/cliap2-$TARGETARCH \
-    && ldd release/cliap2-$TARGETARCH
+    && cp -v src/cliap2 cliap2-$TARGETARCH \
+    && chmod +x cliap2-$TARGETARCH \
+    && file cliap2-$TARGETARCH \
+    && ldd cliap2-$TARGETARCH
 
-CMD ["/tmp/release/cliap2-$TARGETARCH"]
+CMD ["cliap2-$TARGETARCH --testrun"]
