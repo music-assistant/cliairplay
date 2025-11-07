@@ -83,6 +83,14 @@ export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 # For static linking of OpenSSL (recommended for distribution)
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
+```
+5. Clone the repo and apply ffmpeg8 patch
+
+```zsh
+git clone https://github.com/music-assistant/cliairplay.git
+cd cliairplay
+git submodule update --init
+
 # Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
 cat > /tmp/ffmpeg8.patch << 'EOF'
 --- a/owntone-server/src/transcode.c
@@ -106,7 +114,6 @@ patch -p1 < /tmp/ffmpeg8.patch
 5. Build the project:
 
 ```zsh
-git submodule update --init
 autoreconf -fi
 ./configure
 make
