@@ -56,4 +56,4 @@ RUN set -x \
     && file release/cliap2-$TARGETARCH \
     && ldd release/cliap2-$TARGETARCH
 
-CMD ["release/cliap2-$TARGETARCH"]
+CMD ["/tmp/release/cliap2-$TARGETARCH"]

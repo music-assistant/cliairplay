@@ -19,8 +19,9 @@ jobs:
 
       - name: Containerised Build
         run: |
-          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
-
+          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=my-builder .
+          docker run --rm -v ${{ github.workspace }}:/work my-builder
+          
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -40,7 +41,8 @@ jobs:
 
       - name: Containerised Build
         run: |
-          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
+          docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=my-builder .
+          docker run --rm -v ${{ github.workspace }}:/work my-builder
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
