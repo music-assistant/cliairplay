@@ -89,8 +89,10 @@ export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 git clone https://github.com/music-assistant/cliairplay.git
 cd cliairplay
 git submodule update --init
+```
 
-# Apply FFmpeg 8.0 compatibility patch to owntone-server/src/transcode.c 
+6. Apply FFmpeg 8.0 compatibility patch
+```zsh
 cat > /tmp/ffmpeg8.patch << 'EOF'
 --- a/owntone-server/src/transcode.c
 +++ b/owntone-server/src/transcode.c
@@ -110,7 +112,7 @@ patch -p1 < /tmp/ffmpeg8.patch
 
 ```
 
-5. Build the project:
+6. Build the project:
 
 ```zsh
 autoreconf -fi
