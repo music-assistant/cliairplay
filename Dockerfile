@@ -50,7 +50,10 @@ RUN set -x \
     && autoreconf -fi \
     && ./configure \
     && make \
-    && ls -l src/cliap2 \
-    && cp -v src/cliap2 ./cliap2-$TARGETARCH
+    && mkdir -p release \
+    && cp -v src/cliap2 release/cliap2-$TARGETARCH \
+    && chmod +x release/cliap2-$TARGETARCH \
+    && file release/cliap2-$TARGETARCH \
+    && ldd release/cliap2-$TARGETARCH
 
-CMD ["./cliap2-$TARGETARCH"]
+CMD ["release/cliap2-$TARGETARCH"]
