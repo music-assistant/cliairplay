@@ -19,7 +19,6 @@ sudo apt-get install \
   libconfuse-dev libunistring-dev libxml2-dev libevent-dev \
   libjson-c-dev libplist-dev libgcrypt20-dev libgpg-error-dev \
   libavfilter-dev
-
 ```
 
 Then run the following:
@@ -81,7 +80,6 @@ export LIBUNISTRING_LIBS="-L$LIBUNISTRING_PREFIX/lib -lunistring -L$LIBICONV_PRE
 export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
-
 ```
 5. Clone the repo
 
@@ -96,20 +94,18 @@ git submodule update --init
 cat > /tmp/ffmpeg8.patch << 'EOF'
 --- a/owntone-server/src/transcode.c
 +++ b/owntone-server/src/transcode.c
-@@ -1441,8 +1441,10 @@
-    // If the source has REPLAYGAIN_TRACK_GAIN metadata, this will inject the
-    // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
-    // which has the effect that a volume replaygain filter works. Note that
-    // ffmpeg itself uses another method in process_input() in ffmpeg.c.
-+#if LIBAVFORMAT_VERSION_MAJOR < 60
-    av_format_inject_global_side_data(ctx->ifmt_ctx);
+@@ -1442,7 +1442,9 @@
+   // values into the the next packet's side data (as AV_FRAME_DATA_REPLAYGAIN),
+   // which has the effect that a volume replaygain filter works. Note that
+   // ffmpeg itself uses another method in process_input() in ffmpeg.c.
++#if LIBAVFORMAT_VERSION_MAJOR < 60  
+   av_format_inject_global_side_data(ctx->ifmt_ctx);
 +#endif
-
-    ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
-    if (ret < 0)
+ 
+   ret = avformat_find_stream_info(ctx->ifmt_ctx, NULL);
+   if (ret < 0)
 EOF
 patch -p1 < /tmp/ffmpeg8.patch
-
 ```
 
 6. Build the project:
