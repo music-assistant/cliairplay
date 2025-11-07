@@ -2244,8 +2244,8 @@ timing_svc_cb(int fd, short what, void *arg)
     }
 
     // Temporary debug logging
-    DHEXDUMP(E_DBG, L_AIRPLAY, req, sizeof(req), "RTCP time sync request\n");
-    DHEXDUMP(E_DBG, L_AIRPLAY, res, sizeof(res), "RTCP time sync reply\n");
+    // DHEXDUMP(E_DBG, L_AIRPLAY, req, sizeof(req), "RTCP time sync request\n");
+    // DHEXDUMP(E_DBG, L_AIRPLAY, res, sizeof(res), "RTCP time sync reply\n");
 }
 
 static void

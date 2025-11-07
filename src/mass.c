@@ -154,7 +154,7 @@ struct pipe
   struct pipe *next;
 };
 
-// struct for storing the data received via a metadata pipe
+// struct for storing the data received via a metadata/command pipe
 // We will never receive the artwok as a file, it will always be
 // via a URL, which is handled in input_metadata struct.
 struct pipe_metadata_prepared
@@ -294,7 +294,7 @@ pipe_open(const char *path, bool silent)
   struct stat sb;
   int fd;
 
-  DPRINTF(E_DBG, L_PLAYER, "(Re)opening pipe: '%s'\n", path);
+  DPRINTF(E_SPAM, L_PLAYER, "(Re)opening pipe: '%s'\n", path);
 
   fd = open(path, O_RDONLY | O_NONBLOCK);
   if (fd < 0)
@@ -542,7 +542,7 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
     goto error;
   }
 
-  DPRINTF(E_DBG, L_PLAYER, "Wrote pipe artwork to '%s'\n", prepared->pict_tmpfile_path);
+  DPRINTF(E_SPAM, L_PLAYER, "Wrote pipe artwork to '%s'\n", prepared->pict_tmpfile_path);
 
   m->artwork_url = safe_asprintf("file:%s", prepared->pict_tmpfile_path);
   free(artwork_image);
@@ -558,7 +558,8 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
 }
 
 static
-void extract_key_value(const char *input_string, char **key, char **value) {
+void extract_key_value(const char *input_string, char **key, char **value) 
+{
     char *delimiter_pos = strchr(input_string, '='); // Find the '=' delimiter
 
     if (delimiter_pos == NULL) {
@@ -593,7 +594,7 @@ void extract_key_value(const char *input_string, char **key, char **value) {
     strcpy(*value, delimiter_pos + 1); // Copy from after the delimiter
 }
 
-// Parse one metadata item from Music Assistant
+// Parse one metadata/command item from Music Assistant
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -610,7 +611,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       return -1;
   }
 
-  DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, key, value);
+  DPRINTF(E_SPAM, L_PLAYER, "%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, key, value);
 
   if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
@@ -649,6 +650,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           free(value);
           return -1;
       }
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s ms received\n", __func__, value);
       prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
       free(key);
       free(value);
@@ -674,7 +676,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     }
     free(key);
     free(value);
-    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
   }
   else if (!strncmp(key,MASS_METADATA_PIN_KEY, strlen(MASS_METADATA_PIN_KEY))) {
     message = PIPE_METADATA_MSG_PIN;
@@ -689,7 +691,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     ret = asprintf(&prepared->pin, "%.4u", pin);
     free(key);
     free(value);
-    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed Music Assistant PIN: %.4s\n", __func__, prepared->pin);
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Parsed Music Assistant PIN: %.4s\n", __func__, prepared->pin);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {
@@ -766,7 +768,7 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 
   *out_msg = 0;
   while ((item = extract_item(evbuf))) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
     ret = parse_mass_item(&message, prepared, item);
     free(item);
     if (ret < 0) {
@@ -795,20 +797,25 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
   ret = player_get_status(&status);
   if (status.id == pipe->id)
     {
-      DPRINTF(E_INFO, L_PLAYER, "Pipe '%s' already playing\n", pipe->path);
+      DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
+        __func__, pipe->path, play_status_str(status.status)
+      );
       return; // We are already playing the pipe
     }
   else if (ret < 0)
     {
-      DPRINTF(E_LOG, L_PLAYER, "Pipe autostart of '%s' failed because state of player is unknown\n", pipe->path);
+      DPRINTF(E_LOG, L_PLAYER, 
+        "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
+        __func__, pipe->path
+      );
       return;
     }
 
-  DPRINTF(E_INFO, L_PLAYER, "Autostarting pipe '%s' (fd %d)\n", pipe->path, fd);
+  DPRINTF(E_SPAM, L_PLAYER, "Autostarting pipe '%s' (fd %d)\n", pipe->path, fd);
 
   player_playback_stop();
 
-  DPRINTF(E_DBG, L_PLAYER, "player_playback_start_byid(%d)\n", pipe->id);
+  DPRINTF(E_SPAM, L_PLAYER, "player_playback_start_byid(%d)\n", pipe->id);
   ret = player_playback_start_byid(pipe->id);
   if (ret < 0) {
     DPRINTF(E_LOG, L_PLAYER, "Autostarting pipe '%s' (fd %d) failed.\n", pipe->path, fd);
@@ -859,7 +866,7 @@ pipe_watch_update(void *arg, int *retval)
 
       if (!pipelist_find(pipelist, pipe->id))
 	{
-	  DPRINTF(E_DBG, L_PLAYER, "Pipe watch deleted: '%s'\n", pipe->path);
+	  DPRINTF(E_SPAM, L_PLAYER, "Pipe watch deleted: '%s'\n", pipe->path);
 	  watch_del(pipe);
 	  pipelist_remove(&pipe_watch_list, pipe); // Will free pipe
 	}
@@ -905,7 +912,7 @@ pipe_thread_run(void *arg)
 }
 
 
-/* --------------------------- METADATA PIPE HANDLING ----------------------- */
+/* ----------------------- METADATA/ COMMAND PIPE HANDLING ------------------ */
 /*                                Thread: worker                              */
 
 static void
@@ -929,6 +936,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
 {
   enum pipe_metadata_msg message;
   size_t len;
+  struct player_status status;
   int ret;
 
   ret = evbuffer_read(pipe_metadata.evbuf, pipe_metadata.pipe->fd, PIPE_READ_MAX);
@@ -950,12 +958,12 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   len = evbuffer_get_length(pipe_metadata.evbuf);
   if (len > PIPE_METADATA_BUFLEN_MAX)
     {
-      DPRINTF(E_LOG, L_PLAYER, "Buffer for metadata pipe '%s' is full, discarding %zu bytes\n", pipe_metadata.pipe->path, len);
+      DPRINTF(E_LOG, L_PLAYER, "Buffer for command pipe '%s' is full, discarding %zu bytes\n", pipe_metadata.pipe->path, len);
       evbuffer_drain(pipe_metadata.evbuf, len);
       goto readd;
     }
   
-  DPRINTF(E_DBG, L_PLAYER, "%s:Received %ld bytes of metadata\n", __func__, len);
+  DPRINTF(E_SPAM, L_PLAYER, "%s:Received %ld bytes of metadata\n", __func__, len);
 
   // .parsed is shared with the input thread (see metadata_get), so use mutex.
   // Note that this means _parse() must not do anything that could cause a
@@ -964,60 +972,75 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   ret = pipe_metadata_parse(&message, &pipe_metadata.prepared, pipe_metadata.evbuf);
   pthread_mutex_unlock(&pipe_metadata.prepared.lock);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "Error parsing incoming data on metadata pipe '%s', will stop reading\n", pipe_metadata.pipe->path);
+    DPRINTF(E_LOG, L_PLAYER, "Error parsing incoming data on command pipe '%s', will stop reading\n", pipe_metadata.pipe->path);
     pipe_metadata_watch_del(NULL);
     return;
   }
 
-  DPRINTF(E_DBG, L_PLAYER, "%s:Parsed metadata pipe message mask: 0x%x\n", __func__, message);
+  DPRINTF(E_SPAM, L_PLAYER, "%s:Parsed command pipe message mask: 0x%x\n", __func__, message);
 
+  ret = player_get_status(&status);
+  if (ret != COMMAND_END) {
+    DPRINTF(E_LOG, L_PLAYER, "%s: Unable to obtain player status\n", __func__);
+  }
   // We are receiving progress updates from Music Assistant before we receive metadata, and that may be a problem.
   if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PROGRESS | PIPE_METADATA_MSG_PICTURE)) {
     pipe_metadata.is_new = 1; // Trigger notification to player in playback loop
-    DPRINTF(E_DBG, L_PLAYER, 
+    DPRINTF(E_SPAM, L_PLAYER, 
       "%s:Triggered notification to player in the playback loop of new metadata available (message=0x%x)\n", 
       __func__, message
     );
   }
   if (message & PIPE_METADATA_MSG_VOLUME) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Setting volume from metadata pipe to %d\n", __func__, pipe_metadata.prepared.volume);
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Setting volume from command pipe to %d\n", __func__, pipe_metadata.prepared.volume);
     player_volume_set(pipe_metadata.prepared.volume);
   }
   if (message & PIPE_METADATA_MSG_PIN) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from metadata pipe to %s\n", __func__, pipe_metadata.prepared.pin);
+    DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from command pipe to %s\n", __func__, pipe_metadata.prepared.pin);
     // We only support AirPlay2 at the moment. The below code will need to be changed if we add support
     // for RAOP.
+    // TODO: @bradkeifer - migrate to player_speaker_authorize() re issue #37
     player_verification_kickoff(&pipe_metadata.prepared.pin, OUTPUT_TYPE_AIRPLAY);
     free(pipe_metadata.prepared.pin);
 
   }
   if (message & PIPE_METADATA_MSG_FLUSH) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Flushing playback from metadata pipe command\n", __func__);
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:Flushing playback from command pipe. Current player status is %s\n", 
+      __func__, play_status_str(status.status)
+    );
     player_playback_flush();
   }
   if (message & PIPE_METADATA_MSG_PAUSE) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Pausing playback from metadata pipe command\n", __func__);
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      __func__, play_status_str(status.status), status.pos_ms
+    );
     // Cannot call player_playback_pause() from this thread - not sure why, but comment to that effect
-    // in player.c
+    // in player.c. Maybe we should call player_playback_stop()??
+    // Also, maybe this should be a command call?
     worker_execute((void *)player_playback_pause, NULL, 0, 0); // get the worker thread to pause the player
   }
   if (message & PIPE_METADATA_MSG_PLAY) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:(Re)starting playback from metadata pipe command\n", __func__);
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s:(Re)starting playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      __func__, play_status_str(status.status), status.pos_ms
+    );
     player_playback_start();
   }
   if (message & PIPE_METADATA_MSG_STOP) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from metadata pipe command\n", __func__);
+    DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from command pipe command\n", __func__);
     // We want to gracefully exit when we receive the STOP command.
     event_base_loopbreak(evbase_main);
   }
 
  readd:
   if (pipe_metadata.pipe && pipe_metadata.pipe->ev) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Re-adding event for metadata pipe '%s'\n", __func__, pipe_metadata.pipe->path);
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Re-adding event for command pipe '%s'\n", __func__, pipe_metadata.pipe->path);
     event_add(pipe_metadata.pipe->ev, NULL);
   }
   else {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Metadata pipe '%s' no longer valid, not re-adding event\n",
+    DPRINTF(E_DBG, L_PLAYER, "%s:command pipe '%s' no longer valid, not re-adding event\n",
       __func__, pipe_metadata.pipe->path
     );
   }
@@ -1051,7 +1074,7 @@ pipe_metadata_watch_add(void *arg)
 
 
 /* ----------------------- PIPE WATCH THREAD START/STOP --------------------- */
-/*                             Thread: filescanner                            */
+/*                             Thread: pipe                            */
 
 static void
 pipe_thread_start(void)
@@ -1061,7 +1084,7 @@ pipe_thread_start(void)
   CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_pipe, NULL));
   CHECK_ERR(L_PLAYER, pthread_create(&tid_pipe, NULL, pipe_thread_run, NULL));
 
-  thread_setname(tid_pipe, "pipe");
+  thread_setname(tid_pipe, "pipe"); // TODO: @bradkeifer try moving this to pipe_thread_run
   
 }
 
@@ -1155,9 +1178,7 @@ setup(struct input_source *source)
   pipe->fd = fd;
   pipe->is_autostarted = (source->id == pipe_autostart_id);
 
-  // We override default owntones behaviour and allow specification of the metadata named pipe
   worker_execute(pipe_metadata_watch_add, mass_named_pipes.metadata_pipe, strlen(mass_named_pipes.metadata_pipe) + 1, 0);
-  // worker_execute(pipe_metadata_watch_add, source->path, strlen(source->path) + 1, 0);
 
   source->input_ctx = pipe;
 
@@ -1212,6 +1233,7 @@ play(struct input_source *source)
     {
       input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
       stop(source);
+      DPRINTF(E_INFO, L_PLAYER, "%s:end of stream reached\n", __func__);
       return -1;
     }
   else if ((ret == 0) || ((ret < 0) && (errno == EAGAIN)))
@@ -1263,18 +1285,18 @@ mass_timer_cb(int fd, short what, void *arg)
 
   ret = player_get_status(&status);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s(): could not get player status\n", __func__);
+    DPRINTF(E_LOG, L_PLAYER, "%s:Could not get player status\n", __func__);
     return;
   }
 
   ret = timing_get_clock_ntp(&ntp_stamp);
   if (ret < 0) {
-      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get current ntp timestamp\n");
+      DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
       return;
   }
 
-  DPRINTF(E_DBG, L_PLAYER,
-    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
+  DPRINTF(E_SPAM, L_PLAYER,
+    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
     __func__, play_status_str(status.status), status.volume, status.pos_ms,
     ntp_stamp.sec, ntp_stamp.frac
   );
@@ -1283,9 +1305,9 @@ mass_timer_cb(int fd, short what, void *arg)
     if (!player_started) {
       player_started = true;
     }
-    DPRINTF(E_INFO, L_PLAYER, 
-      "%s(): elapsed milliseconds:%" PRIu32 " ms. volume:%d state:%s\n",
-      __func__, status.pos_ms, status.volume, play_status_str(status.status)
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
+      __func__, status.volume, play_status_str(status.status), status.pos_ms
     );
   }
   else if (player_started && status.status == PLAY_PAUSED) {
@@ -1293,8 +1315,8 @@ mass_timer_cb(int fd, short what, void *arg)
       player_paused = true;
       clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
       /* Music Assistant looks for "set pause" or "Pause at" */
-      DPRINTF(E_INFO, L_PLAYER, 
-        "%s(): Pause at %d ms, starting paused timer\n", __func__, status.pos_ms
+      DPRINTF(E_INFO, L_PLAYER, "%s: Pause at %" PRIu32 " ms\n",
+        __func__, status.pos_ms
       );
     }
     else {
@@ -1302,14 +1324,17 @@ mass_timer_cb(int fd, short what, void *arg)
       begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
       now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
       elapsed_ms = now_ms - begin_ms;
-      DPRINTF(E_INFO, L_PLAYER, 
-        "%s(): paused milliseconds:%" PRIu64 " ms\n", __func__, elapsed_ms
+      DPRINTF(E_SPAM, L_PLAYER, 
+        "%s: paused milliseconds:%" PRIu64 " ms at position %" PRIu32 "\n", 
+        __func__, elapsed_ms, status.pos_ms
       );
 
     }
   }
-  else { // should not happen, but guard just in case
-    DPRINTF(E_WARN, L_PLAYER, "%s():%s: Not playing or paused\n", __func__, play_status_str(status.status));
+  else { // this state can happen when audio has not yet been received on the named pipe
+    DPRINTF(E_DBG, L_PLAYER, "%s:Player %sstarted. status:%s\n", __func__,
+      player_started ? "" : "not ", play_status_str(status.status)
+    );
     // reset all
     player_started = false;
     player_paused = false;
@@ -1323,7 +1348,6 @@ mass_init(void)
   // Maybe we can add a call to player_device_add(device) in here somewhere to initiate device connection before
   // audio is streamed to the named pipe. Currently, device connection is initiatied on receipt of data on the 
   // audio named pipe.
-  DPRINTF(E_DBG, L_PLAYER, "mass_init()\n");
 
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
 
@@ -1335,10 +1359,6 @@ mass_init(void)
     // Using the main thread may not be necessary anymore - test moving this into the pipe thread at some time
     // to understand the implications.
     mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
-    DPRINTF(E_DBG, L_PLAYER, 
-      "%s:Activating persistent event timer with timeval %" PRId64 " sec, %" PRId64 " usec\n,",
-      __func__, mass_tv.tv_sec, mass_tv.tv_usec
-    );
     evtimer_add(mass_timer_event, &mass_tv);
   }
 

@@ -104,7 +104,7 @@ db_queue_fetch_byitemid(uint32_t item_id)
         }
         q = q->next;
     }
-    DPRINTF(E_DBG, L_DB, "%s(%d) returning %p\n", __func__, item_id, ret);
+    DPRINTF(E_SPAM, L_DB, "%s(%d) returning %p\n", __func__, item_id, ret);
     return ret; 
 }
 
@@ -155,7 +155,7 @@ int
 db_queue_delete_byitemid(uint32_t item_id)
 {
 
-    DPRINTF(E_DBG, L_DB, "%s(%d)\n", __func__, item_id);
+    DPRINTF(E_SPAM, L_DB, "%s(%d)\n", __func__, item_id);
 
     // find the queue item, then remove it from the linked list and dealloc
     if (queue == NULL) // queue already empty
@@ -170,10 +170,10 @@ db_queue_delete_byitemid(uint32_t item_id)
             if (prev_node) {
                 // remove node from the linked list
                 prev_node->next = node->next;
-                DPRINTF(E_DBG, L_DB, "%s:Removed node with item id %d from the queue\n", __func__, node->item.id);
+                DPRINTF(E_SPAM, L_DB, "%s:Removed node with item id %d from the queue\n", __func__, node->item.id);
                 // free memory alloced for node and break from loop
                 free(node);
-                DPRINTF(E_DBG, L_DB, "%s:Free'd memory for node with item id %d from the queue\n", __func__, item_id);
+                DPRINTF(E_SPAM, L_DB, "%s:Free'd memory for node with item id %d from the queue\n", __func__, item_id);
                 break;
             }
         }
@@ -190,7 +190,7 @@ db_queue_delete_byitemid(uint32_t item_id)
 int
 db_queue_clear(uint32_t keep_item_id)
 {
-    DPRINTF(E_DBG, L_DB, "%s(%d)\n", __func__, keep_item_id);
+    DPRINTF(E_SPAM, L_DB, "%s(%d)\n", __func__, keep_item_id);
     if (queue == NULL) // queue already empty
         return 0;
     
@@ -217,7 +217,7 @@ db_queue_item_update(struct db_queue_item *qi)
 {
     // todo: validate what memory associated with qi needs to be freed
     if (qi) {
-        DPRINTF(E_DBG, L_DB, 
+        DPRINTF(E_SPAM, L_DB, 
             "%s:qi elements id: %d, file_id: %d, pos: %d, shuffle_pos: %d, data_kind: %d, "
             "media_kind: %d, song_length: %d, path: %s, virtual_path: %s, title: %s, artist: %s, artwork_url: %s\n", 
             __func__, qi->id, qi->file_id, qi->pos, qi->shuffle_pos, qi->data_kind, 
@@ -294,7 +294,7 @@ int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
     if (qp->type == Q_ITEMS) {
-        // DPRINTF(E_DBG, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
+        DPRINTF(E_SPAM, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
         if (position == -1) {
             // Add to end of queue
              struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));
@@ -388,7 +388,7 @@ int
 db_speaker_save(struct output_device *device)
 {
     if (device->auth_key) {
-        DPRINTF(E_DBG, L_DB, "%s:Device %s has authorization key '%s'\n", 
+        DPRINTF(E_INFO, L_DB, "%s:Device %s has authorization key '%s'\n", 
             __func__, device->name, device->auth_key
         );
     }
@@ -451,15 +451,8 @@ free_queue_item(struct db_queue_item *qi, int content_only)
         return; // No db_queue_item to free
     }
 
-    DPRINTF(E_INFO, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged.\n", 
+    DPRINTF(E_SPAM, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged.\n", 
         __func__, qi->id, content_only, PACKAGE_NAME);
-
-
-    // If content_only == 0, then remove the item from the queue. Hmmm - this breaks metadata handling
-    // if (!content_only) {
-    //     DPRINTF(E_DBG, L_DB, "%s:Removing item %d from the queue\n", __func__, qi->id);
-    //     db_queue_delete_byitemid(qi->id);
-    // }
 
     return;
 }
