@@ -1285,18 +1285,18 @@ mass_timer_cb(int fd, short what, void *arg)
 
   ret = player_get_status(&status);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s(): could not get player status\n", __func__);
+    DPRINTF(E_LOG, L_PLAYER, "%s:Could not get player status\n", __func__);
     return;
   }
 
   ret = timing_get_clock_ntp(&ntp_stamp);
   if (ret < 0) {
-      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get current ntp timestamp\n");
+      DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
       return;
   }
 
   DPRINTF(E_SPAM, L_PLAYER,
-    "%s(): player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
+    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
     __func__, play_status_str(status.status), status.volume, status.pos_ms,
     ntp_stamp.sec, ntp_stamp.frac
   );
@@ -1331,8 +1331,10 @@ mass_timer_cb(int fd, short what, void *arg)
 
     }
   }
-  else { // should not happen, but guard just in case
-    DPRINTF(E_WARN, L_PLAYER, "%s():%s: Not playing or paused\n", __func__, play_status_str(status.status));
+  else { // this state can happen when audio has not yet been received on the named pipe
+    DPRINTF(E_DBG, L_PLAYER, "%s:Player %sstarted. status:%s\n", __func__,
+      player_started ? "" : "not ", play_status_str(status.status)
+    );
     // reset all
     player_started = false;
     player_paused = false;
