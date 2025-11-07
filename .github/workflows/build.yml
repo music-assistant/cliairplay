@@ -127,8 +127,8 @@ jobs:
           draft: false
           prerelease: true
           files: |
-            artifacts/cliap2-linux-x86_64
-            artifacts/cliap2-linux-aarch64
-            artifacts/cliap2-macos-arm64
+            artifacts/cliap2-linux-x86_64/cliap2-linux-x86_64
+            artifacts/cliap2-linux-aarch64/cliap2-linux-aarch64
+            artifacts/cliap2-macos-arm64/cliap2-macos-arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
