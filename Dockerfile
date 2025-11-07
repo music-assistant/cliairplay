@@ -42,9 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgpg-error-dev \
     libavfilter-dev
 
-COPY . /tmp
+COPY . .
 
-WORKDIR /tmp
+WORKDIR .
 
 RUN set -x \
     && autoreconf -fi \
@@ -56,4 +56,7 @@ RUN set -x \
     && file cliap2-$TARGETARCH \
     && ldd cliap2-$TARGETARCH
 
-CMD ["cliap2-$TARGETARCH --testrun"]
+FROM scratch
+ARG TARGETARCH
+COPY --from=cliap2-builder cliap2-$TARGETARCH /
+ENTRYPOINT ["/cliap2-$TARGETARCH --testrun"]
