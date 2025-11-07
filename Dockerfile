@@ -20,8 +20,6 @@ RUN ls -lR /etc/apt
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    linux-base \
-    linux-libc-dev/bookworm-backports \
     git \
     autotools-dev \
     autoconf \
