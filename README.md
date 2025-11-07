@@ -83,7 +83,7 @@ export PATH="$BREW_PREFIX/opt/bison/bin:$PATH"
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 
 ```
-5. Clone the repo and apply ffmpeg8 patch
+5. Clone the repo
 
 ```zsh
 git clone https://github.com/music-assistant/cliairplay.git
