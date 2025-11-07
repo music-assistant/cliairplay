@@ -20,7 +20,6 @@ jobs:
       - name: Containerised Build
         run: |
           docker build --build-arg TARGETARCH=linux-aarch64 --output type=local,dest=. .
-          docker run --rm -v ${{ github.workspace }}:/work .
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -79,14 +78,14 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew reinstall \
+          brew install \
             autoconf automake libtool pkgconf gettext gawk \
             confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist libiconv \
             libsodium json-c curl openssl@3 protobuf-c bison
 
       - name: Build for macOS ARM64
         run: |
-          export PATH="$(brew --prefix bison)/bin:$PATH"
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix libiconv)/bin:$PATH"
           export OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           export LIBXML2_PREFIX="$(brew --prefix libxml2)"
           export ZLIB_PREFIX="$(brew --prefix zlib)"
