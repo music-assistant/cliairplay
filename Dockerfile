@@ -19,6 +19,8 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
 # Install build dependencies for cliap2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    linux-base \
+    linux-libc-dev \
     git \
     autotools-dev \
     autoconf \
