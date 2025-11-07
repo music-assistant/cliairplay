@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     libtool \
+    libtool-bin \
+    libtext-charwidth-perl \
+    libtext-glob-perl \
+    libtext-iconv-perl \
+    libtext-wrapi18n-perl \
     gettext \
     gawk gperf \
     flex \
@@ -53,6 +58,7 @@ WORKDIR /tmp/owntone-server
 
 RUN set -x \
     && autoreconf --version \
+    && aclocal --version \
     && autoreconf -fi \
     && ./configure \
     && make \
