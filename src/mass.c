@@ -918,6 +918,74 @@ pipe_thread_run(void *arg)
   pthread_exit(NULL);
 }
 
+static void
+mass_timer_cb(int fd, short what, void *arg)
+{
+  struct timespec now;
+  uint64_t elapsed_ms = 0;
+  uint64_t begin_ms, now_ms = 0;
+  struct player_status status;
+  struct ntp_stamp ntp_stamp;
+  int ret;
+
+  ret = player_get_status(&status);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "%s:Could not get player status\n", __func__);
+    return;
+  }
+
+  ret = timing_get_clock_ntp(&ntp_stamp);
+  if (ret < 0) {
+      DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
+      return;
+  }
+
+  DPRINTF(E_SPAM, L_PLAYER,
+    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
+    __func__, play_status_str(status.status), status.volume, status.pos_ms,
+    ntp_stamp.sec, ntp_stamp.frac
+  );
+
+  if (status.status == PLAY_PLAYING) {
+    if (!player_started) {
+      player_started = true;
+    }
+    DPRINTF(E_DBG, L_PLAYER, 
+      "%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
+      __func__, status.volume, play_status_str(status.status), status.pos_ms
+    );
+  }
+  else if (player_started && status.status == PLAY_PAUSED) {
+    if (!player_paused) {
+      player_paused = true;
+      clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
+      /* Music Assistant looks for "set pause" or "Pause at" */
+      DPRINTF(E_INFO, L_PLAYER, "%s: Pause at %" PRIu32 " ms\n",
+        __func__, status.pos_ms
+      );
+    }
+    else {
+      clock_gettime(CLOCK_REALTIME, &now);
+      begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
+      now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
+      elapsed_ms = now_ms - begin_ms;
+      DPRINTF(E_SPAM, L_PLAYER, 
+        "%s: paused milliseconds:%" PRIu64 " ms at position %" PRIu32 "\n", 
+        __func__, elapsed_ms, status.pos_ms
+      );
+
+    }
+  }
+  else { // this state can happen when audio has not yet been received on the named pipe
+    DPRINTF(E_DBG, L_PLAYER, "%s:Player %sstarted. status:%s\n", __func__,
+      player_started ? "" : "not ", play_status_str(status.status)
+    );
+    // reset all
+    player_started = false;
+    player_paused = false;
+    elapsed_ms = 0;
+  }
+}
 
 /* ----------------------- METADATA/ COMMAND PIPE HANDLING ------------------ */
 /*                                Thread: worker                              */
@@ -1280,75 +1348,6 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 }
 
 // Thread: main
-static void
-mass_timer_cb(int fd, short what, void *arg)
-{
-  struct timespec now;
-  uint64_t elapsed_ms = 0;
-  uint64_t begin_ms, now_ms = 0;
-  struct player_status status;
-  struct ntp_stamp ntp_stamp;
-  int ret;
-
-  ret = player_get_status(&status);
-  if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s:Could not get player status\n", __func__);
-    return;
-  }
-
-  ret = timing_get_clock_ntp(&ntp_stamp);
-  if (ret < 0) {
-      DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
-      return;
-  }
-
-  DPRINTF(E_SPAM, L_PLAYER,
-    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
-    __func__, play_status_str(status.status), status.volume, status.pos_ms,
-    ntp_stamp.sec, ntp_stamp.frac
-  );
-
-  if (status.status == PLAY_PLAYING) {
-    if (!player_started) {
-      player_started = true;
-    }
-    DPRINTF(E_DBG, L_PLAYER, 
-      "%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
-      __func__, status.volume, play_status_str(status.status), status.pos_ms
-    );
-  }
-  else if (player_started && status.status == PLAY_PAUSED) {
-    if (!player_paused) {
-      player_paused = true;
-      clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
-      /* Music Assistant looks for "set pause" or "Pause at" */
-      DPRINTF(E_INFO, L_PLAYER, "%s: Pause at %" PRIu32 " ms\n",
-        __func__, status.pos_ms
-      );
-    }
-    else {
-      clock_gettime(CLOCK_REALTIME, &now);
-      begin_ms = (uint64_t)paused_start_ts.tv_sec * 1000 + (uint64_t)(paused_start_ts.tv_nsec / 1000000);
-      now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
-      elapsed_ms = now_ms - begin_ms;
-      DPRINTF(E_SPAM, L_PLAYER, 
-        "%s: paused milliseconds:%" PRIu64 " ms at position %" PRIu32 "\n", 
-        __func__, elapsed_ms, status.pos_ms
-      );
-
-    }
-  }
-  else { // this state can happen when audio has not yet been received on the named pipe
-    DPRINTF(E_DBG, L_PLAYER, "%s:Player %sstarted. status:%s\n", __func__,
-      player_started ? "" : "not ", play_status_str(status.status)
-    );
-    // reset all
-    player_started = false;
-    player_paused = false;
-    elapsed_ms = 0;
-  }
-}
-
 int
 mass_init(void)
 {
@@ -1359,15 +1358,6 @@ mass_init(void)
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
-
-  if (!tid_pipe) {
-    // main thread
-    // Create a persistent event timer in the main event loop to monitor and report playback status
-    // Using the main thread may not be necessary anymore - test moving this into the pipe thread at some time
-    // to understand the implications.
-    mass_timer_event = event_new(evbase_main, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
-    evtimer_add(mass_timer_event, &mass_tv);
-  }
 
   pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
   if (pipe_autostart)
