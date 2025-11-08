@@ -602,6 +602,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   int ret;
   char *key, *value = NULL;
   int duration_sec = 0;
+  int progress_sec = 0;
 
   extract_key_value(item, &key, &value);
   if (!key || !value) {
@@ -643,7 +644,16 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   }
   else if (!strncmp(key,MASS_METADATA_PROGRESS_KEY, strlen(MASS_METADATA_PROGRESS_KEY))) {
       message = PIPE_METADATA_MSG_PROGRESS;
-      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received, but ignored\n", __func__, value);
+      ret = safe_atoi32(value, &progress_sec);
+      if (ret < 0) {
+          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid progress value in Music Assistant metadata: '%s'\n", __func__, value);
+          free(key);
+          free(value);
+          return -1;
+      }
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received\n", __func__, value);
+      prepared->input_metadata.pos_ms = progress_sec * 1000;
+      prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
       free(key);
       free(value);
   }
@@ -656,6 +666,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           DPRINTF(E_LOG, L_PLAYER, "%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, value);
           return -1;
       }
+      // message = PIPE_METADATA_MSG_PICTURE;
   }
   else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
     message = PIPE_METADATA_MSG_VOLUME;
@@ -1010,6 +1021,9 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     // Cannot call player_playback_pause() from this thread - not sure why, but comment to that effect
     // in player.c. Maybe we should call player_playback_stop()??
     // Also, maybe this should be a command call?
+    // player_playback_flush();
+    // player_playback_stop();
+    // player_playback_pause(); // this causes an exception: event: buffer.c:566: Assertion buffer->refcnt > 0 failed in evbuffer_decref_and_unlock_
     worker_execute((void *)player_playback_pause, NULL, 0, 0); // get the worker thread to pause the player
   }
   if (message & PIPE_METADATA_MSG_PLAY) {
