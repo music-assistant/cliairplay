@@ -907,6 +907,7 @@ pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
+  thread_setname(tid_pipe, "pipe");
   thread_getnametid(my_thread, sizeof(my_thread));
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_pipe);
@@ -1088,8 +1089,6 @@ pipe_thread_start(void)
   CHECK_NULL(L_PLAYER, evbase_pipe = event_base_new());
   CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_pipe, NULL));
   CHECK_ERR(L_PLAYER, pthread_create(&tid_pipe, NULL, pipe_thread_run, NULL));
-
-  thread_setname(tid_pipe, "pipe"); // TODO: @bradkeifer try moving this to pipe_thread_run
   
 }
 
