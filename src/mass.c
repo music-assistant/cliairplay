@@ -651,9 +651,9 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           free(value);
           return -1;
       }
-      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received\n", __func__, value);
-      prepared->input_metadata.pos_ms = progress_sec * 1000;
-      prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received and ignored.\n", __func__, value);
+      // prepared->input_metadata.pos_ms = progress_sec * 1000;
+      // prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
       free(key);
       free(value);
   }
