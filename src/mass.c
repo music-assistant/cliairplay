@@ -909,6 +909,9 @@ pipe_thread_run(void *arg)
 
   thread_setname(tid_pipe, "pipe");
   thread_getnametid(my_thread, sizeof(my_thread));
+  // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
+  mass_timer_event = event_new(evbase_pipe, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
+  evtimer_add(mass_timer_event, &mass_tv);
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_pipe);
 
