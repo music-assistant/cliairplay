@@ -738,7 +738,7 @@ struct output_definition output_rcp =
  * @return       ART_FMT_* on success, -1 on error or no artwork found
  */
 int
-artwork_get_item(struct evbuffer *evbuf, int id, int max_w, int max_h, int format)
+artwork_get_by_queue_item_id(struct evbuffer *evbuf, int id, int max_w, int max_h, int format)
 {
     size_t len = 0;
 
