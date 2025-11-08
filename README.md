@@ -82,22 +82,12 @@ export ACLOCAL_PATH="$BREW_PREFIX/share/gettext/m4"
 
 export LIBS="$OPENSSL_PREFIX/lib/libssl.a $OPENSSL_PREFIX/lib/libcrypto.a"
 ```
-5. Clone the repo
+5. Clone the repo and build the project
 
 ```zsh
 git clone https://github.com/music-assistant/cliairplay.git
 cd cliairplay
 git submodule update --init
-```
-
-6. Apply FFmpeg 8.0 compatibility patch
-```zsh
-patch -p1 < patches/ffmpeg8.patch
-```
-
-6. Build the project:
-
-```zsh
 autoreconf -fi
 ./configure
 make
