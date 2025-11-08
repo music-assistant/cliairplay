@@ -643,15 +643,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   }
   else if (!strncmp(key,MASS_METADATA_PROGRESS_KEY, strlen(MASS_METADATA_PROGRESS_KEY))) {
       message = PIPE_METADATA_MSG_PROGRESS;
-      ret = safe_atoi32(value, &prepared->input_metadata.pos_ms);
-      if (ret < 0) {
-          DPRINTF(E_LOG, L_PLAYER, "%s:Invalid progress value in Music Assistant metadata: '%s'\n", __func__, value);
-          free(key);
-          free(value);
-          return -1;
-      }
-      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s ms received\n", __func__, value);
-      prepared->input_metadata.pos_is_updated = true; // not sure if this is appropriate
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received, but ignored\n", __func__, value);
       free(key);
       free(value);
   }
@@ -983,8 +975,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   if (ret != COMMAND_END) {
     DPRINTF(E_LOG, L_PLAYER, "%s: Unable to obtain player status\n", __func__);
   }
-  // We are receiving progress updates from Music Assistant before we receive metadata, and that may be a problem.
-  if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PROGRESS | PIPE_METADATA_MSG_PICTURE)) {
+  if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PICTURE)) {
     pipe_metadata.is_new = 1; // Trigger notification to player in playback loop
     DPRINTF(E_SPAM, L_PLAYER, 
       "%s:Triggered notification to player in the playback loop of new metadata available (message=0x%x)\n", 
