@@ -56,5 +56,5 @@ RUN set -x \
 
 FROM scratch
 ARG TARGETARCH
-COPY --from=cliap2-builder cliap2-$TARGETARCH/release /
+COPY --from=cliap2-builder release/cliap2-$TARGETARCH /
 ENTRYPOINT ["/cliap2-$TARGETARCH --testrun"]
