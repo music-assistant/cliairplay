@@ -6,8 +6,8 @@ Based on [owntones](https://github.com/owntone/owntone-server) (all rights reser
 
 ## Pre-built binaries
 
-Pre-built binaries for Linux (x86_64 and ARM64) and macOS (Intel and Applie Silicon) are automatically built via GitHub Actions and available as build artifacts on the repository.
-Note that Linux binaries are currently built for Debian Bookworm and rely on use of shared libraries. If you are running  different Debian version, you will need to build your own binary using the instructions below.
+Pre-built binaries for Linux (x86_64 and ARM64) and macOS (Intel and Apple Silicon) are automatically built via GitHub Actions and available as build artifacts on the repository.
+Note that Linux binaries are currently built for Debian Bookworm and rely on use of shared libraries. If you are running a different Debian version, you will need to build your own binary using the instructions below.
 
 ## Debian build
 
