@@ -63,10 +63,6 @@ jobs:
           confuse libunistring ffmpeg libxml2 libgcrypt zlib libevent libplist \
           libiconv libsodium json-c curl openssl@3 protobuf-c bison
 
-      - name: Apply FFmpeg 8.0 compatibility patch
-        run: |
-          patch -p1 < patches/ffmpeg8.patch || cat owntone-server/src/transcode.c.rej
-
       - name: Build for macOS ARM64
         run: |
           export BREW_PREFIX="$(brew --prefix)"

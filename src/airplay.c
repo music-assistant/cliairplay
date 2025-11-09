@@ -1632,7 +1632,7 @@ airplay_metadata_prepare(struct output_metadata *metadata)
   CHECK_NULL(L_AIRPLAY, rmd->metadata = evbuffer_new());
   CHECK_NULL(L_AIRPLAY, tmp = evbuffer_new());
 
-  ret = artwork_get_item(rmd->artwork, queue_item->file_id, ART_DEFAULT_WIDTH, ART_DEFAULT_HEIGHT, 0);
+  ret = artwork_get_by_queue_item_id(rmd->artwork, queue_item->file_id, ART_DEFAULT_WIDTH, ART_DEFAULT_HEIGHT, 0);
   if (ret < 0)
     {
       DPRINTF(E_INFO, L_AIRPLAY, "Failed to retrieve artwork for file '%s'; no artwork will be sent\n", queue_item->path);
@@ -2244,8 +2244,8 @@ timing_svc_cb(int fd, short what, void *arg)
     }
 
     // Temporary debug logging
-    DHEXDUMP(E_DBG, L_AIRPLAY, req, sizeof(req), "RTCP time sync request\n");
-    DHEXDUMP(E_DBG, L_AIRPLAY, res, sizeof(res), "RTCP time sync reply\n");
+    // DHEXDUMP(E_DBG, L_AIRPLAY, req, sizeof(req), "RTCP time sync request\n");
+    // DHEXDUMP(E_DBG, L_AIRPLAY, res, sizeof(res), "RTCP time sync reply\n");
 }
 
 static void
