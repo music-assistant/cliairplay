@@ -1462,10 +1462,13 @@ device_remove_family(void *arg, int *retval)
       // backend gives us a callback with a failure. Then outputs.c will remove
       // the device. If the output backend never gives a callback (can that
       // happen?) then the device will never be removed.
-      if (!device->session)
+      if (!device->session) {
+        DPRINTF(E_DBG, L_PLAYER, "%s:No v4 address, no v6 address and no session. Removing device\n", __func__);
 	outputs_device_remove(device);
+      }
     }
 
+  DPRINTF(E_DBG, L_PLAYER, "%s:About to call outputs_device_free() for %s\n", __func__, remove->name);
   outputs_device_free(remove);
 
   status_update(player_state, LISTENER_SPEAKER | LISTENER_VOLUME);

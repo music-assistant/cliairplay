@@ -108,6 +108,7 @@ static struct timeval mass_tv = { MASS_UPDATE_INTERVAL_SEC, 0};
 static struct timespec paused_start_ts = {0, 0};
 static bool player_started = false;
 static bool player_paused = false;
+static int pipe_id = 0; // make a global of the id of our audio named pipe
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -866,22 +867,26 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
   struct player_status status;
   int ret;
 
+  // Initial read - can maybe use this to undertake any other required initialisation tasks
+  if (pipe_id == 0) {
+    pipe_id = pipe->id;
+    DPRINTF(E_DBG, L_PLAYER, "%s:Initialised global pipe_id to %d\n", __func__, pipe_id);
+  }
+
   ret = player_get_status(&status);
-  if (status.id == pipe->id)
-    {
-      DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
-        __func__, pipe->path, play_status_str(status.status)
-      );
-      return; // We are already playing the pipe
-    }
-  else if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, 
-        "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
-        __func__, pipe->path
-      );
-      return;
-    }
+  if (status.id == pipe->id) {
+    DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
+      __func__, pipe->path, play_status_str(status.status)
+    );
+    return; // We are already playing the pipe
+  }
+  else if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, 
+      "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
+      __func__, pipe->path
+    );
+    return;
+  }
 
   DPRINTF(E_SPAM, L_PLAYER, "Autostarting pipe '%s' (fd %d)\n", pipe->path, fd);
 
@@ -1080,35 +1085,63 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_FLUSH) {
     DPRINTF(E_DBG, L_PLAYER, 
-      "%s:Flushing playback from command pipe. Current player status is %s\n", 
+      "%s:FLUSH:Flushing playback from command pipe. Current player status is %s\n", 
       __func__, play_status_str(status.status)
     );
-    player_playback_flush();
+    player_playback_flush(); // results in FLUSH to the airplay device
   }
   if (message & PIPE_METADATA_MSG_PAUSE) {
     DPRINTF(E_DBG, L_PLAYER, 
-      "%s:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      "%s:PAUSE:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
       __func__, play_status_str(status.status), status.pos_ms
     );
-    // Cannot call player_playback_pause() from this thread - not sure why, but comment to that effect
-    // in player.c. Maybe we should call player_playback_stop()??
-    // Also, maybe this should be a command call?
-    // player_playback_flush();
-    // player_playback_stop();
-    // player_playback_pause(); // this causes an exception: event: buffer.c:566: Assertion buffer->refcnt > 0 failed in evbuffer_decref_and_unlock_
-    worker_execute((void *)player_playback_pause, NULL, 0, 0); // get the worker thread to pause the player
+    // We are in the pipe thread, which I think can be regarded as a slave to the input thread. The input thread is 
+    // a slave to the player thread. The player thread must never block, as it maintains the heartbeat of the system.
+    // We will try calling input_flush(), which should have the effect of clearing the queue of data from the input thread
+    // to the player thread, which will starve the player of data for playback. Whis it does, but then playback recommences
+    // for any further data sitting in the audio named pipe.
+    // If we call input_stop(), then playback is paused and no further data is processed from the named pipe
+    // until we get a PLAY command on the command named pipe
+    // Refer https://github.com/owntone/owntone-server/issues/1939 for discussion on this
+    // short flags;
+    // input_flush(&flags);
+    // DPRINTF(E_DBG, L_PLAYER, "%s:input_flush flags returned=%d\n", __func__, flags);
+    // We should check the current state before confirming what input action to undertake (if any)
+    if (status.status == PLAY_PLAYING) {
+      input_stop(); // input_stop results in the inpiut thread calling our stop function.
+    }
+    else {
+      DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PAUSE playback, but current state is %s. Ignoring command.\n",
+        __func__, play_status_str(status.status)
+      );
+    }
   }
   if (message & PIPE_METADATA_MSG_PLAY) {
     DPRINTF(E_DBG, L_PLAYER, 
-      "%s:(Re)starting playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      "%s:PLAY:(Re)starting playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
       __func__, play_status_str(status.status), status.pos_ms
     );
-    player_playback_start();
+    if (status.status != PLAY_PLAYING) {
+      input_start(pipe_id);
+    }
+    else {
+      DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PLAY, but current state is %s. Ignoring command.\n",
+        __func__, play_status_str(status.status)
+      );
+    }
   }
   if (message & PIPE_METADATA_MSG_STOP) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Stopping playback from command pipe command\n", __func__);
-    // We want to gracefully exit when we receive the STOP command.
-    event_base_loopbreak(evbase_main);
+    DPRINTF(E_DBG, L_PLAYER, "%s:STOP:Stopping playback from command pipe command\n", __func__);
+    // We want to gracefully exit when we receive the STOP command. No longer working!
+    // Music Assistant is sending a signal to cause graceful exit, so this is ok for the moment.
+    if (status.status == PLAY_PLAYING) {
+      input_stop(); // input_stop results in the inpiut thread calling our stop function.
+    }
+    else {
+      DPRINTF(E_WARN, L_PLAYER, "%s:Command received to STOP playback, but current state is %s. Ignoring command.\n",
+        __func__, play_status_str(status.status)
+      );
+    }
   }
 
  readd:
@@ -1270,7 +1303,7 @@ stop(struct input_source *source)
   struct pipe *pipe = source->input_ctx;
   union pipe_arg *cmdarg;
 
-  DPRINTF(E_DBG, L_PLAYER, "Stopping pipe\n");
+  DPRINTF(E_DBG, L_PLAYER, "Stopping pipe from the input thread\n");
 
   if (source->evbuf)
     evbuffer_free(source->evbuf);
@@ -1279,11 +1312,14 @@ stop(struct input_source *source)
 
   // Reset the pipe and start watching it again for new data. Must be async or
   // we will deadlock from the stop in pipe_read_cb().
-  if (pipe_autostart && (cmdarg = malloc(sizeof(union pipe_arg))))
-    {
-      cmdarg->id = pipe->id;
-      commands_exec_async(cmdbase, pipe_watch_reset, cmdarg);
-    }
+  if (pipe_autostart && (cmdarg = malloc(sizeof(union pipe_arg)))) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Resetting pipe->id %d. Calling pipe_watch_reset asynchronously\n", 
+      __func__, pipe->id
+    );
+    cmdarg->id = pipe->id;
+    commands_exec_async(cmdbase, pipe_watch_reset, cmdarg);
+    return 0;
+  }
 
   if (pipe_metadata.pipe)
     worker_execute(pipe_metadata_watch_del, NULL, 0, 0);
