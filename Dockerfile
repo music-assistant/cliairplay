@@ -49,12 +49,12 @@ RUN set -x \
     && ./configure \
     && make \
     && mkdir -p release \
-    && cp -v src/cliap2 cliap2-$TARGETARCH \
-    && chmod +x cliap2-$TARGETARCH \
-    && file cliap2-$TARGETARCH \
-    && ldd cliap2-$TARGETARCH
+    && cp -v src/cliap2 release/cliap2-$TARGETARCH \
+    && chmod +x release/cliap2-$TARGETARCH \
+    && file release/cliap2-$TARGETARCH \
+    && ldd release/cliap2-$TARGETARCH
 
 FROM scratch
 ARG TARGETARCH
-COPY --from=cliap2-builder cliap2-$TARGETARCH /
+COPY --from=cliap2-builder cliap2-$TARGETARCH/release /
 ENTRYPOINT ["/cliap2-$TARGETARCH --testrun"]
