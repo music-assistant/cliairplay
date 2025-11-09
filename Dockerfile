@@ -44,8 +44,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY . .
 
-WORKDIR .
-
 RUN set -x \
     && autoreconf -fi \
     && ./configure \
