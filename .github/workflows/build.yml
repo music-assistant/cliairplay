@@ -25,7 +25,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cliap2-linux-aarch64
-          path: ${{ github.workspace }}/cliap2-linux-aarch64/
+          path: ${{ github.workspace }}
 
 
 
@@ -46,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cliap2-linux-x86_64
-          path: ${{ github.workspace }}/cliap2-linux-x86_64/
+          path: ${{ github.workspace }}
 
 
   macos:
