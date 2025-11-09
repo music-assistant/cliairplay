@@ -44,8 +44,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY . .
 
-WORKDIR .
-
 RUN set -x \
     && autoreconf -fi \
     && ./configure \
@@ -58,5 +56,5 @@ RUN set -x \
 
 FROM scratch
 ARG TARGETARCH
-COPY --from=cliap2-builder cliap2-$TARGETARCH/cliap2-$TARGETARCH /
+COPY --from=cliap2-builder cliap2-$TARGETARCH /
 ENTRYPOINT ["/cliap2-$TARGETARCH --testrun"]
