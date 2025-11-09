@@ -103,7 +103,7 @@ jobs:
           path: release/cliap2-macos-arm64
 
   macos-x86_64:
-    runs-on: macos-15-intel
+    runs-on: macos-13
     steps:
       - name: Checkout
         uses: actions/checkout@v4
