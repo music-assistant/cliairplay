@@ -698,6 +698,7 @@ main(int argc, char **argv)
       return EXIT_FAILURE;
     }
     mass_named_pipes.audio_pipe = TESTRUN_PIPE;
+    mass_named_pipes.metadata_pipe = TESTRUN_PIPE METADATA_NAMED_PIPE_DEFAULT_SUFFIX;
   }
   else {
     // Check that named pipes exist for audio streaming and metadata
