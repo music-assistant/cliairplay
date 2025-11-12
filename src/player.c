@@ -1284,6 +1284,8 @@ playback_cb(int fd, short what, void *arg)
   int nsamples;
   int i;
   int ret;
+  static size_t write_count = 0;
+  static size_t write_bytes = 0;
 
   // Check if we missed any timer expirations
   overrun = 0;
@@ -1302,32 +1304,29 @@ playback_cb(int fd, short what, void *arg)
 #endif /* HAVE_TIMERFD */
 
   // We are too delayed, probably some output blocked: reset if first overrun or abort if second overrun
-  if (overrun > pb_write_deficit_max)
-    {
-      if (pb_write_recovery)
-	{
-	  DPRINTF(E_LOG, L_PLAYER, "Permanent output delay detected (behind=%" PRIu64 ", max=%d), aborting\n", overrun, pb_write_deficit_max);
-	  pb_abort();
-	  return;
-	}
-
-      DPRINTF(E_LOG, L_PLAYER, "Output delay detected (behind=%" PRIu64 ", max=%d), resetting all outputs\n", overrun, pb_write_deficit_max);
-      pb_write_recovery = true;
-      player_flush_pending = pb_suspend();
-      // No devices to wait for, just set the restart cb right away. Otherwise
-      // the trigger will be set by device_flush_cb.
-      if (player_flush_pending == 0)
-	input_buffer_full_cb(player_playback_start);
-
+  if (overrun > pb_write_deficit_max) {
+    if (pb_write_recovery) {
+      DPRINTF(E_LOG, L_PLAYER, "Permanent output delay detected (behind=%" PRIu64 ", max=%d), aborting\n", overrun, pb_write_deficit_max);
+      pb_abort();
       return;
-    }
-  else
-    {
-      if (overrun > 1) // An overrun of 1 is no big deal
-	DPRINTF(E_WARN, L_PLAYER, "Output delay detected: player is %" PRIu64 " ticks behind, catching up\n", overrun);
+	  }
 
-      pb_write_recovery = false;
-    }
+    DPRINTF(E_LOG, L_PLAYER, "Output delay detected (behind=%" PRIu64 ", max=%d), resetting all outputs\n", overrun, pb_write_deficit_max);
+    pb_write_recovery = true;
+    player_flush_pending = pb_suspend();
+    // No devices to wait for, just set the restart cb right away. Otherwise
+    // the trigger will be set by device_flush_cb.
+    if (player_flush_pending == 0)
+      input_buffer_full_cb(player_playback_start);
+
+    return;
+  }
+  else {
+    if (overrun > 1) // An overrun of 1 is no big deal
+    	DPRINTF(E_WARN, L_PLAYER, "Output delay detected: player is %" PRIu64 " ticks behind, catching up\n", overrun);
+
+    pb_write_recovery = false;
+  }
 
 #ifdef DEBUG_PLAYER
   session_dump(true);
@@ -1336,62 +1335,70 @@ playback_cb(int fd, short what, void *arg)
   // The pessimistic approach: Assume you won't get anything, then anything that
   // comes your way is a positive surprise.
   pb_session.read_deficit += (1 + overrun) * pb_session.bufsize;
+  // DPRINTF(E_DBG, L_PLAYER, "%s:pb_session.read_deficit(%zu) += (1 + overrun(%" PRIu64 ")) * pbsession.bufsize(%zu)\n",
+  //   __func__, pb_session.read_deficit, overrun, pb_session.bufsize
+  // );
 
   // If there was an overrun, we will try to read/write a corresponding number
   // of times so we catch up. The read from the input is non-blocking, so it
   // should not bring us further behind, even if there is no data.
-  for (i = 1 + overrun; i > 0; i--)
-    {
-      ret = source_read(&nbytes, &nsamples, pb_session.buffer, pb_session.bufsize);
-      if (ret < 0)
-	{
-	  DPRINTF(E_LOG, L_PLAYER, "Error reading from source\n");
-	  pb_session.read_deficit -= pb_session.bufsize;
-	  break;
-	}
-      if (nbytes == 0)
-	{
-	  break;
-	}
-
-      pb_session.read_deficit -= nbytes;
-
-      // DPRINTF(E_DBG, L_PLAYER, "%s:Read %d bytes (%d samples) from source for playback at %ld.%ld\n", 
-      //   __func__, nbytes, nsamples, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
-      outputs_write(pb_session.buffer, nbytes, nsamples, &pb_session.quality, &pb_session.pts);
-
-      if (nbytes < pb_session.bufsize)
-	{
-	  // How much the number of samples we got corresponds to in time (nanoseconds)
-	  ts.tv_sec = 0;
-	  ts.tv_nsec = 1000000000UL * (uint64_t)nsamples / pb_session.quality.sample_rate;
-
-	  DPRINTF(E_DBG, L_PLAYER, "Incomplete read, wanted %zu, got %d (samples=%d/time=%lu), deficit %zu\n", pb_session.bufsize, nbytes, nsamples, ts.tv_nsec, pb_session.read_deficit);
-
-	  pb_session.pts = timespec_add(pb_session.pts, ts);
-	}
-      else
-	{
-	  // We got a full frame, so that means we can also advance the presentation timestamp by a full tick
-	  pb_session.pts = timespec_add(pb_session.pts, player_tick_interval);
-
-	  // It is going well, lets take another round to repay our debt
-	  if (i == 1 && pb_session.read_deficit > pb_session.bufsize)
-	    i = 2;
-	}
+  for (i = 1 + overrun; i > 0; i--) {
+    ret = source_read(&nbytes, &nsamples, pb_session.buffer, pb_session.bufsize);
+    if (ret < 0) {
+      DPRINTF(E_LOG, L_PLAYER, "Error reading from source\n");
+      pb_session.read_deficit -= pb_session.bufsize;
+      break;
+    }
+    if (nbytes == 0) {
+      DPRINTF(E_DBG, L_PLAYER, "%s:exhaused source input\n", __func__);
+      break;
     }
 
-  if (pb_session.read_deficit_max && pb_session.read_deficit > pb_session.read_deficit_max)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Source is not providing sufficient data, temporarily suspending playback (deficit=%zu/%zu bytes)\n",
-	pb_session.read_deficit, pb_session.read_deficit_max);
+    pb_session.read_deficit -= nbytes;
 
-      player_flush_pending = pb_suspend();
-      // No devices to wait for, just set the restart cb right away. Otherwise
-      // the trigger will be set by device_flush_cb.
-      if (player_flush_pending == 0)
-	input_buffer_full_cb(player_playback_start);
+    // DPRINTF(E_DBG, L_PLAYER, "%s:Read %d bytes (%d samples) from source for playback at %ld.%ld\n", 
+    //   __func__, nbytes, nsamples, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
+    outputs_write(pb_session.buffer, nbytes, nsamples, &pb_session.quality, &pb_session.pts);
+    write_count++;
+    write_bytes += nbytes;
+    DPRINTF(E_DBG, L_PLAYER, "%s:write_count:%zu write_bytes:%zu to output\n", __func__, write_count, write_bytes);
+
+    if (nbytes < pb_session.bufsize) {
+      // How much the number of samples we got corresponds to in time (nanoseconds)
+      ts.tv_sec = 0;
+      ts.tv_nsec = 1000000000UL * (uint64_t)nsamples / pb_session.quality.sample_rate;
+
+      DPRINTF(E_DBG, L_PLAYER, "Incomplete read, wanted %zu, got %d (samples=%d/time=%lu), deficit %zu\n", 
+        pb_session.bufsize, nbytes, nsamples, ts.tv_nsec, pb_session.read_deficit
+      );
+
+      pb_session.pts = timespec_add(pb_session.pts, ts);
     }
+    else {
+      // We got a full frame, so that means we can also advance the presentation timestamp by a full tick
+      // DPRINTF(E_DBG, L_PLAYER, "%s:full frame %zu\n", __func__, pb_session.bufsize);
+      pb_session.pts = timespec_add(pb_session.pts, player_tick_interval);
+
+      // It is going well, lets take another round to repay our debt
+      if (i == 1 && pb_session.read_deficit > pb_session.bufsize) {
+        DPRINTF(E_DBG, L_PLAYER, "%s: read deficit of %zu bytes, trying to read another chunk\n", __func__, pb_session.read_deficit);
+        i = 2;
+      }
+    }
+  }
+
+  if (pb_session.read_deficit_max && pb_session.read_deficit > pb_session.read_deficit_max) {
+    // I'm not so sure this test is valid. Let's log some info about how much data is in buffers.
+    DPRINTF(E_LOG, L_PLAYER, "Source is not providing sufficient data, temporarily suspending playback (deficit=%zu/%zu bytes)\n",
+      pb_session.read_deficit, pb_session.read_deficit_max
+    );
+
+    player_flush_pending = pb_suspend();
+    // No devices to wait for, just set the restart cb right away. Otherwise
+    // the trigger will be set by device_flush_cb.
+    if (player_flush_pending == 0)
+      input_buffer_full_cb(player_playback_start);
+  }
 }
 
 

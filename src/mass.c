@@ -105,6 +105,8 @@ static struct timespec paused_start_ts = {0, 0};
 static bool player_started = false;
 static bool player_paused = false;
 static int pipe_id = 0; // make a global of the id of our audio named pipe
+static pthread_mutex_t pause_lock;
+static bool pause_reading = false; // we control when to pause and (re)commence reading from the audio pipe
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -368,19 +370,6 @@ watch_del(struct pipe *pipe)
   pipe_close(pipe->fd);
 
   pipe->fd = -1;
-}
-
-// If a read on pipe returns 0 it is an EOF, and we must close it and reopen it
-// for renewed watching. The event will be freed and reallocated by this.
-static int
-watch_reset(struct pipe *pipe)
-{
-  if (!pipe)
-    return -1;
-
-  watch_del(pipe);
-
-  return watch_add(pipe, evbase_audio_pipe);
 }
 
 static int
@@ -805,8 +794,207 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 
 
 /* ------------------------------ PIPE WATCHING ----------------------------- */
-/*                                 Thread: pipe                               */
+/*                             Thread: audio_pipe                             */
 
+
+// Some data arrived on a pipe we watch - let's autostart playback
+static void
+pipe_read_cb(evutil_socket_t fd, short event, void *arg)
+{
+  struct pipe *pipe = arg;
+  struct player_status status;
+  int ret;
+
+  DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
+
+  // Initial read - can maybe use this to undertake any other required initialisation tasks
+  if (pipe_id == 0) {
+    pipe_id = pipe->id;
+    DPRINTF(E_DBG, L_PLAYER, "%s:Initialised global pipe_id to %d\n", __func__, pipe_id);
+  }
+
+  ret = player_get_status(&status);
+  if (status.id == pipe->id) {
+    DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
+      __func__, pipe->path, play_status_str(status.status)
+    );
+    return; // We are already playing the pipe
+  }
+  else if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, 
+      "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
+      __func__, pipe->path
+    );
+    return;
+  }
+
+  DPRINTF(E_SPAM, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d)\n", __func__, pipe->path, fd);
+
+  player_playback_stop();
+
+  DPRINTF(E_SPAM, L_PLAYER, "%s:player_playback_start_byid(%d)\n", __func__, pipe->id);
+  ret = player_playback_start_byid(pipe->id);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d) failed.\n", __func__, pipe->path, fd);
+    return;
+  }
+
+  /* Music Assistant looks for "restarting w/o pause" */
+  DPRINTF(E_INFO, L_PLAYER, "%s: restarting w/o pause\n", __func__);
+
+  pipe_autostart_id = pipe->id;
+}
+
+static enum command_state
+pipe_watch_update(void *arg, int *retval)
+{
+  union pipe_arg *cmdarg = arg;
+  struct pipe *pipelist;
+  struct pipe *pipe;
+  struct pipe *next;
+  int count;
+
+  if (cmdarg)
+    pipelist = cmdarg->pipelist;
+  else
+    pipelist = NULL;
+
+  // Removes pipes that are gone from the watchlist
+  for (pipe = pipe_watch_list; pipe; pipe = next)
+    {
+      next = pipe->next;
+
+      if (!pipelist_find(pipelist, pipe->id))
+	{
+	  DPRINTF(E_SPAM, L_PLAYER, "Pipe watch deleted: '%s'\n", pipe->path);
+	  watch_del(pipe);
+	  pipelist_remove(&pipe_watch_list, pipe); // Will free pipe
+	}
+    }
+
+  // Looks for new pipes and adds them to the watchlist
+  for (pipe = pipelist, count = 0; pipe; pipe = next, count++)
+    {
+      next = pipe->next;
+
+      if (count > PIPE_MAX_WATCH)
+	{
+	  DPRINTF(E_LOG, L_PLAYER, "Max open pipes reached (%d), will not watch '%s'\n", PIPE_MAX_WATCH, pipe->path);
+	  pipe_free(pipe);
+	  continue;
+	}
+
+      if (!pipelist_find(pipe_watch_list, pipe->id))
+	{
+	  watch_add(pipe, evbase_audio_pipe);
+	  pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
+	}
+      else
+	{
+	  pipe_free(pipe);
+	}
+    }
+
+  *retval = 0;
+  return COMMAND_END;
+}
+
+static void *
+pipe_thread_run(void *arg)
+{
+  char my_thread[32];
+
+  thread_setname(tid_audio_pipe, "audio_pipe");
+  thread_getnametid(my_thread, sizeof(my_thread));
+  DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
+  event_base_dispatch(evbase_audio_pipe);
+
+  pthread_exit(NULL);
+}
+
+/* ----------------------- PIPE WATCH THREAD START/STOP --------------------- */
+/*                             Thread: audio_pipe                            */
+
+static void
+pipe_thread_start(void)
+{
+
+  DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
+
+  CHECK_NULL(L_PLAYER, evbase_audio_pipe = event_base_new());
+  CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_audio_pipe, NULL));
+  CHECK_ERR(L_PLAYER, pthread_create(&tid_audio_pipe, NULL, pipe_thread_run, NULL));
+  
+}
+
+static void
+pipe_thread_stop(void)
+{
+  int ret;
+
+  DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
+
+  if (!tid_audio_pipe)
+    return;
+
+  commands_exec_sync(cmdbase, pipe_watch_update, NULL, NULL);
+  commands_base_destroy(cmdbase);
+
+  ret = pthread_join(tid_audio_pipe, NULL);
+  if (ret != 0)
+    DPRINTF(E_LOG, L_PLAYER, "Could not join pipe thread: %s\n", strerror(errno));
+
+  event_base_free(evbase_audio_pipe);
+  tid_audio_pipe = 0;
+}
+
+// For Music Assistant the audio pipe will always be a PCM pipe
+static struct pipe *
+pipelist_create(void)
+{
+  struct pipe *head;
+  struct pipe *pipe;
+
+  DPRINTF(E_DBG, L_PLAYER, "%s:Adding %s to the pipelist\n", __func__, mass_named_pipes.audio_pipe);
+  head = NULL;
+  pipe = pipe_create(mass_named_pipes.audio_pipe, 1, PIPE_PCM, pipe_read_cb);
+  pipelist_add(&head, pipe);
+
+  return head;
+}
+
+// For Music Assistant integration, we always have a named pipe
+// which is handled by pipelist_create(), so we should always get a pipelist.
+// Once we confirm the named pipe, we:
+// - start the pipe thread; and
+// - look for any changes of named pipes to watch
+static void
+pipe_listener_cb(short event_mask, void *ctx)
+{
+  union pipe_arg *cmdarg;
+
+  cmdarg = malloc(sizeof(union pipe_arg));
+  if (!cmdarg)
+    return;
+
+  cmdarg->pipelist = pipelist_create();
+  if (!cmdarg->pipelist)
+    {
+      DPRINTF(E_INFO, L_PLAYER, "%s: No pipelist. Stopping thread.\n", __func__);
+      pipe_thread_stop();
+      free(cmdarg);
+      return;
+    }
+
+  if (!tid_audio_pipe)
+    pipe_thread_start();
+  
+  commands_exec_async(cmdbase, pipe_watch_update, cmdarg);
+  
+}
+
+/* ------------------- Metadata and Command Processing --------------------------------*/
+/*                      Thread: command_pipe                                           */
 static void
 mass_timer_cb(int fd, short what, void *arg)
 {
@@ -876,141 +1064,21 @@ mass_timer_cb(int fd, short what, void *arg)
   }
 }
 
-// Some data arrived on a pipe we watch - let's autostart playback
 static void
-pipe_read_cb(evutil_socket_t fd, short event, void *arg)
+self_pause(void)
 {
-  struct pipe *pipe = arg;
-  struct player_status status;
-  int ret;
-
-  // Initial read - can maybe use this to undertake any other required initialisation tasks
-  if (pipe_id == 0) {
-    pipe_id = pipe->id;
-    DPRINTF(E_DBG, L_PLAYER, "%s:Initialised global pipe_id to %d\n", __func__, pipe_id);
-  }
-
-  ret = player_get_status(&status);
-  if (status.id == pipe->id) {
-    DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
-      __func__, pipe->path, play_status_str(status.status)
-    );
-    return; // We are already playing the pipe
-  }
-  else if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, 
-      "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
-      __func__, pipe->path
-    );
-    return;
-  }
-
-  DPRINTF(E_SPAM, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d)\n", __func__, pipe->path, fd);
-
-  player_playback_stop();
-
-  DPRINTF(E_SPAM, L_PLAYER, "%s:player_playback_start_byid(%d)\n", __func__, pipe->id);
-  ret = player_playback_start_byid(pipe->id);
-  if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d) failed.\n", __func__, pipe->path, fd);
-    return;
-  }
-
-  /* Music Assistant looks for "restarting w/o pause" */
-  DPRINTF(E_INFO, L_PLAYER, "%s: restarting w/o pause\n", __func__);
-
-  pipe_autostart_id = pipe->id;
+  pthread_mutex_lock(&pause_lock);
+  pause_reading = true;
+  pthread_mutex_unlock(&pause_lock);
 }
 
-static enum command_state
-pipe_watch_reset(void *arg, int *retval)
+static void
+self_resume(void)
 {
-  union pipe_arg *cmdarg = arg;
-  struct pipe *pipe;
-
-  pipe_autostart_id = 0;
-
-  pipe = pipelist_find(pipe_watch_list, cmdarg->id);
-  if (!pipe)
-    return COMMAND_END;
-
-  *retval = watch_reset(pipe);
-
-  return COMMAND_END;
+  pthread_mutex_lock(&pause_lock);
+  pause_reading = false;
+  pthread_mutex_unlock(&pause_lock);
 }
-
-static enum command_state
-pipe_watch_update(void *arg, int *retval)
-{
-  union pipe_arg *cmdarg = arg;
-  struct pipe *pipelist;
-  struct pipe *pipe;
-  struct pipe *next;
-  int count;
-
-  if (cmdarg)
-    pipelist = cmdarg->pipelist;
-  else
-    pipelist = NULL;
-
-  // Removes pipes that are gone from the watchlist
-  for (pipe = pipe_watch_list; pipe; pipe = next)
-    {
-      next = pipe->next;
-
-      if (!pipelist_find(pipelist, pipe->id))
-	{
-	  DPRINTF(E_SPAM, L_PLAYER, "Pipe watch deleted: '%s'\n", pipe->path);
-	  watch_del(pipe);
-	  pipelist_remove(&pipe_watch_list, pipe); // Will free pipe
-	}
-    }
-
-  // Looks for new pipes and adds them to the watchlist
-  for (pipe = pipelist, count = 0; pipe; pipe = next, count++)
-    {
-      next = pipe->next;
-
-      if (count > PIPE_MAX_WATCH)
-	{
-	  DPRINTF(E_LOG, L_PLAYER, "Max open pipes reached (%d), will not watch '%s'\n", PIPE_MAX_WATCH, pipe->path);
-	  pipe_free(pipe);
-	  continue;
-	}
-
-      if (!pipelist_find(pipe_watch_list, pipe->id))
-	{
-	  watch_add(pipe, evbase_audio_pipe);
-	  pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
-	}
-      else
-	{
-	  pipe_free(pipe);
-	}
-    }
-
-  *retval = 0;
-  return COMMAND_END;
-}
-
-static void *
-pipe_thread_run(void *arg)
-{
-  char my_thread[32];
-
-  thread_setname(tid_audio_pipe, "audio_pipe");
-  thread_getnametid(my_thread, sizeof(my_thread));
-  // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
-  mass_timer_event = event_new(evbase_audio_pipe, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
-  evtimer_add(mass_timer_event, &mass_tv);
-  DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
-  event_base_dispatch(evbase_audio_pipe);
-
-  pthread_exit(NULL);
-}
-
-/* ------------------- Metadata and Command Processing --------------------------------*/
-/*                      Thread: command_pipe                                           */
 
 static void
 pipe_metadata_watch_del(void *arg)
@@ -1112,22 +1180,9 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
       "%s:PAUSE:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
       __func__, play_status_str(status.status), status.pos_ms
     );
-    // this below comment cna change once debugged
-    // We are in the pipe thread, which I think can be regarded as a slave to the input thread. The input thread is 
-    // a slave to the player thread. The player thread must never block, as it maintains the heartbeat of the system.
-    // We will try calling input_flush(), which should have the effect of clearing the queue of data from the input thread
-    // to the player thread, which will starve the player of data for playback. Whis it does, but then playback recommences
-    // for any further data sitting in the audio named pipe.
-    // If we call input_stop(), then playback is paused and no further data is processed from the named pipe
-    // until we get a PLAY command on the command named pipe
-    // Refer https://github.com/owntone/owntone-server/issues/1939 for discussion on this
-    // short flags;
-    // input_flush(&flags);
-    // DPRINTF(E_DBG, L_PLAYER, "%s:input_flush flags returned=%d\n", __func__, flags);
-    // We should check the current state before confirming what input action to undertake (if any)
+    // We  check the current state before confirming what input action to undertake (if any)
     if (status.status == PLAY_PLAYING) {
-      // input_stop(); // input_stop results in the input thread calling our stop function.
-      player_playback_pause();
+      self_pause();
     }
     else {
       DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PAUSE playback, but current state is %s. Ignoring command.\n",
@@ -1141,9 +1196,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
       __func__, play_status_str(status.status), status.pos_ms
     );
     if (status.status != PLAY_PLAYING) {
-      // input_start(pipe_id); // maybe try input_resume()??
-      // input_resume(pipe_id, status.pos_ms);
-      player_playback_start_byid(pipe_id);
+      self_resume();
     }
     else {
       DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PLAY, but current state is %s. Ignoring command.\n",
@@ -1156,8 +1209,9 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     // We want to gracefully exit when we receive the STOP command. No longer working!
     // Music Assistant is sending a signal to cause graceful exit, so this is ok for the moment.
     if (status.status == PLAY_PLAYING) {
-      // input_stop(); // input_stop results in the inpiut thread calling our stop function.
-      player_playback_stop();
+      self_pause();
+      input_flush(NULL); // we don't care about losing data for the input_buffer on stop.
+      // work out a way to initate a graceful exit and call that function here.
     }
     else {
       DPRINTF(E_WARN, L_PLAYER, "%s:Command received to STOP playback, but current state is %s. Ignoring command.\n",
@@ -1207,6 +1261,9 @@ command_pipe_thread_run(void *arg)
   thread_setname(pthread_self(), "command_pipe");
   thread_getnametid(my_thread, sizeof(my_thread));
   pipe_metadata_watch_add(mass_named_pipes.metadata_pipe);
+  // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
+  mass_timer_event = event_new(evbase_command_pipe, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
+  evtimer_add(mass_timer_event, &mass_tv);
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch command pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_command_pipe);
 
@@ -1226,105 +1283,6 @@ command_pipe_thread_stop(void)
   event_base_loopbreak(evbase_command_pipe);
   event_base_free(evbase_command_pipe);
   tid_command_pipe = 0;
-}
-
-static int
-command_pipe_init(void)
-{
-  int ret;
-
-  evbase_command_pipe = event_base_new();
-  ret = pthread_create(&tid_command_pipe, NULL, command_pipe_thread_run, NULL);
-  if (ret !=0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s:Unable to create command thread. %s\n", __func__, strerror(errno));
-    return -1;
-  }
-  return 0;
-}
-
-static void
-command_pipe_deinit()
-{
-  DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
-  // do we need to do a loopbreak here??
-  command_pipe_thread_stop();
-}
-
-/* ----------------------- PIPE WATCH THREAD START/STOP --------------------- */
-/*                             Thread: audio_pipe                            */
-
-static void
-pipe_thread_start(void)
-{
-
-  CHECK_NULL(L_PLAYER, evbase_audio_pipe = event_base_new());
-  CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_audio_pipe, NULL));
-  CHECK_ERR(L_PLAYER, pthread_create(&tid_audio_pipe, NULL, pipe_thread_run, NULL));
-  
-}
-
-static void
-pipe_thread_stop(void)
-{
-  int ret;
-
-  if (!tid_audio_pipe)
-    return;
-
-  commands_exec_sync(cmdbase, pipe_watch_update, NULL, NULL);
-  commands_base_destroy(cmdbase);
-
-  ret = pthread_join(tid_audio_pipe, NULL);
-  if (ret != 0)
-    DPRINTF(E_LOG, L_PLAYER, "Could not join pipe thread: %s\n", strerror(errno));
-
-  event_base_free(evbase_audio_pipe);
-  tid_audio_pipe = 0;
-}
-
-// For Music Assistant the audio pipe will always be a PCM pipe
-static struct pipe *
-pipelist_create(void)
-{
-  struct pipe *head;
-  struct pipe *pipe;
-
-  DPRINTF(E_DBG, L_PLAYER, "%s:Adding %s to the pipelist\n", __func__, mass_named_pipes.audio_pipe);
-  head = NULL;
-  pipe = pipe_create(mass_named_pipes.audio_pipe, 1, PIPE_PCM, pipe_read_cb);
-  pipelist_add(&head, pipe);
-
-  return head;
-}
-
-// For Music Assistant integration, we always have a named pipe
-// which is handled by pipelist_create(), so we should always get a pipelist.
-// Once we confirm the named pipe, we:
-// - start the pipe thread; and
-// - look for any changes of named pipes to watch
-static void
-pipe_listener_cb(short event_mask, void *ctx)
-{
-  union pipe_arg *cmdarg;
-
-  cmdarg = malloc(sizeof(union pipe_arg));
-  if (!cmdarg)
-    return;
-
-  cmdarg->pipelist = pipelist_create();
-  if (!cmdarg->pipelist)
-    {
-      DPRINTF(E_INFO, L_PLAYER, "%s: No pipelist. Stopping thread.\n", __func__);
-      pipe_thread_stop();
-      free(cmdarg);
-      return;
-    }
-
-  if (!tid_audio_pipe)
-    pipe_thread_start();
-  
-  commands_exec_async(cmdbase, pipe_watch_update, cmdarg);
-  
 }
 
 
@@ -1357,38 +1315,13 @@ setup(struct input_source *source)
   return 0;
 }
 
+// for Music Assistant, we want to stop reading from
+// the pipe and we will restart on a play. We don't need to 
+// close the pipe or even free the buffer.
+// We can basically be a no-op
 static int
 stop(struct input_source *source)
 {
-  struct pipe *pipe = source->input_ctx;
-  union pipe_arg *cmdarg;
-
-  DPRINTF(E_DBG, L_PLAYER, "Stopping pipe from the input thread\n");
-
-  if (source->evbuf)
-    evbuffer_free(source->evbuf);
-
-  pipe_close(pipe->fd);
-
-  // Reset the pipe and start watching it again for new data. Must be async or
-  // we will deadlock from the stop in pipe_read_cb().
-  if (pipe_autostart && (cmdarg = malloc(sizeof(union pipe_arg)))) {
-    DPRINTF(E_DBG, L_PLAYER, "%s:Resetting pipe->id %d. Calling pipe_watch_reset asynchronously\n", 
-      __func__, pipe->id
-    );
-    cmdarg->id = pipe->id;
-    commands_exec_async(cmdbase, pipe_watch_reset, cmdarg);
-    return 0;
-  }
-
-  // if (pipe_metadata.pipe)
-  //   worker_execute(pipe_metadata_watch_del, NULL, 0, 0);
-
-  pipe_free(pipe);
-
-  source->input_ctx = NULL;
-  source->evbuf = NULL;
-
   return 0;
 }
 
@@ -1399,6 +1332,16 @@ play(struct input_source *source)
   struct pipe *pipe = source->input_ctx;
   short flags;
   int ret;
+  static size_t read_count = 0;
+  static size_t read_bytes = 0;
+
+  pthread_mutex_lock(&pause_lock);
+  if (pause_reading) {
+    pthread_mutex_unlock(&pause_lock);
+    input_wait();
+    return 0; // loop
+  }
+  pthread_mutex_unlock(&pause_lock);
 
   ret = evbuffer_read(source->evbuf, pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
   if ((ret == 0) && (pipe->is_autostarted))
@@ -1421,9 +1364,12 @@ play(struct input_source *source)
       return -1;
     }
 
+  read_count++;
+  read_bytes += ret;
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
 
+  DPRINTF(E_DBG, L_PLAYER, "%s:read_count:%zu write_count:%zu to input\n", __func__, read_count, read_bytes);
   input_write(source->evbuf, &source->quality, flags);
 
   return 0;
@@ -1444,7 +1390,30 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
   return 0;
 }
 
-// Thread: main
+/* ---------------------------------------------------------------------------------------*/
+/*                                   Thread: main                                         */
+
+static int
+command_pipe_init(void)
+{
+  int ret;
+
+  evbase_command_pipe = event_base_new();
+  ret = pthread_create(&tid_command_pipe, NULL, command_pipe_thread_run, NULL);
+  if (ret !=0) {
+    DPRINTF(E_LOG, L_PLAYER, "%s:Unable to create command thread. %s\n", __func__, strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
+static void
+command_pipe_deinit()
+{
+  DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
+  command_pipe_thread_stop();
+}
+
 int
 mass_init(void)
 {
@@ -1453,6 +1422,7 @@ mass_init(void)
   // audio named pipe.
 
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
+  CHECK_ERR(L_PLAYER, mutex_init(&pause_lock));
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
 
@@ -1495,6 +1465,7 @@ mass_deinit(void)
     }
 
   CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
+  CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pause_lock));
 
   // work out where to locate timer_delete - ie. which thread.
   event_free(mass_timer_event);
