@@ -1,12 +1,24 @@
-/*
+/**
+ * @brief Reads raw PCM audio and commands/metadata from named pipes and streams to on OwnTone player
+ * 
  * About mass.c
  * ------------
- * This was copied from pipe.c from the owntones repo and adapted
- * to provide an interface between Music Assistant and the airplay
- * player codebase from owtnones.
- * Raw PCM data is read from a named pipe and streamed to the airplay player
- * Metadata and commands are read from a second named pipe and processed
+ * This was copied from pipe.c from the OwnTone repo and adapted
+ * to provide an interface between Music Assistant and the OwnTone codebase
+ * using a pair of named pipes.
+ * 
+ * Raw PCM data is read from one named pipe and streamed to the player
+ * Metadata and commands are read from a second named pipe and processed.
  * Player status is reported back to Music Assistant on stderr
+ * This module is considered to be an input backend module in OwnTone parlance.
+ * It runs in two threads:
+ *  1. mass_audio: Responsible for reading raw PCM audio from a named pipe and supplying
+ *      it to the input module
+ *  2. mass_command: Responsible for handling metadata and commands received from 
+ *      Music Assistant and reporting player status.
+ * 
+ * A mutex is used to ensure integrity of data objects shared between the mass_audio
+ * and mass_command threads.
  *
  * original code:
  * Copyright (C) 2017 Espen Jurgensen
@@ -24,19 +36,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- *
- * About pipe.c
- * --------------
- * This module will read a PCM16 stream from a named pipe and write it to the
- * input buffer. The user may start/stop playback from a pipe by selecting it
- * through a client. If the user has configured pipe_autostart, then pipes in
- * the library will also be watched for data, and playback will start/stop
- * automatically.
- *
- * The module will also look for pipes with a .metadata suffix, and if found,
- * the metadata will be parsed and fed to the player. The metadata must be in
- * the format Shairport uses for this purpose.
  *
  */
 
@@ -97,7 +96,7 @@
 extern ap2_device_info_t ap2_device_info;
 extern mass_named_pipes_t mass_named_pipes;
 
- /* mass specific stuff - run the timer in the main thread, so we can initiate program termination */
+ /* mass specific stuff */
 static struct event *mass_timer_event = NULL;
 static struct timeval mass_tv = { MASS_UPDATE_INTERVAL_SEC, 0};
 // static struct timespec playback_start_ts = {0, 0};
@@ -106,13 +105,13 @@ static bool player_started = false;
 static bool player_paused = false;
 static int pipe_id = 0; // make a global of the id of our audio named pipe
 static pthread_mutex_t pause_lock;
-static bool pause_reading = false; // we control when to pause and (re)commence reading from the audio pipe
+static bool pause_flag = false; // we control when to pause and (re)commence reading from the audio pipe
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
-// Max number of bytes to read from a pipe at a time
+// Max number of bytes to read from the audio pipe at a time
 #define PIPE_READ_MAX 65536
-// Max number of bytes to buffer from metadata pipes
+// Max number of bytes to buffer from the command/metadata pipe
 #define PIPE_METADATA_BUFLEN_MAX 1048576
 // Ignore pictures with larger size than this
 #define PIPE_PICTURE_SIZE_MAX 1048576
@@ -144,7 +143,6 @@ struct pipe
 {
   int id;               // The mfi id of the pipe
   int fd;               // File descriptor
-  bool is_autostarted;  // We autostarted the pipe (and we will autostop)
   char *path;           // Path
   enum pipetype type;   // PCM (audio) or metadata
   event_callback_fn cb; // Callback when there is data to read
@@ -200,10 +198,6 @@ static struct commands_base *cmdbase;
 // From config - the sample rate and bps of the pipe input
 static int pipe_sample_rate;
 static int pipe_bits_per_sample;
-// From config - should we watch library pipes for data or only start on request
-static int pipe_autostart;
-// The mfi id of the pipe autostarted by the pipe thread
-static int pipe_autostart_id;
 
 // Global list of pipes we are watching (if watching/autostart is enabled)
 static struct pipe *pipe_watch_list;
@@ -211,7 +205,7 @@ static struct pipe *pipe_watch_list;
 // Pipe + extra fields that we start watching for metadata after playback starts
 static struct pipe_metadata pipe_metadata;
 
-/* NTP timestamp definitions - not nice - these are repeated elsewhare in the owntones codebase */
+/* NTP timestamp definitions - not nice - these are repeated elsewhare in the OwnTone codebase */
 #define FRAC             4294967296. /* 2^32 as a double */
 #define NTP_EPOCH_DELTA  0x83aa7e80  /* 2208988800 - that's 1970 - 1900 in seconds */
 
@@ -223,6 +217,11 @@ struct ntp_stamp
 
 /* -------------------------------- HELPERS --------------------------------- */
 
+/** Player status is human readable format
+ *
+ * @param  status  the player status
+ * @returns player status in human readable format
+ */
 static const char *play_status_str(enum play_status status)
 {
   switch (status)
@@ -238,6 +237,10 @@ static const char *play_status_str(enum play_status status)
     }
 }
 
+/** Convert a timespec timestamp to a NTP timestamp
+ * @param ts  the timespec for which a NTP timestamp is required
+* @param  ns  the returned NTP timestamp corresponding to ts
+ */
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
 {
@@ -247,6 +250,10 @@ timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
   ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
 }
 
+/**  Obtain current NTP time
+ *
+ * @param ns  the NTP timestamp
+*/
 static inline int
 timing_get_clock_ntp(struct ntp_stamp *ns)
 {
@@ -266,14 +273,13 @@ timing_get_clock_ntp(struct ntp_stamp *ns)
   return 0;
 }
 
-/* -------------------------------------------------------------------------*/
-/*
+/**
  * Create a pipe data structure. Allocates memory for the data structure.
- *
- * @in  path  filename path
- * @in  id    ID number to give the pipe
- * @in  type  the type of pipe we are creating
- * @in  cb    callback function
+ * @param path  filename path
+ * @param id    ID number to give the pipe
+ * @param type  the type of pipe we are creating.
+ * @param cb    callback function
+ * @returns     the populated pipe data structure
  */
 static struct pipe *
 pipe_create(const char *path, int id, enum pipetype type, event_callback_fn cb)
@@ -290,6 +296,9 @@ pipe_create(const char *path, int id, enum pipetype type, event_callback_fn cb)
   return pipe;
 }
 
+/** Free memory allocated for a pipe data structure.
+ * @param pipe  the pipe data structure to be freed
+ */
 static void
 pipe_free(struct pipe *pipe)
 {
@@ -297,6 +306,11 @@ pipe_free(struct pipe *pipe)
   free(pipe);
 }
 
+/** Opens a file for reading and validates it is a FIFO pipe
+ * @param path    the pathname of the file to open
+ * @param silent  suppress fstat error if it occurs
+ * @returns the file descriptor on success, -1 on failure
+ */
 static int
 pipe_open(const char *path, bool silent)
 {
@@ -306,24 +320,21 @@ pipe_open(const char *path, bool silent)
   DPRINTF(E_SPAM, L_PLAYER, "(Re)opening pipe: '%s'\n", path);
 
   fd = open(path, O_RDONLY | O_NONBLOCK);
-  if (fd < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Could not open pipe for reading '%s': %s\n", path, strerror(errno));
-      goto error;
-    }
+  if (fd < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not open pipe for reading '%s': %s\n", path, strerror(errno));
+    goto error;
+  }
 
-  if (fstat(fd, &sb) < 0)
-    {
-      if (!silent)
-	DPRINTF(E_LOG, L_PLAYER, "Could not fstat() '%s': %s\n", path, strerror(errno));
-      goto error;
-    }
+  if (fstat(fd, &sb) < 0) {
+    if (!silent)
+      DPRINTF(E_LOG, L_PLAYER, "Could not fstat() '%s': %s\n", path, strerror(errno));
+    goto error;
+  }
 
-  if (!S_ISFIFO(sb.st_mode))
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Source type is pipe, but path is not a fifo: %s\n", path);
-      goto error;
-    }
+  if (!S_ISFIFO(sb.st_mode)) {
+    DPRINTF(E_LOG, L_PLAYER, "Source type is pipe, but path is not a fifo: %s\n", path);
+    goto error;
+  }
 
   return fd;
 
@@ -334,6 +345,9 @@ pipe_open(const char *path, bool silent)
   return -1;
 }
 
+/** Close a pipe
+ * @param fd  file descriptor of the pipe to close
+ */
 static void
 pipe_close(int fd)
 {
@@ -341,6 +355,11 @@ pipe_close(int fd)
     close(fd);
 }
 
+/** Add a libevent read event for the pipe
+ * @param pipe    the pipe to watch for data to read
+ * @param evbase  the event base to add the event to
+ * @returns 0 on success, -1 on failure
+ */
 static int
 watch_add(struct pipe *pipe, struct event_base *evbase)
 {
@@ -361,6 +380,9 @@ watch_add(struct pipe *pipe, struct event_base *evbase)
   return 0;
 }
 
+/** Delete the read event for the pipe and close the pipe
+ * @param pipe  the pipe to delete the read event for
+ */
 static void
 watch_del(struct pipe *pipe)
 {
@@ -372,6 +394,10 @@ watch_del(struct pipe *pipe)
   pipe->fd = -1;
 }
 
+/** Reset the libevent read event for the command/metadata pipe
+ * @param pipe  the metadata/command pipe to reset
+ * @returns 0 on success, -1 on failure
+ */
 static int
 watch_reset_metadata(struct pipe *pipe)
 {
@@ -383,6 +409,11 @@ watch_reset_metadata(struct pipe *pipe)
   return watch_add(pipe, evbase_command_pipe);
 }
 
+/**
+ * Add a pipe to a pipelist
+ * @param list  the pipelist to be added to
+ * @param pipe  the pipe to add to the pipelist
+ */
 static void
 pipelist_add(struct pipe **list, struct pipe *pipe)
 {
@@ -390,6 +421,10 @@ pipelist_add(struct pipe **list, struct pipe *pipe)
   *list = pipe;
 }
 
+/** Remove a pipe from a pipelist
+ * @param list  the pipelist to removed from
+ * @param pipe  the pipe to remove from the pipelist
+ */
 static void
 pipelist_remove(struct pipe **list, struct pipe *pipe)
 {
@@ -415,6 +450,11 @@ pipelist_remove(struct pipe **list, struct pipe *pipe)
   pipe_free(pipe);
 }
 
+/** Find a pipe in a pipelist
+ * @param list  the pipelist to search
+ * @param id    the id of the pipe in the pipelist to find
+ * @returns pointer to the pipe if found, else NULL if not found
+ */
 static struct pipe *
 pipelist_find(struct pipe *list, int id)
 {
@@ -429,6 +469,10 @@ pipelist_find(struct pipe *list, int id)
   return NULL;
 }
 
+/** Close a temporary artwork file and remove it
+ * @param fd  file descriptor of the temporary artwork file
+ * @param path  the pathname of the temporary artwork file
+ */
 static void
 pict_tmpfile_close(int fd, const char *path)
 {
@@ -439,11 +483,16 @@ pict_tmpfile_close(int fd, const char *path)
   unlink(path);
 }
 
-// Opens a tmpfile to store metadata artwork in. *ext is the extension to use
-// for the tmpfile, eg .jpg or .png. Extension cannot be longer than
-// PIPE_TMPFILE_TEMPLATE_EXTLEN. If fd is set (non-negative) then the file is
-// closed first and deleted (using unlink, so path must be valid). The path
-// buffer will be updated with the new tmpfile, and the fd is returned.
+/** Recreates a tmpfile to store metadata artwork in.
+ * @param path      pathname of the temporary artwork file
+ * @param path_size length of the pathanme
+ * @param fd        file descriptor for the tmpfile. If non-negative, then the file will be 
+ *                  closed and deleted (using unlink, so path must be valid).
+ * @param ext       extension to use for the tmpfile, eg .jpg or .png. Extension cannot 
+ *                  be longer than PIPE_TMPFILE_TEMPLATE_EXTLEN.
+ * @returns file descriptor of the tmpfile on success, -1 on failure. path will be updated
+ *          with the new tmpfile name
+ */
 static int
 pict_tmpfile_recreate(char *path, size_t path_size, int fd, const char *ext)
 {
@@ -471,13 +520,12 @@ pict_tmpfile_recreate(char *path, size_t path_size, int fd, const char *ext)
   return fd;
 }
 
-/* Retrieves artwork from a URL and writes the artwork to a tmpfile
- * associated with the named pipes used for streaming and metadata.
- * The tmpfile path is stored in prepared->pict_tmpfile_path and can be used by the airplay output module.
- * The artwork URL is freed.
+/** Retrieves artwork from a URL and writes the artwork to a tmpfile.
+ * The tmpfile path is stored in prepared->pict_tmpfile_path and can be 
+ * used by the output module.
+ * The artwork URL is freed and updated to reference the tmpfile 
  * 
- * @out ?
- * @in prepared   Prepared metadata struct containing the artwork URL
+ * @param prepared   Prepared metadata struct containing the artwork URL and tmpfile path
  * @return        ART_FMT_* on success, ART_E_NONE or ART_E_ERROR on error
 */
 static int
@@ -564,6 +612,14 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
   return -1;
 }
 
+/** Extract key and value from an input string and allocate memory.
+ * e.g. key=value
+ * @param input_string  string containing `=` delimited key and value
+ * @param key           key is returned after memory allocated for it
+ * @param value         value is returned after memory allocated for it.
+ * @note The delimiter between the key and value is '='
+ * @note  The consumer of the key and value must free the allocated memory once consumed.
+ */
 static
 void extract_key_value(const char *input_string, char **key, char **value) 
 {
@@ -601,7 +657,15 @@ void extract_key_value(const char *input_string, char **key, char **value)
     strcpy(*value, delimiter_pos + 1); // Copy from after the delimiter
 }
 
-// Parse one metadata/command item from Music Assistant
+/** Parse one metadata/command item from Music Assistant
+ * @param out_msg   the type of metadata or command received is returned in out_msg
+ * @param prepared  updated metadata information is returned in prepared 
+ * @param item      the metadata or command item received from Music Assistant to be parsed
+ * @note  prepared is a shared with the input thread and this function exists within a mutex lock.
+ *        This means we must not do anything that could cause a deadlock (e.g. make a sync call to the player thread).
+ * @note  Memory is allocated for various metadata attributes such as album, artist etc. The consumer of these attributes
+ *        is responsible for freeing the allocated memory.
+ */
 static int
 parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, const char *item)
 {
@@ -741,8 +805,13 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
   return 0;
 }
 
-// Music Assistant terminates commands/metadata with a newline. This extracts
-// one item from the evbuffer, or NULL if there is no complete item.
+/** Extract one metadata/command item from the event buffer and allocate memory for it
+ * @param evbuf theevent buffer to extract the item from
+ * @returns     the extracted item, or NULL if unable to extract an item
+ * @note  Music Assistant terminates commands/metadata items with a newline. The newline
+ *        is stripped from the item upon extraction
+ * @note  The consumer of the item is responsible to free the allocated memory upon consumption.
+ */
 static char *
 extract_item(struct evbuffer *evbuf)
 {
@@ -765,10 +834,16 @@ extract_item(struct evbuffer *evbuf)
   return item;
 }
 
-// Parses the content of the evbuf into a parsed struct. The first arg is
-// a bitmask describing all the item types that were found, e.g.
-// PIPE_METADATA_MSG_VOLUME | PIPE_METADATA_MSG_METADATA. Returns -1 if the
-// evbuf could not be parsed.
+/** Parses the metadata/command content of an event buffer
+ * @param out_msg   Bitmask describing all the item types found during parsing.
+ *                  e.g. PIPE_METADATA_MSG_VOLUME & PIPE_METADATA_MSG_METADATA
+ * @param prepared  Prepares the structure with validated metadata
+ * @param evbuf     The event buffer to parse
+ * @note  The prepared strucutre contains pointers to allocated memory for the metadata attributes. The end consumer
+ *        of these attributes is responsible for freeing the allocated memory.
+ * @note  prepared is a shared with the input thread and this function exists within a mutex lock.
+ *        This means we must not do anything that could cause a deadlock (e.g. make a sync call to the player thread).
+ */
 static int
 pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *prepared, struct evbuffer *evbuf)
 {
@@ -794,10 +869,15 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 
 
 /* ------------------------------ PIPE WATCHING ----------------------------- */
-/*                             Thread: audio_pipe                             */
+/*                             Thread: mass_audio                             */
 
 
-// Some data arrived on a pipe we watch - let's autostart playback
+/** Some data arrived on an audio pipe we watch. Start playback if not already playing.
+ * @param fd    file descripter of the audio named pipe where data has arrived
+ * @param event ?? Not used
+ * @param arg   Pointer to the pipe structure
+ * @note  This function runs in the mass_audio thread
+ */
 static void
 pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 {
@@ -822,29 +902,36 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   else if (ret < 0) {
     DPRINTF(E_LOG, L_PLAYER, 
-      "%s:Pipe autostart of '%s' failed because state of player is unknown\n", 
+      "%s:Playback start for audio from '%s' failed because state of player is unknown\n", 
       __func__, pipe->path
     );
     return;
   }
 
-  DPRINTF(E_SPAM, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d)\n", __func__, pipe->path, fd);
-
-  player_playback_stop();
+  player_playback_stop(); // Not sure this is a good idea. Will flush data from the input buffer
 
   DPRINTF(E_SPAM, L_PLAYER, "%s:player_playback_start_byid(%d)\n", __func__, pipe->id);
   ret = player_playback_start_byid(pipe->id);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_PLAYER, "%s:Autostarting pipe '%s' (fd %d) failed.\n", __func__, pipe->path, fd);
+    DPRINTF(E_LOG, L_PLAYER, "%s:Starting playback for data from pipe '%s' (fd %d) failed.\n", 
+      __func__, pipe->path, fd
+    );
     return;
   }
 
   /* Music Assistant looks for "restarting w/o pause" */
   DPRINTF(E_INFO, L_PLAYER, "%s: restarting w/o pause\n", __func__);
 
-  pipe_autostart_id = pipe->id;
 }
 
+/** Updates the pipes to be watched for pipes in the global pipe_watch_list
+ * @param arg     pointer to the pipelist
+ * @param retval  always updated to 0
+ * @note  this function is a hangover from the OwnTone pipe.c design. It can, and should,
+ *        be refactored and simplified to align with the Music Assistant integration which
+ *        is restricted to a single audio named pipe and single metadata named pipe.
+ * @note  This function runs in the mass_audio thread ******TO BE VALIDATED*******
+ */
 static enum command_state
 pipe_watch_update(void *arg, int *retval)
 {
@@ -899,12 +986,16 @@ pipe_watch_update(void *arg, int *retval)
   return COMMAND_END;
 }
 
+/** 
+ * Sets the thread name and launches the event loop for audio data from a named pipe.
+ * Exits the thread upon break from the event loop.
+ */
 static void *
 pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname(tid_audio_pipe, "audio_pipe");
+  thread_setname(tid_audio_pipe, "mass_audio");
   thread_getnametid(my_thread, sizeof(my_thread));
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_audio_pipe);
@@ -913,8 +1004,11 @@ pipe_thread_run(void *arg)
 }
 
 /* ----------------------- PIPE WATCH THREAD START/STOP --------------------- */
-/*                             Thread: audio_pipe                            */
+/*                             Thread: mass_audio                            */
 
+/**
+ * Establish event and commands base for the mass_audio thread and then create the thread.
+ */
 static void
 pipe_thread_start(void)
 {
@@ -927,6 +1021,12 @@ pipe_thread_start(void)
   
 }
 
+/**
+ * Stop the mass_audio thread.
+ * @details Removes the pipe watch for the audio named pipe.
+ * Destroys the command base.
+ * Joins the mass_audio thread and frees the streamed audio event base.
+ */
 static void
 pipe_thread_stop(void)
 {
@@ -948,7 +1048,15 @@ pipe_thread_stop(void)
   tid_audio_pipe = 0;
 }
 
-// For Music Assistant the audio pipe will always be a PCM pipe
+/**
+ * Create the pipelist of streamed audio named pipes to subsequently watch
+ * @returns pointer to the head of the created pipelist
+ * @note  For Music Assistant, the pipelist created will always contain one entry for the
+ *        named pipe which will receive streamed PCM audio.
+ * @note  The function is a hangover from the OwnTone pipe.c design. It should be reviewed to
+ *        determine if the construct of a pipelist can be eliminated from this module to simplify
+ *        the implementation.
+ */
 static struct pipe *
 pipelist_create(void)
 {
@@ -963,11 +1071,12 @@ pipelist_create(void)
   return head;
 }
 
-// For Music Assistant integration, we always have a named pipe
-// which is handled by pipelist_create(), so we should always get a pipelist.
-// Once we confirm the named pipe, we:
-// - start the pipe thread; and
-// - look for any changes of named pipes to watch
+/**
+ * Listener callback function. Creates our pipelist to watch, starts the mass_audio thread and 
+ * asynchronously calls pipe_watch_update with the newly created pipelist.
+ * @param event_mask  Event mask not used within this function
+ * @param ctx         Context not used within this function
+ */
 static void
 pipe_listener_cb(short event_mask, void *ctx)
 {
@@ -994,7 +1103,14 @@ pipe_listener_cb(short event_mask, void *ctx)
 }
 
 /* ------------------- Metadata and Command Processing --------------------------------*/
-/*                      Thread: command_pipe                                           */
+/*                      Thread: mass_command                                           */
+
+/**
+ * Callback function to report player status to Music Assistant
+ * @param fd    File descriptor not used
+ * @param what  Not used
+ * @param arg   Not used
+ */
 static void
 mass_timer_cb(int fd, short what, void *arg)
 {
@@ -1064,22 +1180,39 @@ mass_timer_cb(int fd, short what, void *arg)
   }
 }
 
+/**
+ * Sets the pause flag
+ * @note  This function runs in the mass_command thread and shares the pause flag with the
+ *        mass_audio thread. It therefore updates the flag within a mutex lock.
+ */
 static void
 self_pause(void)
 {
   pthread_mutex_lock(&pause_lock);
-  pause_reading = true;
+  pause_flag = true;
   pthread_mutex_unlock(&pause_lock);
 }
 
+/**
+ * Unsets the pause flag
+ * @note  This function runs in the mass_command thread and shares the pause flag with the
+ *        mass_audio thread. It therefore updates the flag within a mutex lock.
+ */
 static void
 self_resume(void)
 {
   pthread_mutex_lock(&pause_lock);
-  pause_reading = false;
+  pause_flag = false;
   pthread_mutex_unlock(&pause_lock);
 }
 
+/**
+ * Deletes the metadata/command pipe
+ * @param arg Not used
+ * @note  This function deletes the metadata/command read event, frees
+ *        memory allocated for the pipe data structures, closes and deletes
+ *        the tmpfile used for artwork.
+ */
 static void
 pipe_metadata_watch_del(void *arg)
 {
@@ -1095,7 +1228,12 @@ pipe_metadata_watch_del(void *arg)
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
 }
 
-// Some metadata arrived on a pipe we watch
+/**
+ * Read and process command/metadata from the named pipe
+ * @param fd    Not used
+ * @param event Not used
+ * @param arg   Not used
+ */
 static void
 pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
 {
@@ -1114,7 +1252,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   else if (ret == 0)
     {
       // Reset the pipe
-      ret = watch_reset_metadata(pipe_metadata.pipe); // validate the thread that this runs im
+      ret = watch_reset_metadata(pipe_metadata.pipe);
       if (ret < 0)
 	return;
       goto readd;
@@ -1180,7 +1318,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
       "%s:PAUSE:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
       __func__, play_status_str(status.status), status.pos_ms
     );
-    // We  check the current state before confirming what input action to undertake (if any)
+    // We check the current state before confirming what input action to undertake (if any)
     if (status.status == PLAY_PLAYING) {
       self_pause();
     }
@@ -1232,6 +1370,12 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
 }
 
+
+/**
+ * Add a watch event to the command/metadata named pipe and set the callback
+ * @param path  pathname for the command/metadata named pipe
+ * @returns 0 on success, -1 on failure
+ */
 static int
 pipe_metadata_watch_add(const char *path)
 {
@@ -1253,12 +1397,18 @@ pipe_metadata_watch_add(const char *path)
   return 0;
 }
 
+/**
+ * Spawn the mass_command thread, setup the command/metadata events and dispatch the 
+ * command pipe event loop
+ * @param arg Not used. Can be NULL
+ * @note This function does not return unless the command pipe eent loop is broken.
+ */
 static void *
 command_pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname(pthread_self(), "command_pipe");
+  thread_setname(pthread_self(), "mass_command");
   thread_getnametid(my_thread, sizeof(my_thread));
   pipe_metadata_watch_add(mass_named_pipes.metadata_pipe);
   // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
@@ -1270,6 +1420,9 @@ command_pipe_thread_run(void *arg)
   pthread_exit(NULL);
 }
 
+/**
+ * Stops the mass_command thread and ensures housekeeping is performed.
+ */
 static void
 command_pipe_thread_stop(void)
 {
@@ -1281,6 +1434,7 @@ command_pipe_thread_stop(void)
   pipe_metadata_watch_del(NULL);
 
   event_base_loopbreak(evbase_command_pipe);
+  event_free(mass_timer_event);
   event_base_free(evbase_command_pipe);
   tid_command_pipe = 0;
 }
@@ -1289,6 +1443,12 @@ command_pipe_thread_stop(void)
 /* --------------------------- PIPE INPUT INTERFACE ------------------------- */
 /*                                Thread: input                               */
 
+/**
+ * Input definition callback function to setup the mass (Music Assistant) module.
+ * Called by the input module.
+ * @param source  Input source to be setup
+ * @returns 0 on success, -1 on failure
+ */
 static int
 setup(struct input_source *source)
 {
@@ -1304,7 +1464,6 @@ setup(struct input_source *source)
   pipe = pipe_create(source->path, source->id, PIPE_PCM, NULL);
 
   pipe->fd = fd;
-  pipe->is_autostarted = (source->id == pipe_autostart_id);
 
   source->input_ctx = pipe;
 
@@ -1315,17 +1474,31 @@ setup(struct input_source *source)
   return 0;
 }
 
-// for Music Assistant, we want to stop reading from
-// the pipe and we will restart on a play. We don't need to 
-// close the pipe or even free the buffer.
-// We can basically be a no-op
+/**
+ * Input definition callback function called when input is stopped.
+ * @param source  Input source to stop
+ * @note  For Music Assistant integration, we never want to close the audio
+ *        named pipe until a graceful shutdown is triggered by Music Assistant.
+ *        Therfore, the input module sending us a stop is treated as a no-op.
+ * @returns 0
+ */
 static int
 stop(struct input_source *source)
 {
   return 0;
 }
 
-// One iteration of the playback loop (= a read from source)
+/**
+ * Input definition callback function triggered on each iteration of the playback loop
+ * @param source  The input source to obtain audio data for
+ * @returns 0 on success, -1 on failure
+ * @note  We check (inside a mutex lock) if the player is paused, and if not, then we 
+ *        read up to PIPE_READ_MAX bytes from the audio named pipe event buffer and
+ *        pass this to the input module.
+ *        If the player is paused or there is no data to read, we wait for a period by 
+ *        calling input_wait() and return.
+ * 
+ */
 static int
 play(struct input_source *source)
 {
@@ -1336,7 +1509,7 @@ play(struct input_source *source)
   static size_t read_bytes = 0;
 
   pthread_mutex_lock(&pause_lock);
-  if (pause_reading) {
+  if (pause_flag) {
     pthread_mutex_unlock(&pause_lock);
     input_wait();
     return 0; // loop
@@ -1344,25 +1517,22 @@ play(struct input_source *source)
   pthread_mutex_unlock(&pause_lock);
 
   ret = evbuffer_read(source->evbuf, pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
-  if ((ret == 0) && (pipe->is_autostarted))
-    {
-      input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
-      stop(source);
-      DPRINTF(E_INFO, L_PLAYER, "%s:end of stream reached\n", __func__);
-      return -1;
-    }
-  else if ((ret == 0) || ((ret < 0) && (errno == EAGAIN)))
-    {
-      input_wait();
-      return 0; // Loop
-    }
-  else if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Could not read from pipe '%s': %s\n", source->path, strerror(errno));
-      input_write(NULL, NULL, INPUT_FLAG_ERROR);
-      stop(source);
-      return -1;
-    }
+  if (ret == 0) {
+    input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
+    stop(source);
+    DPRINTF(E_INFO, L_PLAYER, "%s:end of stream reached\n", __func__);
+    return -1;
+  }
+  else if ((ret == 0) || ((ret < 0) && (errno == EAGAIN))) {
+    input_wait();
+    return 0; // Loop
+  }
+  else if (ret < 0) {
+    DPRINTF(E_LOG, L_PLAYER, "Could not read from pipe '%s': %s\n", source->path, strerror(errno));
+    input_write(NULL, NULL, INPUT_FLAG_ERROR);
+    stop(source);
+    return -1;
+  }
 
   read_count++;
   read_bytes += ret;
@@ -1375,6 +1545,15 @@ play(struct input_source *source)
   return 0;
 }
 
+/**
+ * Input definition callback function to obtain metadata
+ * @param metadata  Point to the metaata structure to return the metadata in
+ * @param source    The input source to obtain metadata for
+ * @returns 0
+ * @note  Transfers the prepared metadata to the caller (input module) inside a mutex lock
+ *        and nulls the prepared metadata structure (including pointers) so the next set of 
+ *        metadata can be prepared from the metadata/command named pipe in due course.
+ */
 static int
 metadata_get(struct input_metadata *metadata, struct input_source *source)
 {
@@ -1393,6 +1572,10 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 /* ---------------------------------------------------------------------------------------*/
 /*                                   Thread: main                                         */
 
+/**
+ * Initialise the metadata/command pipe module and spawn the mass_command thread
+ * @returns 0 on success, -1 on failure
+ */
 static int
 command_pipe_init(void)
 {
@@ -1407,6 +1590,10 @@ command_pipe_init(void)
   return 0;
 }
 
+/**
+ * De-initialises the metadata/command pipe module by stopping the mass_command
+ * thread.
+ */
 static void
 command_pipe_deinit()
 {
@@ -1414,6 +1601,13 @@ command_pipe_deinit()
   command_pipe_thread_stop();
 }
 
+/**
+ * Initialise the mass (Music Assistant) module.
+ * @returns 0 on success, -1 on failure
+ * @note  Initialisation establishes the required mutexes, audio quality data, 
+ *        spawns the mass_audio and mass_command threads.
+ * @todo  Expand the range of audio qualities supported and eliminate it from configuration
+ */
 int
 mass_init(void)
 {
@@ -1426,54 +1620,48 @@ mass_init(void)
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
 
-  pipe_autostart = cfg_getbool(cfg_getsec(cfg, "mass"), "autostart");
-  if (pipe_autostart)
-    {
-      pipe_listener_cb(0, NULL); // We will be in the pipe thread once this returns
-      CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
-    }
+  pipe_listener_cb(0, NULL); // We will be in the pipe thread once this returns
+  CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
 
   pipe_sample_rate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
-  if (pipe_sample_rate != 44100 && pipe_sample_rate != 48000 && pipe_sample_rate != 88200 && pipe_sample_rate != 96000)
-    {
-      DPRINTF(E_FATAL, L_PLAYER, "The configuration of pcm_sample_rate is invalid: %d\n", pipe_sample_rate);
-      return -1;
-    }
+  if (pipe_sample_rate != 44100 && pipe_sample_rate != 48000 && pipe_sample_rate != 88200 && pipe_sample_rate != 96000) {
+    DPRINTF(E_FATAL, L_PLAYER, "The configuration of pcm_sample_rate is invalid: %d\n", pipe_sample_rate);
+    return -1;
+  }
 
   pipe_bits_per_sample = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
-  if (pipe_bits_per_sample != 16 && pipe_bits_per_sample != 32)
-    {
-      DPRINTF(E_FATAL, L_PLAYER, "The configuration of pipe_bits_per_sample is invalid: %d\n", pipe_bits_per_sample);
-      return -1;
-    }
+  if (pipe_bits_per_sample != 16 && pipe_bits_per_sample != 32) {
+    DPRINTF(E_FATAL, L_PLAYER, "The configuration of pipe_bits_per_sample is invalid: %d\n", pipe_bits_per_sample);
+    return -1;
+  }
   
   command_pipe_init();
 
   return 0;
 }
 
+/**
+ * De-initialise the mass (Music Assistant) module.
+ */
 void
 mass_deinit(void)
 {
   DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
   command_pipe_deinit();
 
-  if (pipe_autostart)
-    {
-      listener_remove(pipe_listener_cb);
-      pipe_thread_stop();
-    }
+  listener_remove(pipe_listener_cb);
+  pipe_thread_stop();
 
   CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
   CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pause_lock));
-
-  // work out where to locate timer_delete - ie. which thread.
-  event_free(mass_timer_event);
 }
 
+/**
+ * Input definition of callback functions
+ */
 struct input_definition input_pipe =
 {
-  .name = "pipe",
+  .name = "mass",
   .type = INPUT_TYPE_PIPE,
   .disabled = 0,
   .setup = setup,

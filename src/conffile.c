@@ -124,7 +124,6 @@ static cfg_opt_t sec_library[] =
   /* Music Assistant section structure */
 static cfg_opt_t sec_mass[] =
   {
-    CFG_BOOL("autostart", cfg_true, CFGF_NONE),
     CFG_INT("pcm_sample_rate", 44100, CFGF_NONE),
     CFG_INT("pcm_bits_per_sample", 16, CFGF_NONE),
 
