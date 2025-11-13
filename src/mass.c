@@ -1321,6 +1321,8 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     // We check the current state before confirming what input action to undertake (if any)
     if (status.status == PLAY_PLAYING) {
       self_pause();
+      // Report status to Music Assistant
+      DPRINTF(E_INFO, L_PLAYER, "%s:Pause at %" PRIu32 "\n", __func__, status.pos_ms);
     }
     else {
       DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PAUSE playback, but current state is %s. Ignoring command.\n",
@@ -1335,6 +1337,8 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     );
     if (status.status != PLAY_PLAYING) {
       self_resume();
+      // Report status to Music Assistant
+      DPRINTF(E_INFO, L_PLAYER, "%s:Restarted at %" PRIu32 "\n", __func__, status.pos_ms);
     }
     else {
       DPRINTF(E_WARN, L_PLAYER, "%s:Command received to PLAY, but current state is %s. Ignoring command.\n",
@@ -1349,6 +1353,8 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     if (status.status == PLAY_PLAYING) {
       self_pause();
       input_flush(NULL); // we don't care about losing data for the input_buffer on stop.
+      // Report status to Music Assistant
+      DPRINTF(E_INFO, L_PLAYER, "%s:Stop at %" PRIu32 "\n", __func__, status.pos_ms);
       // work out a way to initate a graceful exit and call that function here.
     }
     else {
@@ -1506,7 +1512,9 @@ play(struct input_source *source)
   short flags;
   int ret;
   static size_t read_count = 0;
+#ifdef DEBUG_INPUT
   static size_t read_bytes = 0;
+#endif
 
   pthread_mutex_lock(&pause_lock);
   if (pause_flag) {
@@ -1534,12 +1542,21 @@ play(struct input_source *source)
     return -1;
   }
 
+  // Update Music Assistant that playback is commencing
+  if (read_count == 0) {
+    DPRINTF(E_INFO, L_PLAYER, "%s:Starting at 0ms\n", __func__);
+  }
+
   read_count++;
+#ifdef DEBUG_INPUT
   read_bytes += ret;
+#endif
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
 
-  DPRINTF(E_DBG, L_PLAYER, "%s:read_count:%zu write_count:%zu to input\n", __func__, read_count, read_bytes);
+#ifdef DEBUG_INPUT
+  DPRINTF(E_DBG, L_PLAYER, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, read_bytes);
+#endif
   input_write(source->evbuf, &source->quality, flags);
 
   return 0;
