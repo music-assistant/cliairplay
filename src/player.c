@@ -4033,7 +4033,7 @@ player_init(struct timespec *req_start_ts)
       goto error_input_deinit;
     }
 
-  thread_setname(tid_player, "player");
+  thread_setname("player");
 
   return 0;
 

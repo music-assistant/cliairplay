@@ -995,7 +995,7 @@ pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname(tid_audio_pipe, "mass_audio");
+  thread_setname("mass_audio");
   thread_getnametid(my_thread, sizeof(my_thread));
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_audio_pipe);
@@ -1408,7 +1408,7 @@ command_pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname(pthread_self(), "mass_command");
+  thread_setname("mass_command");
   thread_getnametid(my_thread, sizeof(my_thread));
   pipe_metadata_watch_add(mass_named_pipes.metadata_pipe);
   // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
