@@ -71,10 +71,6 @@
 
 #define TESTRUN_PIPE "/tmp/testrun.pipe"
 
-// NTP timestamp definitions
-#define FRAC             4294967296. // 2^32 as a double
-#define NTP_EPOCH_DELTA  0x83aa7e80  // 2208988800 - that's 1970 - 1900 in seconds
-
 struct event_base *evbase_main;
 static struct event *sig_event;
 static int main_exit;

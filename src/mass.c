@@ -12,13 +12,13 @@
  * Player status is reported back to Music Assistant on stderr
  * This module is considered to be an input backend module in OwnTone parlance.
  * It runs in two threads:
- *  1. mass_audio: Responsible for reading raw PCM audio from a named pipe and supplying
+ *  1. mass_aud: Responsible for reading raw PCM audio from a named pipe and supplying
  *      it to the input module
- *  2. mass_command: Responsible for handling metadata and commands received from 
+ *  2. mass_cmd: Responsible for handling metadata and commands received from 
  *      Music Assistant and reporting player status.
  * 
- * A mutex is used to ensure integrity of data objects shared between the mass_audio
- * and mass_command threads.
+ * A mutex is used to ensure integrity of data objects shared between the mass_aud
+ * and mass_cmd threads.
  *
  * original code:
  * Copyright (C) 2017 Espen Jurgensen
@@ -77,6 +77,7 @@
 #include "player.h"
 #include "worker.h"
 #include "commands.h"
+#include "rtp_common.h"
 #include "mass.h"
 #include "wrappers.h"
 
@@ -205,16 +206,6 @@ static struct pipe *pipe_watch_list;
 // Pipe + extra fields that we start watching for metadata after playback starts
 static struct pipe_metadata pipe_metadata;
 
-/* NTP timestamp definitions - not nice - these are repeated elsewhare in the OwnTone codebase */
-#define FRAC             4294967296. /* 2^32 as a double */
-#define NTP_EPOCH_DELTA  0x83aa7e80  /* 2208988800 - that's 1970 - 1900 in seconds */
-
-struct ntp_stamp
-{
-  uint32_t sec;
-  uint32_t frac;
-};
-
 /* -------------------------------- HELPERS --------------------------------- */
 
 /** Player status is human readable format
@@ -242,7 +233,7 @@ static const char *play_status_str(enum play_status status)
 * @param  ns  the returned NTP timestamp corresponding to ts
  */
 static inline void
-timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
+timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
 {
   // Seconds since NTP Epoch (1900-01-01)
   ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
@@ -255,7 +246,7 @@ timespec_to_ntp(struct timespec *ts, struct ntp_stamp *ns)
  * @param ns  the NTP timestamp
 */
 static inline int
-timing_get_clock_ntp(struct ntp_stamp *ns)
+timing_get_clock_ntp(struct ntp_timestamp *ns)
 {
   struct timespec ts;
   int ret;
@@ -869,14 +860,14 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 
 
 /* ------------------------------ PIPE WATCHING ----------------------------- */
-/*                             Thread: mass_audio                             */
+/*                             Thread: mass_aud                             */
 
 
 /** Some data arrived on an audio pipe we watch. Start playback if not already playing.
  * @param fd    file descripter of the audio named pipe where data has arrived
  * @param event ?? Not used
  * @param arg   Pointer to the pipe structure
- * @note  This function runs in the mass_audio thread
+ * @note  This function runs in the mass_aud thread
  */
 static void
 pipe_read_cb(evutil_socket_t fd, short event, void *arg)
@@ -930,7 +921,7 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
  * @note  this function is a hangover from the OwnTone pipe.c design. It can, and should,
  *        be refactored and simplified to align with the Music Assistant integration which
  *        is restricted to a single audio named pipe and single metadata named pipe.
- * @note  This function runs in the mass_audio thread ******TO BE VALIDATED*******
+ * @note  This function runs in the mass_aud thread ******TO BE VALIDATED*******
  */
 static enum command_state
 pipe_watch_update(void *arg, int *retval)
@@ -995,7 +986,7 @@ pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname("mass_audio");
+  thread_setname("mass_aud");
   thread_getnametid(my_thread, sizeof(my_thread));
   DPRINTF(E_DBG, L_PLAYER, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_audio_pipe);
@@ -1004,10 +995,10 @@ pipe_thread_run(void *arg)
 }
 
 /* ----------------------- PIPE WATCH THREAD START/STOP --------------------- */
-/*                             Thread: mass_audio                            */
+/*                             Thread: mass_aud                            */
 
 /**
- * Establish event and commands base for the mass_audio thread and then create the thread.
+ * Establish event and commands base for the mass_aud thread and then create the thread.
  */
 static void
 pipe_thread_start(void)
@@ -1022,10 +1013,10 @@ pipe_thread_start(void)
 }
 
 /**
- * Stop the mass_audio thread.
+ * Stop the mass_aud thread.
  * @details Removes the pipe watch for the audio named pipe.
  * Destroys the command base.
- * Joins the mass_audio thread and frees the streamed audio event base.
+ * Joins the mass_aud thread and frees the streamed audio event base.
  */
 static void
 pipe_thread_stop(void)
@@ -1072,7 +1063,7 @@ pipelist_create(void)
 }
 
 /**
- * Listener callback function. Creates our pipelist to watch, starts the mass_audio thread and 
+ * Listener callback function. Creates our pipelist to watch, starts the mass_aud thread and 
  * asynchronously calls pipe_watch_update with the newly created pipelist.
  * @param event_mask  Event mask not used within this function
  * @param ctx         Context not used within this function
@@ -1103,7 +1094,7 @@ pipe_listener_cb(short event_mask, void *ctx)
 }
 
 /* ------------------- Metadata and Command Processing --------------------------------*/
-/*                      Thread: mass_command                                           */
+/*                      Thread: mass_cmd                                           */
 
 /**
  * Callback function to report player status to Music Assistant
@@ -1118,7 +1109,7 @@ mass_timer_cb(int fd, short what, void *arg)
   uint64_t elapsed_ms = 0;
   uint64_t begin_ms, now_ms = 0;
   struct player_status status;
-  struct ntp_stamp ntp_stamp;
+  struct ntp_timestamp ns;
   int ret;
 
   ret = player_get_status(&status);
@@ -1127,7 +1118,7 @@ mass_timer_cb(int fd, short what, void *arg)
     return;
   }
 
-  ret = timing_get_clock_ntp(&ntp_stamp);
+  ret = timing_get_clock_ntp(&ns);
   if (ret < 0) {
       DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
       return;
@@ -1136,7 +1127,7 @@ mass_timer_cb(int fd, short what, void *arg)
   DPRINTF(E_SPAM, L_PLAYER,
     "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
     __func__, play_status_str(status.status), status.volume, status.pos_ms,
-    ntp_stamp.sec, ntp_stamp.frac
+    ns.sec, ns.frac
   );
 
   if (status.status == PLAY_PLAYING) {
@@ -1182,8 +1173,8 @@ mass_timer_cb(int fd, short what, void *arg)
 
 /**
  * Sets the pause flag
- * @note  This function runs in the mass_command thread and shares the pause flag with the
- *        mass_audio thread. It therefore updates the flag within a mutex lock.
+ * @note  This function runs in the mass_cmd thread and shares the pause flag with the
+ *        mass_aud thread. It therefore updates the flag within a mutex lock.
  */
 static void
 self_pause(void)
@@ -1195,8 +1186,8 @@ self_pause(void)
 
 /**
  * Unsets the pause flag
- * @note  This function runs in the mass_command thread and shares the pause flag with the
- *        mass_audio thread. It therefore updates the flag within a mutex lock.
+ * @note  This function runs in the mass_cmd thread and shares the pause flag with the
+ *        mass_aud thread. It therefore updates the flag within a mutex lock.
  */
 static void
 self_resume(void)
@@ -1404,7 +1395,7 @@ pipe_metadata_watch_add(const char *path)
 }
 
 /**
- * Spawn the mass_command thread, setup the command/metadata events and dispatch the 
+ * Spawn the mass_cmd thread, setup the command/metadata events and dispatch the 
  * command pipe event loop
  * @param arg Not used. Can be NULL
  * @note This function does not return unless the command pipe eent loop is broken.
@@ -1414,7 +1405,7 @@ command_pipe_thread_run(void *arg)
 {
   char my_thread[32];
 
-  thread_setname("mass_command");
+  thread_setname("mass_cmd");
   thread_getnametid(my_thread, sizeof(my_thread));
   pipe_metadata_watch_add(mass_named_pipes.metadata_pipe);
   // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
@@ -1427,7 +1418,7 @@ command_pipe_thread_run(void *arg)
 }
 
 /**
- * Stops the mass_command thread and ensures housekeeping is performed.
+ * Stops the mass_cmd thread and ensures housekeeping is performed.
  */
 static void
 command_pipe_thread_stop(void)
@@ -1564,7 +1555,7 @@ play(struct input_source *source)
 
 /**
  * Input definition callback function to obtain metadata
- * @param metadata  Point to the metaata structure to return the metadata in
+ * @param metadata  Pointer to the metadata structure to return the metadata in
  * @param source    The input source to obtain metadata for
  * @returns 0
  * @note  Transfers the prepared metadata to the caller (input module) inside a mutex lock
@@ -1590,7 +1581,7 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 /*                                   Thread: main                                         */
 
 /**
- * Initialise the metadata/command pipe module and spawn the mass_command thread
+ * Initialise the metadata/command pipe module and spawn the mass_cmd thread
  * @returns 0 on success, -1 on failure
  */
 static int
@@ -1608,7 +1599,7 @@ command_pipe_init(void)
 }
 
 /**
- * De-initialises the metadata/command pipe module by stopping the mass_command
+ * De-initialises the metadata/command pipe module by stopping the mass_cmd
  * thread.
  */
 static void
@@ -1622,7 +1613,7 @@ command_pipe_deinit()
  * Initialise the mass (Music Assistant) module.
  * @returns 0 on success, -1 on failure
  * @note  Initialisation establishes the required mutexes, audio quality data, 
- *        spawns the mass_audio and mass_command threads.
+ *        spawns the mass_aud and mass_cmd threads.
  * @todo  Expand the range of audio qualities supported and eliminate it from configuration
  */
 int

@@ -3915,6 +3915,8 @@ player(void *arg)
   struct output_device *device;
   int ret;
 
+  thread_setname("player");
+
   ret = db_perthread_init();
   if (ret < 0)
     {
