@@ -517,7 +517,7 @@ timing_get_clock_ntp(struct ntp_stamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -2079,7 +2079,7 @@ packets_sync_send(struct airplay_master_session *rms)
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
 
   // Just used for logging, the clock shouldn't be too far from rms->cur_stamp.ts
-  clock_gettime(CLOCK_REALTIME, &ts);
+  clock_gettime(CLOCK_MONOTONIC, &ts);
 
   for (rs = airplay_sessions; rs; rs = rs->next)
     {

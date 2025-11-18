@@ -10,11 +10,9 @@ typedef struct ap2_device_info
   const char *address;
   int port;
   struct keyval *txt;
+  char pin[5];
   const char *auth_key;
-  uint64_t ntpstart;
-  uint32_t wait;
-  struct timespec start_ts;
-  uint32_t latency;
+  struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_REALTIME)
   int volume;
 } ap2_device_info_t;
 
