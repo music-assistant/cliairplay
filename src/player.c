@@ -925,9 +925,7 @@ static void
 session_update_read_ts(struct timespec *ts)
 {
   DPRINTF(E_DBG, L_PLAYER, "%s:ts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, ts->tv_sec, ts->tv_nsec, pb_session.pos);
-  pb_session.start_ts = *ts;
-  pb_session.start_ts.tv_sec += OUTPUTS_BUFFER_DURATION;
-  pb_session.pts = pb_session.start_ts;
+  pb_session.pts = *ts;
   DPRINTF(E_DBG, L_PLAYER, "%s:pb_session.start_ts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, 
     pb_session.start_ts.tv_sec, pb_session.start_ts.tv_nsec, pb_session.pos);
   DPRINTF(E_DBG, L_PLAYER, "%s:pb_session.pts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, 

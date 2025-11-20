@@ -765,6 +765,8 @@ main(int argc, char **argv)
       goto player_fail;
     }
     timespec_subtract(&ap2_device_info.start_ts, &start_ts, &delta_ts);
+    // Add internal latency
+    ap2_device_info.start_ts.tv_sec += OUTPUTS_BUFFER_DURATION;
     DPRINTF(E_DBG, L_MAIN, 
       "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
       PRIu32 ".%.10" PRIu32 "\n", 
