@@ -1919,15 +1919,15 @@ packet_send(struct airplay_session *rs, struct rtp_packet *pkt)
       return -1;
     }
 
-    // re-comment ths out when debugged
-    count++;
-    if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
-    DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
-      rs->master_session->rtp_session->seqnum,
-      rs->master_session->rtp_session->pos,
-      pkt->header[1],
-      rs->master_session->rtp_session->pktbuf_len
-      );
+  // re-comment this out when debugged
+  count++;
+  if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
+  DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
+    rs->master_session->rtp_session->seqnum,
+    rs->master_session->rtp_session->pos,
+    pkt->header[1],
+    rs->master_session->rtp_session->pktbuf_len
+    );
   }
 
   return 0;
