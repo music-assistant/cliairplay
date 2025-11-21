@@ -2099,11 +2099,25 @@ packets_sync_send(struct airplay_master_session *rms)
       (long)ts.tv_sec, (long)ts.tv_nsec, 
       rms->rtp_session->pos, rms->rtp_session->seqnum
     );
+    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    }
 	}
       else if (is_sync_time && rs->state == AIRPLAY_STATE_STREAMING)
 	{
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x80);
 	  control_packet_send(rs, sync_pkt);
+
+	  DPRINTF(E_DBG, L_AIRPLAY,
+       "Sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 "\n",
+	    rs->devname, rms->cur_stamp.pos, 
+      (long)rms->cur_stamp.ts.tv_sec, (long)rms->cur_stamp.ts.tv_nsec, 
+      (long)ts.tv_sec, (long)ts.tv_nsec, 
+      rms->rtp_session->pos, rms->rtp_session->seqnum
+    );
+    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    }
 	}
     }
 }

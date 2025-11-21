@@ -677,9 +677,11 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           free(value);
           return -1;
       }
-      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received and ignored.\n", __func__, value);
       prepared->input_metadata.pos_ms = progress_sec * 1000;
       prepared->input_metadata.pos_is_updated = true;
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received and processed as %d ms.\n", 
+        __func__, value, prepared->input_metadata.pos_ms
+      );
       free(key);
       free(value);
   }
@@ -692,7 +694,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           DPRINTF(E_LOG, L_PLAYER, "%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, value);
           return -1;
       }
-      // message = PIPE_METADATA_MSG_PICTURE;
+      message = PIPE_METADATA_MSG_PICTURE;
   }
   else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
     message = PIPE_METADATA_MSG_VOLUME;
