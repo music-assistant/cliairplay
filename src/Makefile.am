@@ -40,7 +40,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/evthr.c \
     ../owntone-server/src/evrtsp/rtsp.c \
     ../owntone-server/src/http.c \
-    ../owntone-server/src/input.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
@@ -60,6 +59,7 @@ cliap2_SOURCES = \
     airplay.c \
     cliap2.c \
     conffile.c \
+    input.c \
     mass.c \
     player.c \
     rtp_common.c \

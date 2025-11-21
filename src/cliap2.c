@@ -512,6 +512,67 @@ int remove_pipes(const char *pipe_path)
   return 0;
 }
 
+/**
+ * Determine a valid playback start time given a specified NTP start time
+ * @param ts        Pointer to a timespec structure where the start time will be returned
+ * @param ntpstart  NTP start time encoded as uint64_t
+ * @returns         0 on success, -1 on failure.
+ */
+static int
+get_start_ts(struct timespec *ts, uint64_t ntpstart)
+{
+  struct ntp_timestamp now_ns;
+  struct ntp_timestamp start_ns;
+  struct timespec now_ts;
+  struct timespec start_ts;
+  struct timespec delta_ts;
+  struct timespec lag_ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
+  if (ret != 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
+    return -1;
+  }
+  timespec_to_ntp(&now_ts, &now_ns);
+  start_ns.sec = (uint32_t)(ntpstart >> 32);
+  start_ns.frac = (uint32_t)(ntpstart & 0xffff);
+  ntp_to_timespec(&start_ns, &start_ts);
+  DPRINTF(E_DBG, L_MAIN, "start_ts:%ld.%ld from ntpstart %" PRIu32 ".%.10" PRIu32 " sec, %" PRIu64 "\n", 
+    start_ts.tv_sec, start_ts.tv_nsec, start_ns.sec, start_ns.frac, ntpstart);
+  // convert from Music Assistant time basis to OwnTone time basis
+    // delta_ts is the epoch difference CLOCK_REALTIME-CLOCK_MONOTONIC = uptime - 1/1/1970
+  ret = ts_delta(&delta_ts);
+  if (ret < 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
+    return -1;
+  }
+  timespec_subtract(ts, &start_ts, &delta_ts);
+  // Subtract internal latency
+  ts->tv_sec -= OUTPUTS_BUFFER_DURATION;
+  DPRINTF(E_DBG, L_MAIN, 
+    "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
+    PRIu32 ".%.10" PRIu32 "\n", 
+    ts->tv_sec, ts->tv_nsec, 
+    start_ns.sec, start_ns.frac);
+  DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
+    now_ts.tv_sec, now_ts.tv_nsec);
+  timespec_to_ntp(ts, &start_ns);
+  timespec_subtract(&lag_ts, ts, &now_ts);
+  DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", start_ns.sec, start_ns.frac);
+  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld sec, %ld nsec\n", lag_ts.tv_sec, lag_ts.tv_nsec);
+
+  if (lag_ts.tv_sec < OUTPUTS_BUFFER_DURATION) {
+    // Give ourselves enough time to get connected and build our buffer
+    long extra_ms = ((OUTPUTS_BUFFER_DURATION - lag_ts.tv_sec) * 1000) - (long)(lag_ts.tv_nsec / 1e6);
+    DPRINTF(E_FATAL, L_MAIN, "ntpstart time too soon. Increase it by at least %ld ms. Trying to start audio in %ld sec, %ld nsec\n", 
+      extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
+    );
+    // return -1;
+  }
+  return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -540,10 +601,6 @@ main(int argc, char **argv)
   uint64_t ntpstart = 0;
   int volume = 0;
   struct keyval *txt_kv = NULL;
-  struct ntp_timestamp ns;
-  struct timespec now_ts;
-  struct timespec start_ts;
-  struct timespec delta_ts;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
@@ -747,36 +804,11 @@ main(int argc, char **argv)
         txt);
       goto txt_fail;
     }
-    ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
-    if (ret != 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
-      goto player_fail;
-    }
-    ns.sec = (uint32_t)(ntpstart >> 32);
-    ns.frac = (uint32_t)(ntpstart & 0xffff);
-    ntp_to_timespec(&ns, &start_ts);
-    DPRINTF(E_DBG, L_MAIN, "start_ts:%ld.%ld from ntpstart %" PRIu32 ".%.10" PRIu32 " sec, %" PRIu64 "\n", 
-      start_ts.tv_sec, start_ts.tv_nsec, ns.sec, ns.frac, ntpstart);
-    // convert from Music Assistant time basis to OwnTone time basis
-     // delta_ts is the epoch difference CLOCK_REALTIME-CLOCK_MONOTONIC = uptime - 1/1/1970
-    ret = ts_delta(&delta_ts);
-    if (ret < 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
-      goto player_fail;
-    }
-    timespec_subtract(&ap2_device_info.start_ts, &start_ts, &delta_ts);
-    // Add internal latency
-    ap2_device_info.start_ts.tv_sec += OUTPUTS_BUFFER_DURATION;
-    DPRINTF(E_DBG, L_MAIN, 
-      "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
-      PRIu32 ".%.10" PRIu32 "\n", 
-      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec, 
-      ns.sec, ns.frac);
-    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
-      now_ts.tv_sec, now_ts.tv_nsec);
-    timespec_to_ntp(&ap2_device_info.start_ts, &ns);
-    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);
 
+    if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
+      DPRINTF(E_FATAL, L_MAIN, "Unable to obtain feasible playback start time\n");
+      goto txt_fail;
+    }
     
     ap2_device_info.name = name;
     ap2_device_info.hostname = hostname;
