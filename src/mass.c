@@ -228,42 +228,6 @@ static const char *play_status_str(enum play_status status)
     }
 }
 
-/** Convert a timespec timestamp to a NTP timestamp
- * @param ts  the timespec for which a NTP timestamp is required
-* @param  ns  the returned NTP timestamp corresponding to ts
- */
-static inline void
-timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
-{
-  // Seconds since NTP Epoch (1900-01-01)
-  ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
-
-  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
-}
-
-/**  Obtain current NTP time
- *
- * @param ns  the NTP timestamp
-*/
-static inline int
-timing_get_clock_ntp(struct ntp_timestamp *ns)
-{
-  struct timespec ts;
-  int ret;
-
-  ret = clock_gettime(CLOCK_REALTIME, &ts);
-  if (ret < 0)
-    {
-      DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
-
-      return -1;
-    }
-
-  timespec_to_ntp(&ts, ns);
-
-  return 0;
-}
-
 /**
  * Create a pipe data structure. Allocates memory for the data structure.
  * @param path  filename path
@@ -713,9 +677,11 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           free(value);
           return -1;
       }
-      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received and ignored.\n", __func__, value);
       prepared->input_metadata.pos_ms = progress_sec * 1000;
       prepared->input_metadata.pos_is_updated = true;
+      DPRINTF(E_DBG, L_PLAYER, "%s:Progress metadata value of %s s received and processed as %d ms.\n", 
+        __func__, value, prepared->input_metadata.pos_ms
+      );
       free(key);
       free(value);
   }
@@ -728,7 +694,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
           DPRINTF(E_LOG, L_PLAYER, "%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, value);
           return -1;
       }
-      // message = PIPE_METADATA_MSG_PICTURE;
+      message = PIPE_METADATA_MSG_PICTURE;
   }
   else if (!strncmp(key,MASS_METADATA_VOLUME_KEY, strlen(MASS_METADATA_VOLUME_KEY))) {
     message = PIPE_METADATA_MSG_VOLUME;
@@ -1109,7 +1075,6 @@ mass_timer_cb(int fd, short what, void *arg)
   uint64_t elapsed_ms = 0;
   uint64_t begin_ms, now_ms = 0;
   struct player_status status;
-  struct ntp_timestamp ns;
   int ret;
 
   ret = player_get_status(&status);
@@ -1118,16 +1083,9 @@ mass_timer_cb(int fd, short what, void *arg)
     return;
   }
 
-  ret = timing_get_clock_ntp(&ns);
-  if (ret < 0) {
-      DPRINTF(E_LOG, L_AIRPLAY, "%s:Could not get current ntp timestamp\n", __func__);
-      return;
-  }
-
   DPRINTF(E_SPAM, L_PLAYER,
-    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 ", ntp:%" PRIu32 ".%.10" PRIu32 "\n", 
-    __func__, play_status_str(status.status), status.volume, status.pos_ms,
-    ns.sec, ns.frac
+    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 "\n", 
+    __func__, play_status_str(status.status), status.volume, status.pos_ms
   );
 
   if (status.status == PLAY_PLAYING) {
@@ -1220,6 +1178,27 @@ pipe_metadata_watch_del(void *arg)
 }
 
 /**
+ * Sends the PIN to complete pairing
+ */
+static void
+mass_speaker_authorize(void)
+{
+  struct player_speaker_info spk;
+
+  DPRINTF(E_DBG, L_PLAYER, "%s:Calling player_speaker_get_byindex(&spk, 0)\n", __func__);
+  player_speaker_get_byindex(&spk, 0); // We only ever have one speaker for Music Assistant
+  DPRINTF(E_DBG, L_PLAYER, "%s:speaker name:%s, index:%" PRIu32 ", id:%" PRIu64 ", output_type:%s, requires_auth:%s, formats:0x%0x\n", 
+    __func__, spk.name, spk.index, spk.id, spk.output_type, spk.requires_auth ? "yes" : "no",
+    spk.supported_formats
+  );
+  
+  if (!spk.requires_auth) {
+    return;
+  }
+  player_speaker_authorize(spk.id, ap2_device_info.pin);
+}
+
+/**
  * Read and process command/metadata from the named pipe
  * @param fd    Not used
  * @param event Not used
@@ -1293,7 +1272,10 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     // We only support AirPlay2 at the moment. The below code will need to be changed if we add support
     // for RAOP.
     // TODO: @bradkeifer - migrate to player_speaker_authorize() re issue #37
-    player_verification_kickoff(&pipe_metadata.prepared.pin, OUTPUT_TYPE_AIRPLAY);
+    // player_verification_kickoff(&pipe_metadata.prepared.pin, OUTPUT_TYPE_AIRPLAY);
+    strncpy(ap2_device_info.pin, pipe_metadata.prepared.pin, sizeof(ap2_device_info.pin) - 1);
+    // player_speaker_enumerate(speaker_authorize_cb, &ap2_device_info.pin);
+    mass_speaker_authorize();
     free(pipe_metadata.prepared.pin);
 
   }
@@ -1542,8 +1524,13 @@ play(struct input_source *source)
 #ifdef DEBUG_INPUT
   read_bytes += ret;
 #endif
+
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
+  if (read_count == 1 && ap2_device_info.start_ts.tv_sec != 0) {
+    // We want to control the time of playback of the first audio packet
+    flags |= INPUT_FLAG_SYNC;
+  }
 
 #ifdef DEBUG_INPUT
   DPRINTF(E_DBG, L_PLAYER, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, read_bytes);
@@ -1574,6 +1561,20 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 
   pthread_mutex_unlock(&pipe_metadata.prepared.lock);
 
+  return 0;
+}
+
+/**
+ * Input definition callback function to obtain timespec for playback of first audio packet
+ * in the data chunk passed to input
+ * @param metadata  Pointer to the timespec structure
+ * @param source    The input source to obtain timespec for
+ * @returns 0
+ */
+static int
+ts_get(struct timespec *ts, struct input_source *source)
+{
+  *ts = ap2_device_info.start_ts;
   return 0;
 }
 
@@ -1676,6 +1677,7 @@ struct input_definition input_pipe =
   .play = play,
   .stop = stop,
   .metadata_get = metadata_get,
+  .ts_get = ts_get,
   .init = mass_init,
   .deinit = mass_deinit,
 };

@@ -517,7 +517,7 @@ timing_get_clock_ntp(struct ntp_stamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  ret = clock_gettime(CLOCK_MONOTONIC, &ts);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -1919,15 +1919,15 @@ packet_send(struct airplay_session *rs, struct rtp_packet *pkt)
       return -1;
     }
 
-    // re-comment ths out when debugged
-    count++;
-    if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
-    DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
-      rs->master_session->rtp_session->seqnum,
-      rs->master_session->rtp_session->pos,
-      pkt->header[1],
-      rs->master_session->rtp_session->pktbuf_len
-      );
+  // re-comment this out when debugged
+  count++;
+  if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
+  DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
+    rs->master_session->rtp_session->seqnum,
+    rs->master_session->rtp_session->pos,
+    pkt->header[1],
+    rs->master_session->rtp_session->pktbuf_len
+    );
   }
 
   return 0;
@@ -2079,7 +2079,7 @@ packets_sync_send(struct airplay_master_session *rms)
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
 
   // Just used for logging, the clock shouldn't be too far from rms->cur_stamp.ts
-  clock_gettime(CLOCK_REALTIME, &ts);
+  clock_gettime(CLOCK_MONOTONIC, &ts);
 
   for (rs = airplay_sessions; rs; rs = rs->next)
     {
@@ -2099,11 +2099,25 @@ packets_sync_send(struct airplay_master_session *rms)
       (long)ts.tv_sec, (long)ts.tv_nsec, 
       rms->rtp_session->pos, rms->rtp_session->seqnum
     );
+    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    }
 	}
       else if (is_sync_time && rs->state == AIRPLAY_STATE_STREAMING)
 	{
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x80);
 	  control_packet_send(rs, sync_pkt);
+
+	  DPRINTF(E_DBG, L_AIRPLAY,
+       "Sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 "\n",
+	    rs->devname, rms->cur_stamp.pos, 
+      (long)rms->cur_stamp.ts.tv_sec, (long)rms->cur_stamp.ts.tv_nsec, 
+      (long)ts.tv_sec, (long)ts.tv_nsec, 
+      rms->rtp_session->pos, rms->rtp_session->seqnum
+    );
+    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    }
 	}
     }
 }

@@ -127,6 +127,54 @@ ntptime(void)
   printf("%" PRIu64 "\n", t);
 }
 
+/**
+ * Subtract t2 from t1
+ * @param result  t1 less t2
+ * @param t1      base timespec to be subracted from
+ * @param t2      timespec amount to subtract from t1
+ */
+static void 
+timespec_subtract(struct timespec *result, const struct timespec *t1, const struct timespec *t2) {
+    if (t1->tv_nsec < t2->tv_nsec) {
+        // Nanoseconds of t1 are less than t2, so we need to "borrow" a second
+        result->tv_sec = t1->tv_sec - t2->tv_sec - 1;
+        result->tv_nsec = 1000000000 + t1->tv_nsec - t2->tv_nsec;
+    } else {
+        result->tv_sec = t1->tv_sec - t2->tv_sec;
+        result->tv_nsec = t1->tv_nsec - t2->tv_nsec;
+    }
+}
+
+/**
+ * Determine the timespec delta between the CLOCK_ID's used by Music Assistant (CLOCK_REALTIME) and OwnTone (CLOCK_MONOTONIC) codebase
+ * @param ns  Pointer to the timespec delta to be returned.
+ * @returns 0 on success, -1 on failure
+ */
+static int
+ts_delta(struct timespec *delta)
+{
+  struct timespec ot_now; // OwnTone time basis of now
+  struct timespec ma_now; // Music Assistant time basis of now
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &ot_now);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s: Unable to obtain current time in OwnTone time basis. %s\n", __func__, strerror(errno));
+    return -1;
+  }
+  ret = clock_gettime(CLOCK_REALTIME, &ma_now);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s: Unable to obtain current time in Music Assistant time basis. %s\n", __func__, strerror(errno));
+    return -1;
+  }
+  timespec_subtract(delta, &ma_now, &ot_now);
+  DPRINTF(E_DBG, L_MAIN, "%s:OwnTone         (CLOCK_MONOTONIC)    now: %.10ld sec, %.9ld nsec\n", __func__, ot_now.tv_sec, ot_now.tv_nsec);
+  DPRINTF(E_DBG, L_MAIN, "%s:Music Assistant (CLOCK_REALTIME)     now: %.10ld sec, %.9ld nsec\n", __func__, ma_now.tv_sec, ma_now.tv_nsec);
+  DPRINTF(E_DBG, L_MAIN, "%s:Delta (CLOCK_REALTIME - CLOCK_MONOTONIC): %.10ld sec, %.9ld nsec\n", __func__, delta->tv_sec, delta->tv_nsec);
+
+  return 0;
+}
+
 static void
 version(void)
 {
@@ -142,25 +190,19 @@ usage(char *program)
   printf("Options:\n");
   printf("  --loglevel <number>               Log level (0-5)\n");
   printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
-  printf("  --logdomains <dom,dom..>          Log domains\n");
-  printf("  --config <file>                   Use <file> for the configuration file.\n");
-  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --config <file>                   Use <file> for the configuration file. No config file used if omitted.\n");
+  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                 Authorization key.\n");
-  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
+  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
-  printf("  --wait                            Start playback after <wait> milliseconds\n");
-  printf("  --ntpstart                        Start playback at NTP <start> + <wait>. Mandatory in absence of --ntpstart.\n");
-  printf("  --latency                         Latency to apply in frames. Not yet implemented.\n");
-  printf("  --volume                          Initial volume (0-100). Mandatory in absence of --ntpstart.\n");
+  printf("  --ntpstart                        Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --volume                          Initial volume (0-100). Defaults to 0\n");
   printf("  -v, --version                     Display version information and exit\n");
-  printf("\n\n");
-  printf("Available log domains:\n");
-  logger_domains();
   printf("\n\n");
 }
 
@@ -470,6 +512,67 @@ int remove_pipes(const char *pipe_path)
   return 0;
 }
 
+/**
+ * Determine a valid playback start time given a specified NTP start time
+ * @param ts        Pointer to a timespec structure where the start time will be returned
+ * @param ntpstart  NTP start time encoded as uint64_t
+ * @returns         0 on success, -1 on failure.
+ */
+static int
+get_start_ts(struct timespec *ts, uint64_t ntpstart)
+{
+  struct ntp_timestamp now_ns;
+  struct ntp_timestamp start_ns;
+  struct timespec now_ts;
+  struct timespec start_ts;
+  struct timespec delta_ts;
+  struct timespec lag_ts;
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
+  if (ret != 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
+    return -1;
+  }
+  timespec_to_ntp(&now_ts, &now_ns);
+  start_ns.sec = (uint32_t)(ntpstart >> 32);
+  start_ns.frac = (uint32_t)(ntpstart & 0xffff);
+  ntp_to_timespec(&start_ns, &start_ts);
+  DPRINTF(E_DBG, L_MAIN, "start_ts:%ld.%ld from ntpstart %" PRIu32 ".%.10" PRIu32 " sec, %" PRIu64 "\n", 
+    start_ts.tv_sec, start_ts.tv_nsec, start_ns.sec, start_ns.frac, ntpstart);
+  // convert from Music Assistant time basis to OwnTone time basis
+    // delta_ts is the epoch difference CLOCK_REALTIME-CLOCK_MONOTONIC = uptime - 1/1/1970
+  ret = ts_delta(&delta_ts);
+  if (ret < 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
+    return -1;
+  }
+  timespec_subtract(ts, &start_ts, &delta_ts);
+  // Subtract internal latency
+  ts->tv_sec -= OUTPUTS_BUFFER_DURATION;
+  DPRINTF(E_DBG, L_MAIN, 
+    "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
+    PRIu32 ".%.10" PRIu32 "\n", 
+    ts->tv_sec, ts->tv_nsec, 
+    start_ns.sec, start_ns.frac);
+  DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
+    now_ts.tv_sec, now_ts.tv_nsec);
+  timespec_to_ntp(ts, &start_ns);
+  timespec_subtract(&lag_ts, ts, &now_ts);
+  DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", start_ns.sec, start_ns.frac);
+  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld sec, %ld nsec\n", lag_ts.tv_sec, lag_ts.tv_nsec);
+
+  if (lag_ts.tv_sec < OUTPUTS_BUFFER_DURATION) {
+    // Give ourselves enough time to get connected and build our buffer
+    long extra_ms = ((OUTPUTS_BUFFER_DURATION - lag_ts.tv_sec) * 1000) - (long)(lag_ts.tv_nsec / 1e6);
+    DPRINTF(E_FATAL, L_MAIN, "ntpstart time too soon. Increase it by at least %ld ms. Trying to start audio in %ld sec, %ld nsec\n", 
+      extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
+    );
+    // return -1;
+  }
+  return 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -496,17 +599,12 @@ main(int argc, char **argv)
   const char *txt = NULL;
 
   uint64_t ntpstart = 0;
-  uint32_t wait = 0;
-  uint32_t latency = 0;
   int volume = 0;
   struct keyval *txt_kv = NULL;
-  struct ntp_timestamp ns;
-  struct timespec now_ts;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
-    { "logfile",       1, NULL, 516 },
-    { "logdomains",    1, NULL, 501 },
+    { "logfile",       1, NULL, 501 },
     { "config",        1, NULL, 502 },
     { "name",          1, NULL, 503 },
     { "hostname",      1, NULL, 504 },
@@ -515,24 +613,19 @@ main(int argc, char **argv)
     { "txt",           1, NULL, 507 },
     { "ntp",           0, NULL, 508 },
     { "ntpstart",      1, NULL, 509 },
-    { "wait",          1, NULL, 510 },
-    { "latency",       1, NULL, 511 },
-    { "volume",        1, NULL, 512 },
-    { "version",       0, NULL, 513 },
-    { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
-    { "pipe",          1, NULL, 515 },
-    { "command_pipe",  1, NULL, 517 },
-    { "auth",          1, NULL, 518 },
+    { "volume",        1, NULL, 510 },
+    { "version",       0, NULL, 511 },
+    { "testrun",       0, NULL, 512 }, // Used for CI, not documented to user
+    { "pipe",          1, NULL, 513 },
+    { "command_pipe",  1, NULL, 514 },
+    { "auth",          1, NULL, 515 },
+    { "latency",       1, NULL, 516 }, // ignore until we get it removed from Music Assistant
 
     { NULL,            0, NULL, 0   }
   };
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
-      case 514: // testrun
-        testrun = true;
-        break;
-
       case 500: // loglevel
         ret = safe_atoi32(optarg, &option);
         if (ret < 0)
@@ -541,21 +634,12 @@ main(int argc, char **argv)
           loglevel = option;
         break;
 
-      case 516: // logfile
+      case 501: // logfile
         logfile = optarg;
-        break;
-
-      case 501: // logdomains
-        logdomains = optarg;
         break;
 
       case 502: //config
         configfile = optarg;
-        break;
-
-      case 513: // version
-        version();
-        return EXIT_SUCCESS;
         break;
 
       case 503: // name
@@ -596,23 +680,7 @@ main(int argc, char **argv)
         }
         break;
       
-      case 510: // wait
-        ret = safe_atou32(optarg, &wait);
-        if (ret < 0) {
-          fprintf(stderr, "Error: wait must be an integer in '--wait %s'\n", optarg);
-          exit(EXIT_FAILURE);
-        }
-        break;
-
-      case 511: // latency
-        ret = safe_atou32(optarg, &latency);
-        if (ret < 0) {
-          fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
-          exit(EXIT_FAILURE);
-        }
-        break;
-      
-      case 512: // volume
+      case 510: // volume
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
@@ -620,16 +688,28 @@ main(int argc, char **argv)
         }
         break;
 
-      case 515: // named pipe filename
+      case 511: // version
+        version();
+        return EXIT_SUCCESS;
+        break;
+
+      case 512: // testrun
+        testrun = true;
+        break;
+
+      case 513: // named pipe filename
         mass_named_pipes.audio_pipe = optarg;
         break;
 
-      case 517: // command/metadata named pipe filename
+      case 514: // command/metadata named pipe filename
         mass_named_pipes.metadata_pipe = optarg;
         break;
 
-      case 518: // authorization key
+      case 515: // authorization key
         ap2_device_info.auth_key = optarg;
+        break;
+
+      case 516: // latency
         break;
 
         default:
@@ -647,9 +727,7 @@ main(int argc, char **argv)
       hostname == (char *)NULL ||
       address == (char*)NULL ||
       txt == (char*)NULL ||
-      mass_named_pipes.audio_pipe == (char*)NULL ||
-      ntpstart == 0 ||
-      volume == 0
+      mass_named_pipes.audio_pipe == (char*)NULL
       )
      ) {
       usage(argv[0]);
@@ -726,37 +804,17 @@ main(int argc, char **argv)
         txt);
       goto txt_fail;
     }
-    ret = clock_gettime(CLOCK_REALTIME, &now_ts);
-    if (ret != 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
-      goto player_fail;
-    }
-    ap2_device_info.ntpstart = ntpstart;
-    ns.sec = (uint32_t)(ntpstart >> 32);
-    ns.frac = (uint32_t)(ntpstart);
-    ntp_to_timespec(&ns, &ap2_device_info.start_ts);
-    // Add wait time in milliseconds
-    ap2_device_info.start_ts.tv_sec += wait / 1000;
-    ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
-    DPRINTF(E_DBG, L_MAIN, 
-      "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
-      PRIu32 ".%.10" PRIu32 " and wait of %dms\n", 
-      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec, 
-      ns.sec, ns.frac, wait);
-    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
-      now_ts.tv_sec, now_ts.tv_nsec);
-    timespec_to_ntp(&ap2_device_info.start_ts, &ns);
-    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);
 
+    if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
+      DPRINTF(E_FATAL, L_MAIN, "Unable to obtain feasible playback start time\n");
+      goto txt_fail;
+    }
     
     ap2_device_info.name = name;
     ap2_device_info.hostname = hostname;
     ap2_device_info.address = address;
     ap2_device_info.port = port;
     ap2_device_info.txt = txt_kv;
-    ap2_device_info.ntpstart = ntpstart;
-    ap2_device_info.wait = wait;
-    ap2_device_info.latency = latency;
     ap2_device_info.volume = volume;
   }
 
@@ -859,7 +917,7 @@ main(int argc, char **argv)
     }
 
   /* Spawn player thread */
-  ret = player_init(&ap2_device_info.start_ts);
+  ret = player_init();
   if (ret != 0)
     {
       DPRINTF(E_FATAL, L_MAIN, "Player thread failed to start\n");

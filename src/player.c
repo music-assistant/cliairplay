@@ -350,9 +350,6 @@ struct metadata_pending_register
   struct input_metadata *metadata;
 } metadata_pending[16];
 
-// Absolute time to commence playback. If not set, playback starts as soon as possible.
-static struct timespec pb_req_start_ts = {0, 0};
-
 /* -------------------------------- Forwards -------------------------------- */
 
 static void
@@ -492,19 +489,6 @@ static struct db_queue_item *
 queue_item_prev(uint32_t item_id)
 {
   return db_queue_fetch_prev(item_id, shuffle);
-}
-
-// Returns true if t1 < t2
-static
-bool is_less_than(const struct timespec *t1, const struct timespec *t2) {
-    if (t1->tv_sec < t2->tv_sec) {
-        return true;
-    } else if (t1->tv_sec == t2->tv_sec) {
-        if (t1->tv_nsec < t2->tv_nsec) {
-            return true;
-        }
-    }
-    return false;
 }
 
 /* ------ All this is for dealing with metadata received from the input ----- */
@@ -882,23 +866,8 @@ session_update_read(int nsamples)
   // Did we just complete our first read? Then set the start timestamp
   if (pb_session.start_ts.tv_sec == 0)
     {
-      clock_gettime_with_res(CLOCK_REALTIME, &pb_session.start_ts, &player_timer_res);
-      if (is_less_than(&pb_req_start_ts, &pb_session.start_ts)) {
-        // Requested start time is in the past, so just use now
-        DPRINTF(E_WARN, L_PLAYER,
-          "%s: Requested start time %ld.%ld is earlier than now %ld.%ld\n",
-          __func__, pb_req_start_ts.tv_sec, pb_req_start_ts.tv_nsec, 
-          pb_session.start_ts.tv_sec, pb_session.start_ts.tv_nsec
-        );
-        pb_session.pts = pb_session.start_ts;
-      }
-      else {
-        // Requested start time is in the future, so use that
-        pb_session.pts = pb_req_start_ts;
-      }
-      DPRINTF(E_DBG, L_PLAYER, 
-        "%s:Initial pb_session.pts set to %ld.%ld for pb_session.pos=%" PRIu32 "\n",
-        __func__, pb_session.pts.tv_sec, pb_session.pts.tv_nsec, pb_session.pos);
+      clock_gettime_with_res(CLOCK_MONOTONIC, &pb_session.start_ts, &player_timer_res);
+      pb_session.pts = pb_session.start_ts;
     }
 
   // Advance position
@@ -950,6 +919,17 @@ session_update_read_quality(struct media_quality *quality)
 
  out:
   free(quality);
+}
+
+static void
+session_update_read_ts(struct timespec *ts)
+{
+  DPRINTF(E_DBG, L_PLAYER, "%s:ts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, ts->tv_sec, ts->tv_nsec, pb_session.pos);
+  pb_session.pts = *ts;
+  DPRINTF(E_DBG, L_PLAYER, "%s:pb_session.start_ts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, 
+    pb_session.start_ts.tv_sec, pb_session.start_ts.tv_nsec, pb_session.pos);
+  DPRINTF(E_DBG, L_PLAYER, "%s:pb_session.pts:%ld.%.ld sec. pb_session.pos:%" PRIu32 "\n", __func__, 
+    pb_session.pts.tv_sec, pb_session.pts.tv_nsec, pb_session.pos);
 }
 
 static void
@@ -1016,6 +996,14 @@ event_read_quality(struct media_quality *quality)
   DPRINTF(E_DBG, L_PLAYER, "event_read_quality()\n");
 
   session_update_read_quality(quality);
+}
+
+static void
+event_read_ts(struct timespec *ts)
+{
+  DPRINTF(E_DBG, L_PLAYER, "event_read_ts()\n");
+
+  session_update_read_ts(ts);
 }
 
 // Stuff to do when read of current track ends
@@ -1260,6 +1248,14 @@ source_read(int *nbytes, int *nsamples, uint8_t *buf, int len)
   else if (flag == INPUT_FLAG_QUALITY)
     {
       event_read_quality((struct media_quality *)flagdata);
+    }
+  else if (flag == INPUT_FLAG_SYNC)
+    {
+      DPRINTF(E_DBG, L_PLAYER, "%s:INPUT_FLAG_SYNC flagdata->tv_sec:%ld, flagdata->tv_nsec:%ld\n", 
+        __func__, ((struct timespec *)flagdata)->tv_sec, ((struct timespec *)flagdata)->tv_nsec);
+      DPRINTF(E_DBG, L_PLAYER, "%s:INPUT_FLAG_SYNC pb_session.start_ts.tv_sec:%ld, pb_session.start_ts.tv_nsec:%ld\n", 
+        __func__, pb_session.start_ts.tv_sec, pb_session.start_ts.tv_nsec);
+      event_read_ts((struct timespec *)flagdata);
     }
 
   if (*nbytes == 0 || pb_session.quality.channels == 0)
@@ -3887,25 +3883,6 @@ player_raop_verification_kickoff(char **arglist)
 
 }
 
-void
-player_verification_kickoff(char **arglist, enum output_types type)
-{
-  union player_arg *cmdarg;
-
-  cmdarg = calloc(1, sizeof(union player_arg));
-  if (!cmdarg)
-    {
-      DPRINTF(E_LOG, L_PLAYER, "Could not allocate player_command\n");
-      return;
-    }
-
-  cmdarg->auth.type = type;
-  memcpy(cmdarg->auth.pin, arglist[0], 4);
-
-  commands_exec_async(cmdbase, device_auth_kickoff, cmdarg);
-
-}
-
 
 /* ---------------------------- Thread: player ------------------------------ */
 
@@ -3946,17 +3923,10 @@ player(void *arg)
 /* ----------------------------- Thread: main ------------------------------- */
 
 int
-player_init(struct timespec *req_start_ts)
+player_init(void)
 {
   uint64_t interval;
   int ret;
-
-  if (req_start_ts) {
-    // We need to decrement the requested playback commencement time by the
-    // OUTPUTS_BUFFER_DURATION in order to get playback to commence on time
-    pb_req_start_ts.tv_sec = req_start_ts->tv_sec - OUTPUTS_BUFFER_DURATION;
-    pb_req_start_ts.tv_nsec = req_start_ts->tv_nsec;
-  }
 
   speaker_autoselect = cfg_getbool(cfg_getsec(cfg, "general"), "speaker_autoselect");
   clear_queue_on_stop_disabled = cfg_getbool(cfg_getsec(cfg, "library"), "clear_queue_on_stop_disable");
@@ -3979,7 +3949,7 @@ player_init(struct timespec *req_start_ts)
   // Determine if the resolution of the system timer is > or < the size
   // of an audio packet. NOTE: this assumes the system clock resolution
   // is less than one second.
-  if (clock_getres(CLOCK_REALTIME, &player_timer_res) < 0)
+  if (clock_getres(CLOCK_MONOTONIC, &player_timer_res) < 0)
     {
       DPRINTF(E_LOG, L_PLAYER, "Could not get the system timer resolution.\n");
       goto error_history_free;
