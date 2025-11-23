@@ -2074,6 +2074,7 @@ packets_sync_send(struct airplay_master_session *rms)
   struct airplay_session *rs;
   struct timespec ts;
   bool is_sync_time;
+  int64_t lag_ms;
 
   // Check if it is time send a sync packet to sessions that are already running
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
@@ -2092,15 +2093,19 @@ packets_sync_send(struct airplay_master_session *rms)
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x90);
 	  control_packet_send(rs, sync_pkt);
 
+    lag_ms = ((int64_t)((ts.tv_sec - rms->cur_stamp.ts.tv_sec) * 1e3) + ((ts.tv_nsec - rms->cur_stamp.ts.tv_nsec)/1e6));
 	  DPRINTF(E_DBG, L_AIRPLAY,
-       "Start sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 "\n",
+       "Start sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 ", lag_ms=%" PRId64 "\n",
 	    rs->devname, rms->cur_stamp.pos, 
       (long)rms->cur_stamp.ts.tv_sec, (long)rms->cur_stamp.ts.tv_nsec, 
       (long)ts.tv_sec, (long)ts.tv_nsec, 
-      rms->rtp_session->pos, rms->rtp_session->seqnum
+      rms->rtp_session->pos, rms->rtp_session->seqnum, lag_ms
     );
-    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
-      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    if (lag_ms >= (OUTPUTS_BUFFER_DURATION * 1e3)) {
+      DPRINTF(E_LOG, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio almost certainly will not play\n", __func__, lag_ms);
+    }
+    else if (lag_ms > 0) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio may not play\n", __func__, lag_ms);
     }
 	}
       else if (is_sync_time && rs->state == AIRPLAY_STATE_STREAMING)
@@ -2108,15 +2113,19 @@ packets_sync_send(struct airplay_master_session *rms)
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x80);
 	  control_packet_send(rs, sync_pkt);
 
+    lag_ms = ((int64_t)((ts.tv_sec - rms->cur_stamp.ts.tv_sec) * 1e3) + ((ts.tv_nsec - rms->cur_stamp.ts.tv_nsec)/1e6));
 	  DPRINTF(E_DBG, L_AIRPLAY,
-       "Sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 "\n",
+       "Sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 ", seqnum=%" PRIu16 ", lag_ms=%" PRId64 "\n",
 	    rs->devname, rms->cur_stamp.pos, 
       (long)rms->cur_stamp.ts.tv_sec, (long)rms->cur_stamp.ts.tv_nsec, 
       (long)ts.tv_sec, (long)ts.tv_nsec, 
-      rms->rtp_session->pos, rms->rtp_session->seqnum
+      rms->rtp_session->pos, rms->rtp_session->seqnum, lag_ms
     );
-    if (ts.tv_sec > rms->cur_stamp.ts.tv_sec || (ts.tv_sec == rms->cur_stamp.ts.tv_sec && ts.tv_nsec > rms->cur_stamp.ts.tv_nsec)) {
-      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past. Audio may not play\n", __func__);
+    if (lag_ms >= (OUTPUTS_BUFFER_DURATION * 1e3)) {
+      DPRINTF(E_LOG, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio almost certainly will not play\n", __func__, lag_ms);
+    }
+    else if (lag_ms > 0) {
+      DPRINTF(E_WARN, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio may not play\n", __func__, lag_ms);
     }
 	}
     }
