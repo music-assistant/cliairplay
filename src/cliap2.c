@@ -565,10 +565,10 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   if (lag_ts.tv_sec < OUTPUTS_BUFFER_DURATION) {
     // Give ourselves enough time to get connected and build our buffer
     long extra_ms = ((OUTPUTS_BUFFER_DURATION - lag_ts.tv_sec) * 1000) - (long)(lag_ts.tv_nsec / 1e6);
-    DPRINTF(E_FATAL, L_MAIN, "ntpstart time too soon. Increase it by at least %ld ms. Trying to start audio in %ld sec, %ld nsec\n", 
+    DPRINTF(E_WARN, L_MAIN, "ntpstart time too soon. Increase it by at least %ld ms. Trying to start audio in %ld sec, %ld nsec\n", 
       extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
     );
-    // return -1;
+    return -1;
   }
   return 0;
 }
@@ -806,8 +806,9 @@ main(int argc, char **argv)
     }
 
     if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Unable to obtain feasible playback start time\n");
-      goto txt_fail;
+      DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
+      ap2_device_info.start_ts.tv_sec = 0;
+      ap2_device_info.start_ts.tv_nsec = 0;
     }
     
     ap2_device_info.name = name;
