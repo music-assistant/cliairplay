@@ -263,16 +263,18 @@ rtp_sync_packet_next(struct rtp_session *session, struct rtcp_timestamp cur_stam
   rtptime = htobe32(session->pos);
   memcpy(session->sync_packet_next.data + 16, &rtptime, 4);
 
-  DPRINTF(E_SPAM, L_PLAYER, 
-    "SYNC PACKET cur_ts:%ld.%ld, cur_pos:%u, rtptime:%u, type:0x%x, sync_counter:%d "
-    "session->seqnum:%u\n",
-    cur_stamp.ts.tv_sec, cur_stamp.ts.tv_nsec,
-    cur_stamp.pos,
-    session->pos,
-    session->sync_packet_next.data[0],
-    session->sync_counter,
-    session->seqnum
-    );
+  // DPRINTF(E_DBG, L_AIRPLAY, 
+  //   "SYNC PACKET cur_ts:%ld.%ld, cur_pos/rtptime_latency:%" PRIu32 ", ntp:%" PRIu32 ".%" PRIu32 ", rtptime:%" PRIu32 ", type:0x%x, sync_counter:%d "
+  //   "session->seqnum:%" PRIu16 ", latency_frames:%d\n",
+  //   cur_stamp.ts.tv_sec, cur_stamp.ts.tv_nsec,
+  //   cur_stamp.pos,
+  //   cur_ts.sec, cur_ts.frac,
+  //   session->pos,
+  //   session->sync_packet_next.data[0],
+  //   session->sync_counter,
+  //   session->seqnum,
+  //   session->pos - cur_stamp.pos
+  //   );
 
   return &session->sync_packet_next;
 }

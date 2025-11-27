@@ -210,7 +210,7 @@ const char *
 player_pmap(void *p);
 
 int
-player_init(struct timespec *start_ts);
+player_init(void);
 
 void
 player_deinit(void);

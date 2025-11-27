@@ -69,7 +69,21 @@
 #include "cliap2.h"
 #include "mass.h"
 
-#define TESTRUN_PIPE "/tmp/testrun.pipe"
+#define AIRPLAY2_CONNECT_TIME_MS (int32_t) 2500 // Minimum time we need to connect and buffer before starting playback
+
+/*
+ * Below explanation is from libraop raop_client.h
+ *
+ * RAOP players have a latency which is usually 11025 frames.
+ *
+ * The precise time at the DAC is the time at the client plus the latency, so when
+ * setting a start time, we must anticipate by the latency if we want the first
+ * frame to be *exactly* played at that NTP value.
+ * 
+ * For for Music Assistant, we will simply subtract 250ms (11025 frames at 44100 sample rate)
+ * This approach may need to change when we implement higher quality streams
+ */
+#define DAC_LATENCY_TS {0, 250e6}
 
 struct event_base *evbase_main;
 static struct event *sig_event;
@@ -84,7 +98,7 @@ timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
   ns->sec = ts->tv_sec + NTP_EPOCH_DELTA;
 
   // tv_nsec is a long (ie 64-bit). frac is a uint32_t (32-bit). By definition, we will lose granularity upon conversion
-  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC); // this uses floating point math, and hence subject to rounding error
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
 }
 
 static inline void
@@ -102,7 +116,7 @@ timing_get_clock_ntp(struct ntp_timestamp *ns)
   struct timespec ts;
   int ret;
 
-  ret = clock_gettime(CLOCK_REALTIME, &ts);
+  ret = clock_gettime(CLOCK_REALTIME, &ts); // Music Assistant CLOCK_ID basis
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get clock: %s\n", strerror(errno));
@@ -127,6 +141,51 @@ ntptime(void)
   printf("%" PRIu64 "\n", t);
 }
 
+/**
+ * Subtract t2 from t1
+ * @param result  t1 less t2
+ * @param t1      base timespec to be subracted from
+ * @param t2      timespec amount to subtract from t1
+ */
+static void 
+timespec_subtract(struct timespec *result, const struct timespec *t1, const struct timespec *t2) {
+    if (t1->tv_nsec < t2->tv_nsec) {
+        // Nanoseconds of t1 are less than t2, so we need to "borrow" a second
+        result->tv_sec = t1->tv_sec - t2->tv_sec - 1;
+        result->tv_nsec = 1000000000 + t1->tv_nsec - t2->tv_nsec;
+    } else {
+        result->tv_sec = t1->tv_sec - t2->tv_sec;
+        result->tv_nsec = t1->tv_nsec - t2->tv_nsec;
+    }
+}
+
+/**
+ * Determine the timespec delta between the CLOCK_ID's used by Music Assistant (CLOCK_REALTIME) and OwnTone (CLOCK_MONOTONIC) codebase
+ * @param ns  Pointer to the timespec delta to be returned.
+ * @returns 0 on success, -1 on failure
+ */
+static int
+ts_delta(struct timespec *delta)
+{
+  struct timespec ot_now; // OwnTone time basis of now
+  struct timespec ma_now; // Music Assistant time basis of now
+  int ret;
+
+  ret = clock_gettime(CLOCK_MONOTONIC, &ot_now);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s: Unable to obtain current time in OwnTone time basis. %s\n", __func__, strerror(errno));
+    return -1;
+  }
+  ret = clock_gettime(CLOCK_REALTIME, &ma_now);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s: Unable to obtain current time in Music Assistant time basis. %s\n", __func__, strerror(errno));
+    return -1;
+  }
+  timespec_subtract(delta, &ma_now, &ot_now);
+
+  return 0;
+}
+
 static void
 version(void)
 {
@@ -142,25 +201,19 @@ usage(char *program)
   printf("Options:\n");
   printf("  --loglevel <number>               Log level (0-5)\n");
   printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
-  printf("  --logdomains <dom,dom..>          Log domains\n");
-  printf("  --config <file>                   Use <file> for the configuration file.\n");
-  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntpstart.\n");
-  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
-  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntpstart.\n");
+  printf("  --config <file>                   Use <file> for the configuration file. No config file used if omitted.\n");
+  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                 Authorization key.\n");
-  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntpstart.\n");
+  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
-  printf("  --wait                            Start playback after <wait> milliseconds\n");
-  printf("  --ntpstart                        Start playback at NTP <start> + <wait>. Mandatory in absence of --ntpstart.\n");
-  printf("  --latency                         Latency to apply in frames. Not yet implemented.\n");
-  printf("  --volume                          Initial volume (0-100). Mandatory in absence of --ntpstart.\n");
+  printf("  --ntpstart                        Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --volume                          Initial volume (0-100). Defaults to 0\n");
   printf("  -v, --version                     Display version information and exit\n");
-  printf("\n\n");
-  printf("Available log domains:\n");
-  logger_domains();
   printf("\n\n");
 }
 
@@ -304,18 +357,15 @@ parse_keyval(const char *str, struct keyval *kv)
   // Tokenize the main string by double quotes
   outer_token = strtok_r(s, "\"", &outer_saveptr);
   while (outer_token != NULL) {
-    DPRINTF(E_SPAM, L_MAIN, "keyval pair: %s\n", outer_token);
     // For each keyval pair, tokenize by =
     inner_token = strtok_r(outer_token, "=", &inner_saveptr);
     for (int i=0; inner_token != NULL; i++) {
-      DPRINTF(E_SPAM, L_MAIN, "  item[%d]: %s\n", i, inner_token);
       switch (i) {
         case 0:
           key = inner_token;
           break;
         case 1:
           value = inner_token;
-          DPRINTF(E_DBG, L_MAIN, "Adding keyval: %s=%s\n", key, value);
           keyval_add(kv, key, value);
           break;
         default:
@@ -343,7 +393,6 @@ int check_pipe(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
           return 0;
       } 
       else {
@@ -365,106 +414,55 @@ int check_pipe(const char *pipe_path)
   return 0;
 }
 
-// Create named pipe.
-// @param name the filename of the named pipe
-// @returns 0 on success, -1 on failure
-static
-int create_pipe(const char *pipe_path)
+/**
+ * Determine a valid playback start time given a specified NTP start time
+ * @param ts        Pointer to a timespec structure where the start time will be returned
+ * @param ntpstart  NTP start time encoded as uint64_t
+ * @returns         0 on success, -1 on failure.
+ */
+static int
+get_start_ts(struct timespec *ts, uint64_t ntpstart)
 {
-  struct stat st;
-
-  // Check if the file exists and get its information
-  if (stat(pipe_path, &st) == 0) {
-      // File exists, now check if it's a FIFO (named pipe)
-      if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
-          return 0;
-      } 
-      else {
-          DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
-          return -1;
-      }
-  } 
-  else {
-      // File does not exist, so lets create it
-      if (mkfifo(pipe_path, 0666) < 0) {
-        DPRINTF(E_FATAL, L_MAIN, "%s:Error creating named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
-        return -1;
-      }
-  }
-
-  return 0;
-}
-
-// Create named pipe(s) for testrun purposes
-// @param name the filename of the audio streaming named pipe
-// @returns 0 on success, -1 on failure
-static
-int create_pipes(const char *pipe_path)
-{
-  if (create_pipe(pipe_path) == 0) {
-    int ret;
-    char *metadata_path = NULL;
-
-    ret = asprintf(&metadata_path, "%s.metadata", pipe_path);
-    ret = create_pipe(metadata_path);
-    free(metadata_path);
-    return ret;
-  }
-  return -1;
-}
-
-// Remove named pipe.
-// @param name the filename of the named pipe
-// @returns 0 on success, -1 on failure
-static
-int remove_pipe(const char *pipe_path)
-{
-  struct stat st;
+  struct ntp_timestamp start_ns;  // MA clock basis
+  struct timespec now_ts;         // OT clock basis
+  struct timespec start_ts;       // MA clock basis
+  struct timespec delta_ts;       // delta between MA and OT clock basis
+  struct timespec lag_ts;         // lag between now and start time
+  struct timespec dac_latency_ts = DAC_LATENCY_TS;
+  int32_t lag_ms;                 // lag in milliseconds between now and start time
   int ret;
 
-  // Check if the file exists and get its information
-  if (stat(pipe_path, &st) == 0) {
-      // File exists, now check if it's a FIFO (named pipe)
-      if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_SPAM, L_MAIN, "%s:Named pipe '%s' exists.\n", __func__, pipe_path);
-          ret = unlink(pipe_path);
-          if (ret != 0) {
-            DPRINTF(E_LOG, L_MAIN, "%s:Cannot removed named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
-            return ret;
-          }
-      } 
-      else {
-          DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
-          return -1;
-      }
-  } 
+  ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
+  if (ret != 0) {
+    DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
+    return -1;
+  }
+  start_ns.sec = (uint32_t)(ntpstart >> 32);
+  start_ns.frac = (uint32_t)(ntpstart);
 
-  return 0;
-}
+  ntp_to_timespec(&start_ns, &start_ts);
 
-// Remove named pipes created for testrun purposes
-// @param name the filename of the audio streaming named pipe
-// @returns 0 on success, -1 on failure
-static
-int remove_pipes(const char *pipe_path)
-{
-  int audio_error, metadata_error = 0;
-  char *metadata_path = NULL;
-  int ret;
-
-  audio_error = remove_pipe(pipe_path);
-
-  ret = asprintf(&metadata_path, "%s.metadata", pipe_path);
+  // convert from Music Assistant time basis to OwnTone time basis
+    // delta_ts is the epoch difference CLOCK_REALTIME-CLOCK_MONOTONIC = uptime - 1/1/1970
+  ret = ts_delta(&delta_ts);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_MAIN, "Unable to malloc memory. %s\n", strerror(errno));
+    DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
+    return -1;
   }
-  else {
-    metadata_error = remove_pipe(metadata_path);
-    free(metadata_path);
-  }
+  timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding OUTPUTS_BUFFER_DURATION, in OwnTone time basis
+  ts->tv_sec -= OUTPUTS_BUFFER_DURATION; // Required to ensure we have sufficent data and are close to cliraop
+  timespec_subtract(ts, ts, &dac_latency_ts);
+  timespec_to_ntp(ts, &start_ns);
+  timespec_subtract(&lag_ts, ts, &now_ts);
+  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld sec, %ld nsec\n", lag_ts.tv_sec, lag_ts.tv_nsec);
 
-  if (audio_error < 0 || metadata_error < 0) {
+  lag_ms = (int32_t)(lag_ts.tv_sec * 1000) + (int32_t)(lag_ts.tv_nsec / 1e6);
+  if (lag_ms < AIRPLAY2_CONNECT_TIME_MS) {
+    // Give ourselves enough time to get connected and build our buffer
+    int32_t extra_ms = AIRPLAY2_CONNECT_TIME_MS - lag_ms;
+    DPRINTF(E_LOG, L_MAIN, "ntpstart time too soon. Increase it by at least %" PRId32 " ms. Trying to start audio in %ld sec, %ld nsec\n", 
+      extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
+    );
     return -1;
   }
   return 0;
@@ -475,7 +473,6 @@ main(int argc, char **argv)
 {
   int option;
   char *configfile = NULL; // default to no config file
-  bool testrun = false;
   bool metadata_pipe_defaulted = false;
   int loglevel = -1;
   char *logdomains = NULL;
@@ -496,17 +493,12 @@ main(int argc, char **argv)
   const char *txt = NULL;
 
   uint64_t ntpstart = 0;
-  uint32_t wait = 0;
-  uint32_t latency = 0;
   int volume = 0;
   struct keyval *txt_kv = NULL;
-  struct ntp_timestamp ns;
-  struct timespec now_ts;
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
-    { "logfile",       1, NULL, 516 },
-    { "logdomains",    1, NULL, 501 },
+    { "logfile",       1, NULL, 501 },
     { "config",        1, NULL, 502 },
     { "name",          1, NULL, 503 },
     { "hostname",      1, NULL, 504 },
@@ -515,24 +507,18 @@ main(int argc, char **argv)
     { "txt",           1, NULL, 507 },
     { "ntp",           0, NULL, 508 },
     { "ntpstart",      1, NULL, 509 },
-    { "wait",          1, NULL, 510 },
-    { "latency",       1, NULL, 511 },
-    { "volume",        1, NULL, 512 },
-    { "version",       0, NULL, 513 },
-    { "testrun",       0, NULL, 514 }, // Used for CI, not documented to user
-    { "pipe",          1, NULL, 515 },
-    { "command_pipe",  1, NULL, 517 },
-    { "auth",          1, NULL, 518 },
+    { "volume",        1, NULL, 510 },
+    { "version",       0, NULL, 511 },
+    { "testrun",       0, NULL, 512 }, // Used for CI, not documented to user
+    { "pipe",          1, NULL, 513 },
+    { "command_pipe",  1, NULL, 514 },
+    { "auth",          1, NULL, 515 },
 
     { NULL,            0, NULL, 0   }
   };
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
-      case 514: // testrun
-        testrun = true;
-        break;
-
       case 500: // loglevel
         ret = safe_atoi32(optarg, &option);
         if (ret < 0)
@@ -541,21 +527,12 @@ main(int argc, char **argv)
           loglevel = option;
         break;
 
-      case 516: // logfile
+      case 501: // logfile
         logfile = optarg;
-        break;
-
-      case 501: // logdomains
-        logdomains = optarg;
         break;
 
       case 502: //config
         configfile = optarg;
-        break;
-
-      case 513: // version
-        version();
-        return EXIT_SUCCESS;
         break;
 
       case 503: // name
@@ -596,23 +573,7 @@ main(int argc, char **argv)
         }
         break;
       
-      case 510: // wait
-        ret = safe_atou32(optarg, &wait);
-        if (ret < 0) {
-          fprintf(stderr, "Error: wait must be an integer in '--wait %s'\n", optarg);
-          exit(EXIT_FAILURE);
-        }
-        break;
-
-      case 511: // latency
-        ret = safe_atou32(optarg, &latency);
-        if (ret < 0) {
-          fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
-          exit(EXIT_FAILURE);
-        }
-        break;
-      
-      case 512: // volume
+      case 510: // volume
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
@@ -620,15 +581,25 @@ main(int argc, char **argv)
         }
         break;
 
-      case 515: // named pipe filename
+      case 511: // version
+        version();
+        return EXIT_SUCCESS;
+        break;
+
+      case 512: // testrun
+        fprintf(stdout, "%s check\n", PACKAGE);
+        return EXIT_SUCCESS;
+        break;
+
+      case 513: // named pipe filename
         mass_named_pipes.audio_pipe = optarg;
         break;
 
-      case 517: // command/metadata named pipe filename
+      case 514: // command/metadata named pipe filename
         mass_named_pipes.metadata_pipe = optarg;
         break;
 
-      case 518: // authorization key
+      case 515: // authorization key
         ap2_device_info.auth_key = optarg;
         break;
 
@@ -641,16 +612,12 @@ main(int argc, char **argv)
   }
 
   // Check that mandatory arguments have been supplied
-  if (!testrun &&
-      (port == -1 ||
+  if (port == -1 ||
       name == (char *)NULL ||
       hostname == (char *)NULL ||
       address == (char*)NULL ||
       txt == (char*)NULL ||
-      mass_named_pipes.audio_pipe == (char*)NULL ||
-      ntpstart == 0 ||
-      volume == 0
-      )
+      mass_named_pipes.audio_pipe == (char*)NULL
      ) {
       usage(argv[0]);
       return EXIT_FAILURE;
@@ -687,88 +654,53 @@ main(int argc, char **argv)
     return EXIT_FAILURE;
   }
 
-  if (testrun) {
-    ret = create_pipes(TESTRUN_PIPE);
-    if (ret != 0) {
-      remove_pipes(TESTRUN_PIPE);
-      return EXIT_FAILURE;
-    }
-    mass_named_pipes.audio_pipe = TESTRUN_PIPE;
-    mass_named_pipes.metadata_pipe = TESTRUN_PIPE METADATA_NAMED_PIPE_DEFAULT_SUFFIX;
+  // Check that named pipes exist for audio streaming and metadata
+  ret = check_pipe(mass_named_pipes.audio_pipe);
+  if (ret < 0) {
+    return EXIT_FAILURE;
   }
-  else {
-    // Check that named pipes exist for audio streaming and metadata
-    ret = check_pipe(mass_named_pipes.audio_pipe);
+  if (!mass_named_pipes.metadata_pipe) {
+    // Adopt the default
+    metadata_pipe_defaulted = true;
+    ret = asprintf(&mass_named_pipes.metadata_pipe, "%s%s", 
+      mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
+    );
     if (ret < 0) {
       return EXIT_FAILURE;
     }
-    if (!mass_named_pipes.metadata_pipe) {
-      // Adopt the default
-      metadata_pipe_defaulted = true;
-      ret = asprintf(&mass_named_pipes.metadata_pipe, "%s%s", 
-        mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
-      );
-      if (ret < 0) {
-        return EXIT_FAILURE;
-      }
-    }
-    ret = check_pipe(mass_named_pipes.metadata_pipe);
-    if (ret < 0) {
-      return EXIT_FAILURE;
-    }
-
-    CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
-
-    ret = parse_keyval(txt, txt_kv);
-    if (ret != 0){
-      DPRINTF(E_FATAL, L_MAIN, 
-        "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n", 
-        txt);
-      goto txt_fail;
-    }
-    ret = clock_gettime(CLOCK_REALTIME, &now_ts);
-    if (ret != 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Could not get current time: %s\n", strerror(errno));
-      goto player_fail;
-    }
-    ap2_device_info.ntpstart = ntpstart;
-    ns.sec = (uint32_t)(ntpstart >> 32);
-    ns.frac = (uint32_t)(ntpstart);
-    ntp_to_timespec(&ns, &ap2_device_info.start_ts);
-    // Add wait time in milliseconds
-    ap2_device_info.start_ts.tv_sec += wait / 1000;
-    ap2_device_info.start_ts.tv_nsec += (wait % 1000) * 1000000;
-    DPRINTF(E_DBG, L_MAIN, 
-      "Calculated timespec start time: sec=%ld.%ld. On basis of ntpstart of %" 
-      PRIu32 ".%.10" PRIu32 " and wait of %dms\n", 
-      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec, 
-      ns.sec, ns.frac, wait);
-    DPRINTF(E_DBG, L_MAIN, "Current timespec time:          sec=%ld.%ld\n", 
-      now_ts.tv_sec, now_ts.tv_nsec);
-    timespec_to_ntp(&ap2_device_info.start_ts, &ns);
-    DPRINTF(E_DBG, L_MAIN, "Calculated NTP start time: %" PRIu32 ".%.10" PRIu32 "\n", ns.sec, ns.frac);
-
-    
-    ap2_device_info.name = name;
-    ap2_device_info.hostname = hostname;
-    ap2_device_info.address = address;
-    ap2_device_info.port = port;
-    ap2_device_info.txt = txt_kv;
-    ap2_device_info.ntpstart = ntpstart;
-    ap2_device_info.wait = wait;
-    ap2_device_info.latency = latency;
-    ap2_device_info.volume = volume;
   }
+  ret = check_pipe(mass_named_pipes.metadata_pipe);
+  if (ret < 0) {
+    return EXIT_FAILURE;
+  }
+
+  CHECK_NULL(L_MAIN, txt_kv = keyval_alloc());
+
+  ret = parse_keyval(txt, txt_kv);
+  if (ret != 0){
+    DPRINTF(E_FATAL, L_MAIN, 
+      "Error: txt keyvals must be in format \"key=value\" \"key=value\" format in '--txt %s'\n", 
+      txt);
+    goto txt_fail;
+  }
+
+  if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
+    DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
+    ap2_device_info.start_ts.tv_sec = 0;
+    ap2_device_info.start_ts.tv_nsec = 0;
+  }
+  
+  ap2_device_info.name = name;
+  ap2_device_info.hostname = hostname;
+  ap2_device_info.address = address;
+  ap2_device_info.port = port;
+  ap2_device_info.txt = txt_kv;
+  ap2_device_info.volume = volume;
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
 
-  if (testrun) {
-    DPRINTF(E_INFO, L_MAIN, "%s version %s test run\n", PACKAGE, VERSION);
-  }
-  else {
-    DPRINTF(E_INFO, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
-  }
+  DPRINTF(E_INFO, L_MAIN, "%s version %s taking off\n", PACKAGE, VERSION);
 
 #if HAVE_DECL_AV_VERSION_INFO
   av_version = av_version_info();
@@ -859,7 +791,7 @@ main(int argc, char **argv)
     }
 
   /* Spawn player thread */
-  ret = player_init(&ap2_device_info.start_ts);
+  ret = player_init();
   if (ret != 0)
     {
       DPRINTF(E_FATAL, L_MAIN, "Player thread failed to start\n");
@@ -917,16 +849,7 @@ main(int argc, char **argv)
   event_add(sig_event, NULL);
 
   /* Run the loop */
-  if (!testrun)
-    event_base_dispatch(evbase_main);
-  else {
-    if (remove_pipes(TESTRUN_PIPE) == 0) {
-      fprintf(stdout, "%s check\n", PACKAGE);
-    }
-    else {
-      fprintf(stdout, "%s fail\n", PACKAGE);
-    }
-  }
+  event_base_dispatch(evbase_main);
 
   DPRINTF(E_INFO, L_MAIN, "Stopping gracefully\n");
   ret = EXIT_SUCCESS;
