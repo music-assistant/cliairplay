@@ -3048,7 +3048,7 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
 {
   struct output_device *device;
   plist_t response;
-  plist_t item;
+  // plist_t item;
   int ret;
 
 #if AIRPLAY_DUMP_TRAFFIC
@@ -3078,44 +3078,44 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
       return AIRPLAY_SEQ_ABORT;
     }
 
-  item = plist_dict_get_item(response, "statusFlags");
-  if (item)
-    plist_get_uint_val(item, &rs->statusflags);
+  // item = plist_dict_get_item(response, "statusFlags");
+  // if (item)
+  //   plist_get_uint_val(item, &rs->statusflags);
 
-  // Let's look for audioLatencies info
-  item = plist_dict_get_item(response, "audioLatencies");
-  if (item) {
-    plist_t latency_dict, audio_item;
-    uint32_t latency_array_size = plist_array_get_size(item);
-    uint32_t i;
-    uint32_t inputLatencyMicros, outputLatencyMicros, type;
-    char *audioType = NULL;
+  // // Let's look for audioLatencies info
+  // item = plist_dict_get_item(response, "audioLatencies");
+  // if (item) {
+  //   plist_t latency_dict, audio_item;
+  //   uint32_t latency_array_size = plist_array_get_size(item);
+  //   uint32_t i;
+  //   uint32_t inputLatencyMicros, outputLatencyMicros, type;
+  //   char *audioType = NULL;
 
-    for (i=0; i < latency_array_size; i++) {
-      if (PLIST_IS_DICT(plist_array_get_item(item, i))) {
-        latency_dict = plist_array_get_item(item, i);
-        audio_item = plist_dict_get_item(latency_dict, "audioType");
-        if (audio_item) {
-          plist_get_string_val(audio_item, &audioType);
-        }
-        else {
-          audioType = NULL;
-        }
-        inputLatencyMicros = plist_dict_get_uint(latency_dict, "inputLatencyMicros");
-        outputLatencyMicros = plist_dict_get_uint(latency_dict, "outputLatencyMicros");
-        type = plist_dict_get_uint(latency_dict, "type");
-        DPRINTF(E_DBG, L_AIRPLAY,
-          "audioLatencies array item [%" PRIu32 "]"
-          " audioType:%s"
-          ", inputLatencyMicros:%" PRIu32 
-          ", outputLatencyMicros:%" PRIu32 
-          ", type:%" PRIu32 
-          "\n", 
-          i, audioType, inputLatencyMicros, outputLatencyMicros, type
-        );
-      }
-    }
-  }
+  //   for (i=0; i < latency_array_size; i++) {
+  //     if (PLIST_IS_DICT(plist_array_get_item(item, i))) {
+  //       latency_dict = plist_array_get_item(item, i);
+  //       audio_item = plist_dict_get_item(latency_dict, "audioType");
+  //       if (audio_item) {
+  //         plist_get_string_val(audio_item, &audioType);
+  //       }
+  //       else {
+  //         audioType = NULL;
+  //       }
+  //       inputLatencyMicros = plist_dict_get_uint(latency_dict, "inputLatencyMicros");
+  //       outputLatencyMicros = plist_dict_get_uint(latency_dict, "outputLatencyMicros");
+  //       type = plist_dict_get_uint(latency_dict, "type");
+  //       DPRINTF(E_DBG, L_AIRPLAY,
+  //         "audioLatencies array item [%" PRIu32 "]"
+  //         " audioType:%s"
+  //         ", inputLatencyMicros:%" PRIu32 
+  //         ", outputLatencyMicros:%" PRIu32 
+  //         ", type:%" PRIu32 
+  //         "\n", 
+  //         i, audioType, inputLatencyMicros, outputLatencyMicros, type
+  //       );
+  //     }
+  //   }
+  // }
 
   plist_free(response);
 
