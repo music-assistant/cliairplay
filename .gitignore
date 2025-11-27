@@ -112,5 +112,5 @@ m4/lib-*.m4
 cliap2
 
 # Test harness
-test.sh
+test*
 .DS_Store
