@@ -93,6 +93,8 @@
 #define MASS_METADATA_ACTION_KEY   "ACTION"
 #define MASS_METADATA_PIN_KEY      "PIN"
 
+// #define DEBUG_MASS 1
+
 /* from cliap2.c */
 extern ap2_device_info_t ap2_device_info;
 extern mass_named_pipes_t mass_named_pipes;
@@ -1269,12 +1271,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_PIN) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from command pipe to %s\n", __func__, pipe_metadata.prepared.pin);
-    // We only support AirPlay2 at the moment. The below code will need to be changed if we add support
-    // for RAOP.
-    // TODO: @bradkeifer - migrate to player_speaker_authorize() re issue #37
-    // player_verification_kickoff(&pipe_metadata.prepared.pin, OUTPUT_TYPE_AIRPLAY);
     strncpy(ap2_device_info.pin, pipe_metadata.prepared.pin, sizeof(ap2_device_info.pin) - 1);
-    // player_speaker_enumerate(speaker_authorize_cb, &ap2_device_info.pin);
     mass_speaker_authorize();
     free(pipe_metadata.prepared.pin);
 
@@ -1485,7 +1482,7 @@ play(struct input_source *source)
   short flags;
   int ret;
   static size_t read_count = 0;
-#ifdef DEBUG_INPUT
+#ifdef DEBUG_MASS
   static size_t read_bytes = 0;
 #endif
 
@@ -1521,7 +1518,7 @@ play(struct input_source *source)
   }
 
   read_count++;
-#ifdef DEBUG_INPUT
+#ifdef DEBUG_MASS
   read_bytes += ret;
 #endif
 
@@ -1532,7 +1529,7 @@ play(struct input_source *source)
     flags |= INPUT_FLAG_SYNC;
   }
 
-#ifdef DEBUG_INPUT
+#ifdef DEBUG_MASS
   DPRINTF(E_DBG, L_PLAYER, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, read_bytes);
 #endif
   input_write(source->evbuf, &source->quality, flags);
