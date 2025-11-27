@@ -12,7 +12,7 @@ typedef struct ap2_device_info
   struct keyval *txt;
   char pin[5];
   const char *auth_key;
-  struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_REALTIME)
+  struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_MONOTONIC)
   int volume;
 } ap2_device_info_t;
 

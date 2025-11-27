@@ -1280,7 +1280,7 @@ playback_cb(int fd, short what, void *arg)
   int nsamples;
   int i;
   int ret;
-#ifdef DEBUG_INPUT
+#ifdef DEBUG_PLAYER
   static size_t write_count = 0;
   static size_t write_bytes = 0;
 #endif
@@ -1357,7 +1357,7 @@ playback_cb(int fd, short what, void *arg)
     // DPRINTF(E_DBG, L_PLAYER, "%s:Read %d bytes (%d samples) from source for playback at %ld.%ld\n", 
     //   __func__, nbytes, nsamples, pb_session.pts.tv_sec, pb_session.pts.tv_nsec);
     outputs_write(pb_session.buffer, nbytes, nsamples, &pb_session.quality, &pb_session.pts);
-#ifdef DEBUG_INPUT
+#ifdef DEBUG_PLAYER
     write_count++;
     write_bytes += nbytes;
     DPRINTF(E_DBG, L_PLAYER, "%s:write_count:%zu write_bytes:%zu to output\n", __func__, write_count, write_bytes);
