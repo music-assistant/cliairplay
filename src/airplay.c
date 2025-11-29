@@ -3048,7 +3048,7 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
 {
   struct output_device *device;
   plist_t response;
-  // plist_t item;
+  plist_t item;
   int ret;
 
 #if AIRPLAY_DUMP_TRAFFIC
@@ -3078,9 +3078,9 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
       return AIRPLAY_SEQ_ABORT;
     }
 
-  // item = plist_dict_get_item(response, "statusFlags");
-  // if (item)
-  //   plist_get_uint_val(item, &rs->statusflags);
+  item = plist_dict_get_item(response, "statusFlags");
+  if (item)
+    plist_get_uint_val(item, &rs->statusflags);
 
   // // Let's look for audioLatencies info
   // item = plist_dict_get_item(response, "audioLatencies");
