@@ -40,6 +40,7 @@ OWNTONE_SRC = \
     ../owntone-server/src/evthr.c \
     ../owntone-server/src/evrtsp/rtsp.c \
     ../owntone-server/src/http.c \
+    ../owntone-server/src/input.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
@@ -49,20 +50,19 @@ OWNTONE_SRC = \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
+    ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
+    ../owntone-server/src/outputs/rtp_common.c \
+    ../owntone-server/src/player.c \
     ../owntone-server/src/transcode.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
 
 cliap2_SOURCES = \
-    airplay.c \
     cliap2.c \
     conffile.c \
-    input.c \
     mass.c \
-    player.c \
-    rtp_common.c \
     wrappers.c \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
