@@ -263,8 +263,8 @@ pipe_free(struct pipe *pipe)
   free(pipe);
 }
 
-/** Opens a file for reading and validates it is a FIFO pipe
- * @param path    the pathname of the file to open
+/** Opens a file for reading and validates it is a FIFO pipe (or stdin if path is "-")
+ * @param path    the pathname of the file to open, or "-" for stdin
  * @param silent  suppress fstat error if it occurs
  * @returns the file descriptor on success, -1 on failure
  */
@@ -273,6 +273,12 @@ pipe_open(const char *path, bool silent)
 {
   struct stat sb;
   int fd;
+
+  // Handle stdin special case
+  if (strcmp(path, "-") == 0) {
+    DPRINTF(E_INFO, L_PLAYER, "Using stdin for audio input\n");
+    return STDIN_FILENO;
+  }
 
   DPRINTF(E_SPAM, L_PLAYER, "(Re)opening pipe: '%s'\n", path);
 
@@ -304,27 +310,53 @@ pipe_open(const char *path, bool silent)
 
 /** Close a pipe
  * @param fd  file descriptor of the pipe to close
+ * @note  Does not close stdin (fd 0)
  */
 static void
 pipe_close(int fd)
 {
-  if (fd >= 0)
+  if (fd > 0)  // Don't close stdin
     close(fd);
+}
+
+/** Check if a path refers to stdin
+ * @param path  the path to check
+ * @returns true if path is "-" (stdin), false otherwise
+ */
+static bool
+is_stdin(const char *path)
+{
+  return (strcmp(path, "-") == 0);
 }
 
 /** Add a libevent read event for the pipe
  * @param pipe    the pipe to watch for data to read
  * @param evbase  the event base to add the event to
  * @returns 0 on success, -1 on failure
+ * @note For stdin, no libevent watch is added - playback is started immediately
  */
 static int
 watch_add(struct pipe *pipe, struct event_base *evbase)
 {
+  int ret;
+
   pipe->fd = pipe_open(pipe->path, 0);
   if (pipe->fd < 0)
     return -1;
 
-  pipe->ev = event_new(evbase, pipe->fd, EV_READ, pipe->cb, pipe);
+  DPRINTF(E_DBG, L_PLAYER, "%s: Opened pipe '%s' with fd %d\n", __func__, pipe->path, pipe->fd);
+
+  // For stdin, don't use libevent - stdin is always "ready" which causes
+  // the callback to fire continuously. Instead, just return success and
+  // let the caller start playback directly.
+  if (is_stdin(pipe->path))
+    {
+      DPRINTF(E_INFO, L_PLAYER, "%s: Using stdin - skipping libevent watch\n", __func__);
+      pipe->ev = NULL;
+      return 0;
+    }
+
+  pipe->ev = event_new(evbase, pipe->fd, EV_READ | EV_PERSIST, pipe->cb, pipe);
   if (!pipe->ev)
     {
       DPRINTF(E_LOG, L_PLAYER, "Could not watch pipe for new data '%s'\n", pipe->path);
@@ -332,7 +364,8 @@ watch_add(struct pipe *pipe, struct event_base *evbase)
       return -1;
     }
 
-  event_add(pipe->ev, NULL);
+  ret = event_add(pipe->ev, NULL);
+  DPRINTF(E_DBG, L_PLAYER, "%s: event_add returned %d for pipe '%s'\n", __func__, ret, pipe->path);
 
   return 0;
 }
@@ -854,7 +887,7 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
 
   ret = player_get_status(&status);
   if (status.id == pipe->id) {
-    DPRINTF(E_INFO, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n", 
+    DPRINTF(E_SPAM, L_PLAYER, "%s:Pipe '%s' already playing with status %s\n",
       __func__, pipe->path, play_status_str(status.status)
     );
     return; // We are already playing the pipe
@@ -932,8 +965,33 @@ pipe_watch_update(void *arg, int *retval)
 
       if (!pipelist_find(pipe_watch_list, pipe->id))
 	{
-	  watch_add(pipe, evbase_audio_pipe);
-	  pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
+	  int ret = watch_add(pipe, evbase_audio_pipe);
+	  DPRINTF(E_DBG, L_PLAYER, "pipe_watch_update: watch_add for '%s' returned %d\n", pipe->path, ret);
+	  if (ret == 0)
+	    {
+	      pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
+	      // For stdin (no libevent watch), start playback immediately
+	      // For named pipes, manually trigger the read callback to check for already-buffered data
+	      if (pipe->ev)
+	        {
+	          DPRINTF(E_DBG, L_PLAYER, "pipe_watch_update: Manually triggering pipe_read_cb for '%s'\n", pipe->path);
+	          event_active(pipe->ev, EV_READ, 0);
+	        }
+	      else if (is_stdin(pipe->path))
+	        {
+	          // For stdin, start playback immediately - no libevent watch needed
+	          DPRINTF(E_INFO, L_PLAYER, "pipe_watch_update: Starting playback for stdin\n");
+	          pipe_id = pipe->id;
+	          player_playback_stop();
+	          ret = player_playback_start_byid(pipe->id);
+	          if (ret < 0)
+	            DPRINTF(E_LOG, L_PLAYER, "pipe_watch_update: Failed to start playback for stdin\n");
+	          else
+	            DPRINTF(E_INFO, L_PLAYER, "restarting w/o pause\n");
+	        }
+	    }
+	  else
+	    DPRINTF(E_LOG, L_PLAYER, "pipe_watch_update: Failed to watch pipe '%s'\n", pipe->path);
 	}
       else
 	{
@@ -967,17 +1025,38 @@ pipe_thread_run(void *arg)
 
 /**
  * Establish event and commands base for the mass_aud thread and then create the thread.
+ * @note On macOS, kqueue has known issues with FIFOs (named pipes) - it may not properly
+ *       detect when data is written from another process. We use event_config to avoid
+ *       kqueue for this event base on macOS.
  */
 static void
 pipe_thread_start(void)
 {
+  struct event_config *cfg;
 
   DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
 
+#ifdef __APPLE__
+  // On macOS, avoid kqueue for FIFO monitoring - it has issues detecting writes from other processes
+  cfg = event_config_new();
+  if (cfg)
+    {
+      event_config_avoid_method(cfg, "kqueue");
+      evbase_audio_pipe = event_base_new_with_config(cfg);
+      event_config_free(cfg);
+    }
+  else
+    {
+      evbase_audio_pipe = event_base_new();
+    }
+  CHECK_NULL(L_PLAYER, evbase_audio_pipe);
+  DPRINTF(E_DBG, L_PLAYER, "%s: Using event method: %s\n", __func__, event_base_get_method(evbase_audio_pipe));
+#else
   CHECK_NULL(L_PLAYER, evbase_audio_pipe = event_base_new());
+#endif
   CHECK_NULL(L_PLAYER, cmdbase = commands_base_new(evbase_audio_pipe, NULL));
   CHECK_ERR(L_PLAYER, pthread_create(&tid_audio_pipe, NULL, pipe_thread_run, NULL));
-  
+
 }
 
 /**
@@ -1501,7 +1580,7 @@ play(struct input_source *source)
     DPRINTF(E_INFO, L_PLAYER, "%s:end of stream reached\n", __func__);
     return -1;
   }
-  else if ((ret == 0) || ((ret < 0) && (errno == EAGAIN))) {
+  else if ((ret < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
     input_wait();
     return 0; // Loop
   }
