@@ -234,15 +234,31 @@ rtp_sync_is_time(struct rtp_session *session)
   return false;
 }
 
+// Example first raw packet, Spotify iOS Airplay 2 (28 bytes)
+// 90d70006 cbbbfe40 0001fd16 85aea593 cbbd2bb7 f8428888 8f4f0008
+//
+//    0                   1                   2                   3
+//    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |V=2|P|M|   -   |       PT      |               ?               |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |          rtptime of first packet minus latency of 77075       |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                          Wall clock time                      |
+//   |                                                               |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                     rtptime of first packet                   |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                            Clock ID                           |
+//   |                                                               |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 struct rtp_packet *
 rtp_sync_packet_next(struct rtp_session *session, struct rtcp_timestamp cur_stamp, char type)
 {
-  struct timespec ts;
-  uint64_t ptp_ns;
-  uint32_t rtptime;
   uint32_t cur_pos;
-  uint32_t hi;
-  uint32_t lo;
+  uint64_t cur_ns;
+  uint32_t rtptime;
+  uint64_t clock_id;
 
   if (!session->sync_packet_next.data)
     {
@@ -250,39 +266,26 @@ rtp_sync_packet_next(struct rtp_session *session, struct rtcp_timestamp cur_stam
       session->sync_packet_next.data_len = RTCP_SYNC_PACKET_LEN;
     }
 
-  session->sync_packet_next.data[0] = type;
-  session->sync_packet_next.data[1] = 0xd4;
+  session->sync_packet_next.data[0] = type; // 0x90 with stream start marker (M=1)
+  session->sync_packet_next.data[1] = 0xd7; // PT 215 Time announce
+
   session->sync_packet_next.data[2] = 0x00;
-  session->sync_packet_next.data[3] = 0x07;
-
-  // PTP sync packet format (28 bytes):
-  //   0-3:   header (type, 0xd4, 0x00, 0x07)
-  //   4-7:   cur_pos (rtptime that should be playing now)
-  //   8-15:  PTP timestamp in nanoseconds (64-bit big-endian) based on clock_id
-  //   16-23: same PTP timestamp repeated
-  //   24-27: rtptime (next rtptime to be sent)
-
-  // Convert cur_stamp.ts (which is CLOCK_MONOTONIC based) to PTP nanoseconds
-  // using the clock_id as a base
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  ptp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+  session->sync_packet_next.data[3] = 0x06;
 
   cur_pos = htobe32(cur_stamp.pos);
   memcpy(session->sync_packet_next.data + 4, &cur_pos, 4);
 
-  hi = htobe32((uint32_t)(ptp_ns >> 32));
-  lo = htobe32((uint32_t)(ptp_ns & 0xFFFFFFFF));
-
-  // First PTP timestamp
-  memcpy(session->sync_packet_next.data + 8, &hi, 4);
-  memcpy(session->sync_packet_next.data + 12, &lo, 4);
-
-  // Second PTP timestamp (same)
-  memcpy(session->sync_packet_next.data + 16, &hi, 4);
-  memcpy(session->sync_packet_next.data + 20, &lo, 4);
+  cur_ns = cur_stamp.ts.tv_sec;
+  cur_ns *= 1000000000;
+  cur_ns += cur_stamp.ts.tv_nsec;
+  cur_ns = htobe64(cur_ns);
+  memcpy(session->sync_packet_next.data + 8, &cur_ns, 8);
 
   rtptime = htobe32(session->pos);
-  memcpy(session->sync_packet_next.data + 24, &rtptime, 4);
+  memcpy(session->sync_packet_next.data + 16, &rtptime, 4);
+
+  clock_id = htobe64(session->clock_id);
+  memcpy(session->sync_packet_next.data + 20, &clock_id, 8);
 
   return &session->sync_packet_next;
 }

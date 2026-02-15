@@ -172,6 +172,15 @@ PKG_CHECK_EXISTS([libplist],
 	[OWNTONE_MODULES_CHECK([OWNTONE], [LIBPLIST], [libplist-2.0],
 		[plist_dict_get_item], [plist/plist.h])])
 
+# Check for plist_mem_free (available in libplist >= 2.3, not in 2.2)
+save_LIBS="$LIBS"
+save_CFLAGS="$CFLAGS"
+LIBS="$LIBPLIST_LIBS $LIBS"
+CFLAGS="$LIBPLIST_CFLAGS $CFLAGS"
+AC_CHECK_FUNCS([plist_mem_free])
+LIBS="$save_LIBS"
+CFLAGS="$save_CFLAGS"
+
 AM_PATH_LIBGCRYPT([1:1.7.0])
 OWNTONE_FUNC_REQUIRE([OWNTONE], [GNU Crypt Library], [LIBGCRYPT], [gcrypt],
 	[gcry_control], [gcrypt.h])

@@ -43,10 +43,13 @@
 #include <plist/plist.h>
 
 // libplist 2.2 (Debian bookworm) doesn't have plist_new_int (added in 2.3+).
-// Use a macro so it's always textually replaced (static inline can still emit
-// an external reference with some GCC optimization levels).
 #ifndef plist_new_int
 # define plist_new_int(val) plist_new_uint((uint64_t)(val))
+#endif
+
+// libplist < 2.3 doesn't have plist_mem_free; use free() as fallback.
+#ifndef HAVE_PLIST_MEM_FREE
+# define plist_mem_free(ptr) free(ptr)
 #endif
 
 #include "plist_wrap.h"
@@ -2161,7 +2164,8 @@ packets_sync_send(struct airplay_master_session *rms)
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
 
   // Just used for logging, the clock shouldn't be too far from rms->cur_stamp.ts
-  clock_gettime(CLOCK_REALTIME, &ts);
+  // Must use CLOCK_MONOTONIC since cur_stamp.ts is CLOCK_MONOTONIC based
+  clock_gettime(CLOCK_MONOTONIC, &ts);
 
   for (rs = airplay_sessions; rs; rs = rs->next)
     {
@@ -2728,7 +2732,7 @@ payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *r
   plist_to_xml(root, &xml, &xml_len);
 
   DPRINTF(E_LOG, L_AIRPLAY, "plist is %s\n", xml);
-  plist_to_xml_free(xml);
+  plist_mem_free(xml);
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
