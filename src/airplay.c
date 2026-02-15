@@ -1992,17 +1992,6 @@ packet_send(struct airplay_session *rs, struct rtp_packet *pkt)
       return -1;
     }
 
-  // re-comment this out when debugged
-  // count++;
-  // if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
-  // DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
-  //   rs->master_session->rtp_session->seqnum,
-  //   rs->master_session->rtp_session->pos,
-  //   pkt->header[1],
-  //   rs->master_session->rtp_session->pktbuf_len
-  //   );
-  // }
-
   return 0;
 }
 
@@ -2725,14 +2714,6 @@ payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *r
 
   // groupUUID
   // groupContainsGroupLeader
-
-  // Debug: log plist content (use plist_to_xml for libplist 2.2 compat)
-  char *xml;
-  uint32_t xml_len;
-  plist_to_xml(root, &xml, &xml_len);
-
-  DPRINTF(E_LOG, L_AIRPLAY, "plist is %s\n", xml);
-  plist_mem_free(xml);
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
