@@ -38,7 +38,7 @@
 #include "rtp_common.h"
 
 #define RTP_HEADER_LEN        12
-#define RTCP_SYNC_PACKET_LEN  20 
+#define RTCP_SYNC_PACKET_LEN  28
 
 // NTP timestamp definitions
 #define FRAC             4294967296. // 2^32 as a double
@@ -65,16 +65,18 @@ ntp_to_timespec(struct ntp_timestamp *ns, struct timespec *ts)
 }
 */
 struct rtp_session *
-rtp_session_new(struct media_quality *quality, int pktbuf_size, int sync_each_nsamples)
+rtp_session_new(struct media_quality *quality, int pktbuf_size, int sync_each_nsamples, uint64_t clock_id)
 {
   struct rtp_session *session;
 
   CHECK_NULL(L_PLAYER, session = calloc(1, sizeof(struct rtp_session)));
 
-  // Random SSRC ID, RTP time start and sequence start
-  gcry_randomize(&session->ssrc_id, sizeof(session->ssrc_id), GCRY_STRONG_RANDOM);
+  // PTP: SSRC should be 0 for PTP timing
+  session->ssrc_id = 0;
   gcry_randomize(&session->pos, sizeof(session->pos), GCRY_STRONG_RANDOM);
   gcry_randomize(&session->seqnum, sizeof(session->seqnum), GCRY_STRONG_RANDOM);
+
+  session->clock_id = clock_id;
 
   if (quality)
     session->quality = *quality;
@@ -154,7 +156,7 @@ rtp_packet_next(struct rtp_session *session, size_t payload_len, int samples, ch
   //   |           synchronization source (SSRC) identifier            |
   //   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   pkt->header[0] = 0x80; // Version = 2, P, X and CC are 0
-  pkt->header[1] = (marker_bit << 7) | payload_type; // M and payload type
+  pkt->header[1] = payload_type; // Payload type (no marker bit for PTP)
 
   seq = htobe16(session->seqnum);
   memcpy(pkt->header + 2, &seq, 2);
@@ -235,9 +237,12 @@ rtp_sync_is_time(struct rtp_session *session)
 struct rtp_packet *
 rtp_sync_packet_next(struct rtp_session *session, struct rtcp_timestamp cur_stamp, char type)
 {
-  struct ntp_timestamp cur_ts;
+  struct timespec ts;
+  uint64_t ptp_ns;
   uint32_t rtptime;
   uint32_t cur_pos;
+  uint32_t hi;
+  uint32_t lo;
 
   if (!session->sync_packet_next.data)
     {
@@ -250,31 +255,34 @@ rtp_sync_packet_next(struct rtp_session *session, struct rtcp_timestamp cur_stam
   session->sync_packet_next.data[2] = 0x00;
   session->sync_packet_next.data[3] = 0x07;
 
-  timespec_to_ntp(&cur_stamp.ts, &cur_ts);
+  // PTP sync packet format (28 bytes):
+  //   0-3:   header (type, 0xd4, 0x00, 0x07)
+  //   4-7:   cur_pos (rtptime that should be playing now)
+  //   8-15:  PTP timestamp in nanoseconds (64-bit big-endian) based on clock_id
+  //   16-23: same PTP timestamp repeated
+  //   24-27: rtptime (next rtptime to be sent)
+
+  // Convert cur_stamp.ts (which is CLOCK_MONOTONIC based) to PTP nanoseconds
+  // using the clock_id as a base
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  ptp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 
   cur_pos = htobe32(cur_stamp.pos);
   memcpy(session->sync_packet_next.data + 4, &cur_pos, 4);
 
-  cur_ts.sec = htobe32(cur_ts.sec);
-  cur_ts.frac = htobe32(cur_ts.frac);
-  memcpy(session->sync_packet_next.data + 8, &cur_ts.sec, 4);
-  memcpy(session->sync_packet_next.data + 12, &cur_ts.frac, 4);
+  hi = htobe32((uint32_t)(ptp_ns >> 32));
+  lo = htobe32((uint32_t)(ptp_ns & 0xFFFFFFFF));
+
+  // First PTP timestamp
+  memcpy(session->sync_packet_next.data + 8, &hi, 4);
+  memcpy(session->sync_packet_next.data + 12, &lo, 4);
+
+  // Second PTP timestamp (same)
+  memcpy(session->sync_packet_next.data + 16, &hi, 4);
+  memcpy(session->sync_packet_next.data + 20, &lo, 4);
 
   rtptime = htobe32(session->pos);
-  memcpy(session->sync_packet_next.data + 16, &rtptime, 4);
-
-  // DPRINTF(E_DBG, L_AIRPLAY, 
-  //   "SYNC PACKET cur_ts:%ld.%ld, cur_pos/rtptime_latency:%" PRIu32 ", ntp:%" PRIu32 ".%" PRIu32 ", rtptime:%" PRIu32 ", type:0x%x, sync_counter:%d "
-  //   "session->seqnum:%" PRIu16 ", latency_frames:%d\n",
-  //   cur_stamp.ts.tv_sec, cur_stamp.ts.tv_nsec,
-  //   cur_stamp.pos,
-  //   cur_ts.sec, cur_ts.frac,
-  //   session->pos,
-  //   session->sync_packet_next.data[0],
-  //   session->sync_counter,
-  //   session->seqnum,
-  //   session->pos - cur_stamp.pos
-  //   );
+  memcpy(session->sync_packet_next.data + 24, &rtptime, 4);
 
   return &session->sync_packet_next;
 }

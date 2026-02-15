@@ -39,6 +39,16 @@
 #include <event2/buffer.h>
 #include <gcrypt.h>
 
+// Include plist header first to check version, then add compat shims
+#include <plist/plist.h>
+
+// libplist 2.2 (Debian bookworm) doesn't have plist_new_int (added in 2.3+).
+// Use a macro so it's always textually replaced (static inline can still emit
+// an external reference with some GCC optimization levels).
+#ifndef plist_new_int
+# define plist_new_int(val) plist_new_uint((uint64_t)(val))
+#endif
+
 #include "plist_wrap.h"
 
 #include "evrtsp/evrtsp.h"
@@ -52,6 +62,7 @@
 #include "dmap_common.h"
 #include "rtp_common.h"
 #include "transcode.h"
+#include "ptpd.h"
 #include "outputs.h"
 
 #include "airplay_events.h"
@@ -83,13 +94,20 @@
 // alignment, which improves performance of some encoders
 #define AIRPLAY_SAMPLES_PER_PACKET              352
 
+// 0x60 Real Time Audio, 0x67 Buffered
 #define AIRPLAY_RTP_PAYLOADTYPE                 0x60
+
+// Quoting shairport-sync's rtp.c:
+// The value of 11025 (0.25 seconds) is a guess based on the "Audio-Latency"
+// parameter returned by an AE. Sigh, it would be nice to have a published
+// protocol...
+#define AIRPLAY_AUDIO_LATENCY_MS                250
 
 // For transient pairing the key_len will be 64 bytes, but only 32 are used for
 // audio payload encryption. For normal pairing the key is 32 bytes.
 #define AIRPLAY_AUDIO_KEY_LEN 32
 
-// How many RTP packets keep in a buffer for retransmission
+// How many RTP packets to buffer for retransmission
 #define AIRPLAY_PACKET_BUFFER_SIZE    1000
 
 #define AIRPLAY_MD_DELAY_STARTUP      15360
@@ -202,7 +220,7 @@ struct airplay_extra
 struct airplay_master_session
 {
   struct evbuffer *input_buffer;
-  int input_buffer_samples;
+  uint32_t input_buffer_samples;
 
   // ALAC encoder and buffer for encoded data
   struct encode_ctx *encode_ctx;
@@ -214,14 +232,14 @@ struct airplay_master_session
 
   uint8_t *rawbuf;
   size_t rawbuf_size;
-  int samples_per_packet;
+  uint32_t samples_per_packet;
 
   struct media_quality quality;
 
   // Number of samples that we tell the output to buffer (this will mean that
   // the position that we send in the sync packages are offset by this amount
   // compared to the rtptimes of the corresponding RTP packages we are sending)
-  int output_buffer_samples;
+  uint32_t output_buffer_samples;
 
   struct airplay_master_session *next;
 };
@@ -253,6 +271,8 @@ struct airplay_session
   char session_url[128];
   char session_uuid[37];
 
+  char group_uuid[37];
+
   char *realm;
   char *nonce;
   const char *password;
@@ -265,7 +285,14 @@ struct airplay_session
 
   int volume;
 
-  char *local_address;
+  // device->offset_ms in samples (user config for correction of static
+  // amplifier or DSP delays)
+  int offset_samples;
+
+  char *local_v4_address;
+  char *local_v6_address;
+  char local_mac_address[18];
+
   unsigned short data_port;
   unsigned short control_port;
   unsigned short events_port;
@@ -286,6 +313,8 @@ struct airplay_session
 
   struct airplay_service *timing_svc;
   struct airplay_service *control_svc;
+
+  int ptpd_slave_id;
 
   struct airplay_session *next;
 };
@@ -452,8 +481,11 @@ static struct timeval keep_alive_tv = { AIRPLAY_KEEP_ALIVE_INTERVAL, 0 };
 static struct airplay_master_session *airplay_master_sessions;
 static struct airplay_session *airplay_sessions;
 
-/* Our own device ID */
+/* Our own device ID, name and user agent */
 static uint64_t airplay_device_id;
+static const char *airplay_client_name;
+static const char *airplay_user_agent;
+static char airplay_ptp_clock_uuid[37];
 
 // Forwards
 static int
@@ -860,8 +892,6 @@ static int
 request_headers_add(struct evrtsp_request *req, struct airplay_session *rs, enum evrtsp_cmd_type req_method)
 {
   char buf[64];
-  const char *user_agent;
-  const char *client_name;
   const char *method;
   const char *url;
   int ret;
@@ -871,11 +901,8 @@ request_headers_add(struct evrtsp_request *req, struct airplay_session *rs, enum
 
   rs->cseq++;
 
-  user_agent = cfg_getstr(cfg_getsec(cfg, "general"), "user_agent");
-  evrtsp_add_header(req->output_headers, "User-Agent", user_agent);
-
-  client_name = cfg_getstr(cfg_getsec(cfg, "library"), "name");
-  evrtsp_add_header(req->output_headers, "X-Apple-Client-Name", client_name);
+  evrtsp_add_header(req->output_headers, "User-Agent", airplay_user_agent);
+  evrtsp_add_header(req->output_headers, "X-Apple-Client-Name", airplay_client_name);
 
   // If we have a realm + nonce it means that the device told us in the reply to
   // SETUP that www authentication with password is required
@@ -1129,7 +1156,9 @@ static struct airplay_master_session *
 master_session_make(struct media_quality *quality)
 {
   struct airplay_master_session *rms;
+  uint64_t buffer_duration_ms;
   struct transcode_encode_setup_args encode_args = { .profile = XCODE_ALAC, .quality = quality };
+  uint64_t clock_id;
   int ret;
 
   // First check if we already have a suitable session
@@ -1149,7 +1178,9 @@ master_session_make(struct media_quality *quality)
 
   CHECK_NULL(L_AIRPLAY, rms = calloc(1, sizeof(struct airplay_master_session)));
 
-  rms->rtp_session = rtp_session_new(quality, AIRPLAY_PACKET_BUFFER_SIZE, 0);
+  clock_id = ptpd_clock_id_get();
+
+  rms->rtp_session = rtp_session_new(quality, AIRPLAY_PACKET_BUFFER_SIZE, 0, clock_id);
   if (!rms->rtp_session)
     {
       goto error;
@@ -1170,10 +1201,17 @@ master_session_make(struct media_quality *quality)
       goto error;
     }
 
+  buffer_duration_ms = outputs_buffer_duration_ms_get();
+  if (buffer_duration_ms <= AIRPLAY_AUDIO_LATENCY_MS)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Configuration of start_buffer_ms must be higher than min latency (%d)\n", AIRPLAY_AUDIO_LATENCY_MS);
+      goto error;
+    }
+
   rms->quality = *quality;
   rms->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
   rms->rawbuf_size = STOB(rms->samples_per_packet, quality->bits_per_sample, quality->channels);
-  rms->output_buffer_samples = OUTPUTS_BUFFER_DURATION * quality->sample_rate;
+  rms->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, rms->rawbuf = malloc(rms->rawbuf_size));
   CHECK_NULL(L_AIRPLAY, rms->input_buffer = evbuffer_new());
@@ -1210,13 +1248,16 @@ session_free(struct airplay_session *rs)
   if (rs->server_fd >= 0)
     close(rs->server_fd);
 
+  ptpd_slave_remove(rs->ptpd_slave_id);
+
   chacha_close(rs->packet_cipher_hd);
 
   pair_setup_free(rs->pair_setup_ctx);
   pair_verify_free(rs->pair_verify_ctx);
   pair_cipher_free(rs->control_cipher_ctx);
 
-  free(rs->local_address);
+  free(rs->local_v4_address);
+  free(rs->local_v6_address);
   free(rs->realm);
   free(rs->nonce);
   free(rs->address);
@@ -1450,6 +1491,8 @@ session_ids_set(struct airplay_session *rs)
 {
   char *address = NULL;
   char *intf;
+  char ifname[64];
+  uint8_t mac[6];
   unsigned short port;
   int family;
   int ret;
@@ -1458,7 +1501,7 @@ session_ids_set(struct airplay_session *rs)
   evrtsp_connection_get_local_address(rs->ctrl, &address, &port, &family);
   if (!address || (port == 0))
     {
-      DPRINTF(E_LOG, L_AIRPLAY, "Could not determine local address\n");
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not determine local v4 address\n");
       goto error;
     }
 
@@ -1468,25 +1511,46 @@ session_ids_set(struct airplay_session *rs)
       *intf = '\0';
       intf++;
     }
+  else
+    {
+      ret = net_if_get(ifname, sizeof(ifname), address);
+      intf = (ret < 0) ? NULL : ifname;
+    }
 
-  DPRINTF(E_DBG, L_AIRPLAY, "Local address: %s (LL: %s) port %d\n", address, (intf) ? intf : "no", port);
+  ret = net_mac_get(mac, sizeof(mac), intf);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not determine local MAC address\n");
+      goto error;
+    }
+
+  ret = snprintf(rs->local_mac_address, sizeof(rs->local_mac_address), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  if ((ret < 0) || (ret >= sizeof(rs->local_mac_address)))
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Session URL length exceeds 127 characters\n");
+      goto error;
+    }
+
+  DPRINTF(E_DBG, L_AIRPLAY, "Local address: %s port %d, if %s, mac %s\n", address, port, intf, rs->local_mac_address);
 
   // Session UUID, ID and session URL
   uuid_make(rs->session_uuid);
+  uuid_make(rs->group_uuid);
 
   gcry_randomize(&rs->session_id, sizeof(rs->session_id), GCRY_STRONG_RANDOM);
 
-  if (family == AF_INET)
-    ret = snprintf(rs->session_url, sizeof(rs->session_url), "rtsp://%s/%u", address, rs->session_id);
-  else
-    ret = snprintf(rs->session_url, sizeof(rs->session_url), "rtsp://[%s]/%u", address, rs->session_id);
+  ret = snprintf(rs->session_url, sizeof(rs->session_url), (family == AF_INET) ? "rtsp://%s/%u" : "rtsp://[%s]/%u", address, rs->session_id);
   if ((ret < 0) || (ret >= sizeof(rs->session_url)))
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Session URL length exceeds 127 characters\n");
       goto error;
     }
 
-  rs->local_address = address;
+  if (family == AF_INET)
+    rs->local_v4_address = address;
+  else
+    rs->local_v6_address = address;
+
   return 0;
 
  error:
@@ -1538,6 +1602,7 @@ session_make(struct output_device *rd, int callback_id)
 
   rs->devname = strdup(rd->name);
   rs->volume = rd->volume;
+  rs->offset_samples = rd->offset_ms * rd->quality.sample_rate / 1000;
 
   rs->state = AIRPLAY_STATE_STOPPED;
   rs->reqs_in_flight = 0;
@@ -1990,6 +2055,16 @@ packets_resend(struct airplay_session *rs, uint16_t seqnum, int len)
 	pkt_missing = true;
     }
 
+  // Seems iOS returns 80 d6 00 01 bd 0d 00 00 over control when packet not in buffer? And also
+  // resends over control, which my amp doesn't understand, since it keeps asking. Resend over control (bd0d=seqnum 48397):
+  // 0x000000: 80 d6 00 ee 80 60 bd 0d b4 04 4e c0 00 00 00 00 .....`....N.....
+  // 0x000010: 99 cf 26 e3 fa a0 ed da 57 50 82 c8 be 1b 81 9e ..&.....WP......
+  // 0x000020: a4 a5 c5 3c 07 83 71 21 e2 91 89 6a 81 bb b0 d3 ...<..q!...j....
+  // 0x000030: f4 0e 5c 7f 84 14 1f 0d e6 63 83 26 7d b3 95 24 ..\......c.&}..$
+  // 0x000040: 0d 52 11 ef a5 fb 6f 9d 86 8e 69 28 79 0e 73 5b .R....o...i(y.s[
+  // 0x000050: 46 1f 04 2d 6b 7e 7f 1d 1e a6 46 04 7b f8 e3 80 F..-k~....F.{...
+  // 0x000060: 85 ff 11 4f f2 b5 de f7 cf 0f 7e 4b 55 e5 7b 25 ...O......~KU.{%
+  // 0x000070: 13 9a 5f c3 4e f4 9d d1 f5 cb...
   if (pkt_missing)
     DPRINTF(E_WARN, L_AIRPLAY, "Device '%s' retransmit request for seqnum %" PRIu16 " (len %d) is outside buffer range (next seqnum %" PRIu16 ", len %zu)\n",
       rs->devname, seqnum, len, rtp_session->seqnum, rtp_session->pktbuf_len);
@@ -2018,7 +2093,7 @@ packets_send(struct airplay_master_session *rms)
       // Device just joined
       if (rs->state == AIRPLAY_STATE_CONNECTED)
 	{
-	  pkt->header[1] = (1 << 7) | AIRPLAY_RTP_PAYLOADTYPE;
+	  pkt->header[1] = AIRPLAY_RTP_PAYLOADTYPE;
 	  packet_send(rs, pkt);
 	}
       else if (rs->state == AIRPLAY_STATE_STREAMING)
@@ -2076,6 +2151,7 @@ static void
 packets_sync_send(struct airplay_master_session *rms)
 {
   struct rtp_packet *sync_pkt;
+  struct rtcp_timestamp cur_stamp;
   struct airplay_session *rs;
   struct timespec ts;
   bool is_sync_time;
@@ -2085,28 +2161,34 @@ packets_sync_send(struct airplay_master_session *rms)
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
 
   // Just used for logging, the clock shouldn't be too far from rms->cur_stamp.ts
-  clock_gettime(CLOCK_MONOTONIC, &ts);
+  clock_gettime(CLOCK_REALTIME, &ts);
 
   for (rs = airplay_sessions; rs; rs = rs->next)
     {
       if (rs->master_session != rms)
 	continue;
 
+      cur_stamp = rms->cur_stamp;
+
+      // Apply user configured offset
+      cur_stamp.pos -= rs->offset_samples;
+
       // A device has joined and should get an init sync packet
       if (rs->state == AIRPLAY_STATE_CONNECTED)
 	{
-	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x90);
+	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, cur_stamp, 0x90);
 	  control_packet_send(rs, sync_pkt);
 
+	  DPRINTF(E_DBG, L_AIRPLAY, "Start sync packet sent to '%s': offset=%d, cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 "\n",
+	    rs->devname, rs->offset_samples, cur_stamp.pos, (long)cur_stamp.ts.tv_sec, (long)cur_stamp.ts.tv_nsec, (long)ts.tv_sec, (long)ts.tv_nsec, rms->rtp_session->pos);
 	}
       else if (is_sync_time && rs->state == AIRPLAY_STATE_STREAMING)
 	{
-	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x80);
+	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, cur_stamp, 0x80);
 	  control_packet_send(rs, sync_pkt);
-
 	}
     lag_ms = ((int64_t)((ts.tv_sec - rms->cur_stamp.ts.tv_sec) * 1e3) + ((ts.tv_nsec - rms->cur_stamp.ts.tv_nsec)/1e6));
-    if (lag_ms >= (OUTPUTS_BUFFER_DURATION * 1e3)) {
+    if (lag_ms >= (outputs_buffer_duration_ms_get())) {
       DPRINTF(E_LOG, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio almost certainly will not play\n", __func__, lag_ms);
     }
     }
@@ -2326,12 +2408,38 @@ payload_make_flush(struct evrtsp_request *req, struct airplay_session *rs, void 
   return 0;
 }
 
+// Sending an empty plist seems to mean close connection. At least according to
+// shairport-sync handle_teardown_2(). iOS seems to send first a teardown with
+// stream (to close that), then with an empty plist.
 static int
 payload_make_teardown(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
 {
+  plist_t root;
+  uint8_t *data;
+  size_t len;
+  int ret;
+
   // Normally we update status when we get the response, but teardown is an
   // exception because we want to stop writing to the device immediately
   rs->state = AIRPLAY_STATE_TEARDOWN;
+
+  // stream = plist_new_dict();
+  // wplist_dict_add_uint(stream, "streamID", 0); // Do we have a stream ID?
+  // wplist_dict_add_uint(stream, "type", AIRPLAY_RTP_PAYLOADTYPE);
+  // streams = plist_new_array();
+  // plist_array_append_item(streams, stream);
+
+  root = plist_new_dict();
+  // plist_dict_set_item(root, "streams", streams);
+
+  ret = wplist_to_bin(&data, &len, root);
+  plist_free(root);
+
+  if (ret < 0)
+    return -1;
+
+  evbuffer_add(req->output_buffer, data, len);
+
   return 0;
 }
 
@@ -2510,7 +2618,7 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
   wplist_dict_add_bool(stream, "isMedia", true); // ?
   wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
-  wplist_dict_add_uint(stream, "latencyMin", 11025);
+  wplist_dict_add_uint(stream, "latencyMin", 11025); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
   wplist_dict_add_data(stream, "shk", rs->shared_secret, AIRPLAY_AUDIO_KEY_LEN);
   wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
   wplist_dict_add_uint(stream, "sr", AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT); // sample rate
@@ -2533,22 +2641,29 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   return 0;
 }
 
+// Mysterious empty request, but iOS sends it
+static int
+payload_make_record(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
+{
+  return 0;
+}
+
 static int
 payload_make_setpeers(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
 {
-  plist_t item;
   uint8_t *data;
   size_t len;
   int ret;
 
   plist_t root;
 
-  // TODO also have ipv6
   root = plist_new_array();
-  item = plist_new_string(rs->address);
-  plist_array_append_item(root, item);
-  item = plist_new_string(rs->local_address);
-  plist_array_append_item(root, item);
+
+  plist_array_append_item(root, plist_new_string(rs->address));
+  if (rs->local_v4_address)
+    plist_array_append_item(root, plist_new_string(rs->local_v4_address));
+  if (rs->local_v6_address)
+    plist_array_append_item(root, plist_new_string(rs->local_v6_address));
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
@@ -2562,36 +2677,12 @@ payload_make_setpeers(struct evrtsp_request *req, struct airplay_session *rs, vo
 }
 
 static int
-payload_make_record(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
-{
-  struct airplay_master_session *rms = rs->master_session;
-  char buf[64];
-  int ret;
-
-  evrtsp_add_header(req->output_headers, "X-Apple-ProtocolVersion", "1");
-
-  evrtsp_add_header(req->output_headers, "Range", "npt=0-");
-
-  // Start sequence: next sequence
-  ret = snprintf(buf, sizeof(buf), "seq=%" PRIu16 ";rtptime=%u", rms->rtp_session->seqnum, rms->rtp_session->pos);
-  if ((ret < 0) || (ret >= sizeof(buf)))
-    {
-      DPRINTF(E_LOG, L_AIRPLAY, "RTP-Info too big for buffer in RECORD request\n");
-      return -1;
-    }
-  evrtsp_add_header(req->output_headers, "RTP-Info", buf);
-
-  DPRINTF(E_DBG, L_AIRPLAY, "RTP-Info is %s\n", buf);
-
-  return 0;
-}
-
-static int
 payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
 {
   plist_t root;
   plist_t addresses;
-  plist_t address;
+  plist_t timingpeerinfo;
+  plist_t timingpeerlist;
   char device_id_colon[24];
   uint8_t *data;
   size_t len;
@@ -2599,15 +2690,45 @@ payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *r
 
   device_id_colon_make(device_id_colon, sizeof(device_id_colon), airplay_device_id);
 
-  address = plist_new_string(rs->local_address);
   addresses = plist_new_array();
-  plist_array_append_item(addresses, address);
+  if (rs->local_v4_address)
+    plist_array_append_item(addresses, plist_new_string(rs->local_v4_address));
+  if (rs->local_v6_address)
+    plist_array_append_item(addresses, plist_new_string(rs->local_v6_address));
+
+  timingpeerinfo = plist_new_dict();
+  wplist_dict_add_string(timingpeerinfo, "ID", airplay_ptp_clock_uuid); // iOS sends a UUID, but where does it come from?
+  wplist_dict_add_uint(timingpeerinfo, "DeviceType", 0);
+  wplist_dict_add_int(timingpeerinfo, "ClockID", (int64_t)ptpd_clock_id_get()); // ClockID in plist is signed, so e.g. 0xf842885f71750008 -> -557733460333756408
+  wplist_dict_add_bool(timingpeerinfo, "SupportsClockPortMatchingOverride", false); // iOS says true, no idea what it means
+  plist_dict_set_item(timingpeerinfo, "Addresses", addresses);
+
+  timingpeerlist = plist_new_array();
+  plist_array_append_item(timingpeerlist, plist_copy(timingpeerinfo));
 
   root = plist_new_dict();
+  wplist_dict_add_string(root, "name", airplay_client_name);
   wplist_dict_add_string(root, "deviceID", device_id_colon);
   wplist_dict_add_string(root, "sessionUUID", rs->session_uuid);
-  wplist_dict_add_uint(root, "timingPort", rs->timing_svc->port);
-  wplist_dict_add_string(root, "timingProtocol", "NTP"); // If set to "None" then an ATV4 will not respond to stream SETUP request
+  wplist_dict_add_string(root, "timingProtocol", "PTP"); // If set to "None" then an ATV4 will not respond to stream SETUP request
+  wplist_dict_add_string(root, "macAddress", rs->local_mac_address);
+
+  wplist_dict_add_string(root, "groupUUID", rs->group_uuid);
+  wplist_dict_add_bool(root, "groupContainsGroupLeader", false); // iOS Music app sets this to false, let's roll with that
+
+  plist_dict_set_item(root, "timingPeerInfo", timingpeerinfo);
+  plist_dict_set_item(root, "timingPeerList", timingpeerlist);
+
+  // groupUUID
+  // groupContainsGroupLeader
+
+  // Debug: log plist content (use plist_to_xml for libplist 2.2 compat)
+  char *xml;
+  uint32_t xml_len;
+  plist_to_xml(root, &xml, &xml_len);
+
+  DPRINTF(E_LOG, L_AIRPLAY, "plist is %s\n", xml);
+  plist_to_xml_free(xml);
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
@@ -2660,6 +2781,15 @@ payload_make_auth_setup(struct evrtsp_request *req, struct airplay_session *rs, 
 }
 #endif
 
+/* airplay2-receiver says this about X-Apple-HKP:
+ Values 0,2,3,4,6 seen.
+ 0 = Unauth. When Ft48TransientPairing and Ft43SystemPairing are absent
+ 2 = (pair-setup complete, pair-verify starts)
+ 3 = SystemPairing (with Ft43SystemPairing)
+ 4 = Transient
+ 6 = HomeKit
+ 7 = HomeKit (administration)
+ */
 static int
 payload_make_pin_start(struct evrtsp_request *req, struct airplay_session *rs, void *arg)
 {
@@ -2880,7 +3010,7 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
   uint64_t uintval;
   int ret;
 
-  DPRINTF(E_INFO, L_AIRPLAY, "Setting up AirPlay session %u (%s -> %s)\n", rs->session_id, rs->local_address, rs->address);
+  DPRINTF(E_INFO, L_AIRPLAY, "Setting up AirPlay session %u to %s\n", rs->session_id, rs->address);
 
   ret = wplist_from_evbuf(&response, req->input_buffer);
   if (ret < 0)
@@ -2928,15 +3058,8 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
   rs->server_fd = net_connect(rs->address, rs->data_port, SOCK_DGRAM, "AirPlay data");
   if (rs->server_fd < 0)
     {
-      DPRINTF(E_WARN, L_AIRPLAY, "Could not connect to data port\n");
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not connect to data port of '%s'\n", rs->devname);
       goto error;
-    }
-
-  // Reverse connection, used to receive playback events from device
-  ret = airplay_events_listen(rs->devname, rs->address, rs->events_port, rs->shared_secret, rs->shared_secret_len);
-  if (ret < 0)
-    {
-      DPRINTF(E_WARN, L_AIRPLAY, "Could not connect to '%s' events port %u, proceeding anyway\n", rs->devname, rs->events_port);
     }
 
   rs->state = AIRPLAY_STATE_SETUP;
@@ -2966,7 +3089,11 @@ response_handler_setup_session(struct evrtsp_request *req, struct airplay_sessio
 {
   plist_t response;
   plist_t item;
+  plist_t peer_addresses;
+  plist_t peer_address;
   uint64_t uintval;
+  const char *ptr;
+  int i;
   int ret;
 
   if (req->response_code == RTSP_UNAUTHORIZED)
@@ -3005,17 +3132,48 @@ response_handler_setup_session(struct evrtsp_request *req, struct airplay_sessio
       rs->events_port = uintval;
     }
 
+  if (rs->events_port == 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "SETUP reply is missing event port\n");
+      goto error;
+    }
+
+  // Reverse connection, used to receive playback events from device
+  ret = airplay_events_listen(rs->devname, rs->address, rs->events_port, rs->shared_secret, rs->shared_secret_len);
+  if (ret < 0)
+    {
+      DPRINTF(E_WARN, L_AIRPLAY, "Could not connect to '%s' events port %u, proceeding anyway\n", rs->devname, rs->events_port);
+    }
+
+  // For PTP
+  item = plist_dict_get_item(response, "timingPeerInfo");
+  if (item && (peer_addresses = plist_dict_get_item(item, "Addresses")))
+    {
+      // Walk through addresses to get one from the right family
+      for (i = 0; (peer_address = plist_array_get_item(peer_addresses, i)); i++)
+	{
+	  ptr = plist_get_string_ptr(peer_address, NULL);
+	  if (!ptr)
+	    continue;
+
+	  rs->ptpd_slave_id = ptpd_slave_add(ptr);
+	  if (rs->ptpd_slave_id >= 0)
+	    break; // Just add the first good address, currently not sure what to do if we get more
+	}
+    }
+
+  if (rs->ptpd_slave_id < 0)
+    {
+      DPRINTF(E_WARN, L_AIRPLAY, "Could not add speaker '%s' as PTP peer\n", rs->devname);
+      goto error;
+    }
+
+  // Not used for PTP
   item = plist_dict_get_item(response, "timingPort");
   if (item)
     {
       plist_get_uint_val(item, &uintval);
       rs->timing_port = uintval;
-    }
-
-  if (rs->events_port == 0)
-    {
-      DPRINTF(E_LOG, L_AIRPLAY, "SETUP reply is missing event port\n");
-      goto error;
     }
 
   plist_free(response);
@@ -3471,9 +3629,9 @@ static struct airplay_seq_request airplay_seq_request[][7] =
     // proceed_on_rtsp_not_ok is true because a device may reply with 401 Unauthorized
     // and a WWW-Authenticate header, and then we may need re-run with password auth
     { AIRPLAY_SEQ_START_PLAYBACK, "SETUP (session)", EVRTSP_REQ_SETUP, payload_make_setup_session, response_handler_setup_session, "application/x-apple-binary-plist", NULL, true },
+    { AIRPLAY_SEQ_START_PLAYBACK, "RECORD", EVRTSP_REQ_RECORD, payload_make_record, response_handler_record, NULL, NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETPEERS", EVRTSP_REQ_SETPEERS, payload_make_setpeers, NULL, "/peer-list-changed", NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETUP (stream)", EVRTSP_REQ_SETUP, payload_make_setup_stream, response_handler_setup_stream, "application/x-apple-binary-plist", NULL, false },
-    { AIRPLAY_SEQ_START_PLAYBACK, "RECORD", EVRTSP_REQ_RECORD, payload_make_record, response_handler_record, NULL, NULL, false },
     // Some devices (e.g. Sonos Symfonisk) don't register the volume if it isn't last
     { AIRPLAY_SEQ_START_PLAYBACK, "SET_PARAMETER (volume)", EVRTSP_REQ_SET_PARAMETER, payload_make_set_volume, response_handler_volume_start, "text/parameters", NULL, true },
   },
@@ -4101,6 +4259,8 @@ airplay_init(void)
 
   airplay_device_id = libhash;
 
+  uuid_make(airplay_ptp_clock_uuid);
+
   // Check alignment of enum seq_type with airplay_seq_definition and
   // airplay_seq_request
   for (i = 0; i < ARRAY_SIZE(airplay_seq_definition); i++)
@@ -4113,6 +4273,9 @@ airplay_init(void)
     }
 
   CHECK_NULL(L_AIRPLAY, keep_alive_timer = evtimer_new(evbase_player, airplay_keep_alive_timer_cb, NULL));
+
+  airplay_user_agent = cfg_getstr(cfg_getsec(cfg, "general"), "user_agent");
+  airplay_client_name = cfg_getstr(cfg_getsec(cfg, "library"), "name");
 
   timing_port = cfg_getint(cfg_getsec(cfg, "airplay_shared"), "timing_port");
   ret = service_start(&airplay_timing_svc, timing_svc_cb, timing_port, "AirPlay timing");
@@ -4135,6 +4298,13 @@ airplay_init(void)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "AirPlay events failed to start\n");
       goto out_stop_control;
+    }
+
+  // libhash is just an input to make the clock id unique
+  ret = ptpd_init(libhash);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "AirPlay PTP daemon unavailable, only NTP will be available\n");
     }
 
   ret = mdns_browse("_airplay._tcp", airplay_device_cb, MDNS_CONNECTION_TEST);
@@ -4163,6 +4333,7 @@ airplay_deinit(void)
 {
   struct airplay_session *rs;
 
+  ptpd_deinit();
   airplay_events_deinit();
   service_stop(&airplay_control_svc);
   service_stop(&airplay_timing_svc);

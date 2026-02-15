@@ -54,6 +54,17 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h> // getifaddrs
 
+#ifdef __linux__
+#include <net/if.h>
+#include <sys/ioctl.h>
+#endif
+#ifdef __APPLE__
+#include <net/if_dl.h>
+#endif
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#include <net/if_dl.h>
+#endif
+
 #include <event2/http.h> // evhttp_bind
 
 #include <unistr.h>
@@ -278,7 +289,7 @@ net_address_get(char *addr, size_t addr_len, union net_sockaddr *naddr)
 }
 
 int
-net_port_get(short unsigned *port, union net_sockaddr *naddr)
+net_port_get(unsigned short *port, union net_sockaddr *naddr)
 {
   if (naddr->sa.sa_family == AF_INET6)
      *port = ntohs(naddr->sin6.sin6_port);
@@ -319,6 +330,93 @@ net_if_get(char *ifname, size_t ifname_len, const char *addr)
   freeifaddrs(ifaddrs);
 
   return (ifname[0] != 0) ? 0 : -1;
+}
+
+int
+net_sockaddr_get(union net_sockaddr *naddr, const char *addr, unsigned short port)
+{
+  struct addrinfo hints = { 0 };
+  struct addrinfo *ai;
+  int ret;
+
+  hints.ai_flags = AI_NUMERICHOST;
+
+  ret = getaddrinfo(addr, NULL, &hints, &ai);
+  if (ret < 0)
+    return -1;
+
+  memset(naddr, 0, sizeof(union net_sockaddr));
+  memcpy(&naddr->sa, ai->ai_addr, ai->ai_addrlen);
+
+  if (port > 0)
+    {
+      if (naddr->sa.sa_family == AF_INET)
+	naddr->sin.sin_port = htons(port);
+      else if (naddr->sa.sa_family == AF_INET6)
+	naddr->sin6.sin6_port = htons(port);
+    }
+
+  freeaddrinfo(ai);
+
+  return 0;
+}
+
+int
+net_mac_get(uint8_t *mac, size_t mac_len, const char *ifname)
+{
+  if (mac_len < 6 || !ifname)
+    return -1;
+
+#ifdef __linux__
+  struct ifreq ifr;
+  int fd;
+  int ret;
+
+  fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0)
+    return -1;
+
+  memset(&ifr, 0, sizeof(ifr));
+  snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ifname);
+
+  ret = ioctl(fd, SIOCGIFHWADDR, &ifr);
+  close(fd);
+  if (ret < 0)
+    return -1;
+
+  memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
+  return 0;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+  struct ifaddrs *ifaddrs;
+  struct ifaddrs *iap;
+  struct sockaddr_dl *sdl;
+  int ret = -1;
+
+  getifaddrs(&ifaddrs);
+
+  for (iap = ifaddrs; iap; iap = iap->ifa_next)
+    {
+      if (!iap->ifa_addr)
+	continue;
+      if (iap->ifa_addr->sa_family != AF_LINK)
+	continue;
+      if (strcmp(iap->ifa_name, ifname) != 0)
+	continue;
+
+      sdl = (struct sockaddr_dl *)iap->ifa_addr;
+      if (sdl->sdl_alen != 6)
+	continue;
+
+      memcpy(mac, LLADDR(sdl), 6);
+      ret = 0;
+      break;
+    }
+
+  freeifaddrs(ifaddrs);
+  return ret;
+#else
+  return -1;
+#endif
 }
 
 static int
@@ -461,7 +559,7 @@ net_connect(const char *addr, unsigned short port, int type, const char *log_ser
 // with the port number. SOCK_STREAM type services are set to use non-blocking
 // sockets.
 static int
-net_bind_impl(short unsigned *port, int type, const char *log_service_name, bool reuseport)
+net_bind_impl(unsigned short *port, int type, const char *log_service_name, bool reuseport)
 {
   struct addrinfo hints = { 0 };
   struct addrinfo *servinfo;
@@ -580,13 +678,13 @@ net_bind_impl(short unsigned *port, int type, const char *log_service_name, bool
 }
 
 int
-net_bind(short unsigned *port, int type, const char *log_service_name)
+net_bind(unsigned short *port, int type, const char *log_service_name)
 {
   return net_bind_impl(port, type, log_service_name, false);
 }
 
 int
-net_bind_with_reuseport(short unsigned *port, int type, const char *log_service_name)
+net_bind_with_reuseport(unsigned short *port, int type, const char *log_service_name)
 {
   return net_bind_impl(port, type, log_service_name, true);
 }
@@ -1616,6 +1714,21 @@ timespec_add(struct timespec time1, struct timespec time2)
     {
       result.tv_sec++;
       result.tv_nsec -= 1000000000L;
+    }
+  return result;
+}
+
+struct timespec
+timespec_sub(struct timespec time1, struct timespec time2)
+{
+  struct timespec result;
+
+  result.tv_sec = time1.tv_sec - time2.tv_sec;
+  result.tv_nsec = time1.tv_nsec - time2.tv_nsec;
+  if (result.tv_nsec < 0)
+    {
+      result.tv_sec--;
+      result.tv_nsec += 1000000000L;
     }
   return result;
 }

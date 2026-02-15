@@ -63,12 +63,14 @@
 #include "library.h"
 #include "logger.h"
 #include "misc.h"
+#include "outputs.h"
 #include "player.h"
 #include "worker.h"
 #include "outputs/rtp_common.h"
 #include "wrappers.h"
 #include "cliap2.h"
 #include "mass.h"
+#include "ptpd.h"
 
 #define AIRPLAY2_CONNECT_TIME_MS (int32_t) 2500 // Minimum time we need to connect and buffer before starting playback
 
@@ -464,8 +466,8 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
     DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
     return -1;
   }
-  timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding OUTPUTS_BUFFER_DURATION, in OwnTone time basis
-  ts->tv_sec -= OUTPUTS_BUFFER_DURATION; // Required to ensure we have sufficent data and are close to cliraop
+  timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding buffer duration, in OwnTone time basis
+  ts->tv_sec -= outputs_buffer_duration_ms_get() / 1000; // Required to ensure we have sufficent data and are close to cliraop
   timespec_subtract(ts, ts, &dac_latency_ts);
   timespec_to_ntp(ts, &start_ns);
   timespec_subtract(&lag_ts, ts, &now_ts);
@@ -794,6 +796,14 @@ main(int argc, char **argv)
 
   DPRINTF(E_DBG, L_MAIN, "Initialized with gcrypt %s\n", gcry_version);
 
+  /* PTP daemon - bind to privileged ports before signal blocking */
+  ret = ptpd_bind();
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_MAIN, "Could not bind PTP ports (needs root or CAP_NET_BIND_SERVICE)\n");
+      // Non-fatal, PTP will just be unavailable
+    }
+
   /* Block signals for all threads except the main one */
   sigemptyset(&sigs);
   sigaddset(&sigs, SIGINT);
@@ -815,6 +825,14 @@ main(int argc, char **argv)
 
   CHECK_ERR(L_MAIN, evthread_use_pthreads());
 
+
+  /* Initialize PTP daemon (after evbase creation) */
+  ret = ptpd_init(libhash);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_MAIN, "PTP daemon unavailable, only NTP will be available\n");
+      // Non-fatal
+    }
 
   /* Spawn worker thread */
   ret = worker_init();
@@ -894,6 +912,9 @@ main(int argc, char **argv)
 
  sig_event_fail:
  signalfd_fail:
+  DPRINTF(E_INFO, L_MAIN, "PTP deinit\n");
+  ptpd_deinit();
+
   DPRINTF(E_INFO, L_MAIN, "Player deinit\n");
   player_deinit();
 

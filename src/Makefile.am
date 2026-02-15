@@ -66,6 +66,7 @@ cliap2_SOURCES = \
     input.c \
     mass.c \
     player.c \
+    ptpd.c \
     rtp_common.c \
     wrappers.c \
     $(LOCAL_PATCHED_SRC) \
