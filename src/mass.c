@@ -1032,12 +1032,11 @@ pipe_thread_run(void *arg)
 static void
 pipe_thread_start(void)
 {
-  struct event_config *cfg;
-
   DPRINTF(E_DBG, L_PLAYER, "%s\n", __func__);
 
 #ifdef __APPLE__
   // On macOS, avoid kqueue for FIFO monitoring - it has issues detecting writes from other processes
+  struct event_config *cfg;
   cfg = event_config_new();
   if (cfg)
     {
