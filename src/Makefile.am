@@ -34,6 +34,12 @@ PAIR_AP_SRC = \
     ../owntone-server/src/pair_ap/pair-internal.h \
     ../owntone-server/src/pair_ap/pair.h
 
+# Local copies of logger.c and misc.c with _exit() fix instead of abort()
+# to prevent hanging on pthread_mutex errors during shutdown
+LOCAL_PATCHED_SRC = \
+    logger.c \
+    misc.c
+
 OWNTONE_SRC = \
     ../owntone-server/src/commands.c \
     ../owntone-server/src/dmap_common.c \
@@ -45,8 +51,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
     ../owntone-server/src/listener.c \
-    ../owntone-server/src/logger.c \
-    ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
@@ -64,6 +68,7 @@ cliap2_SOURCES = \
     conffile.c \
     mass.c \
     wrappers.c \
+    $(LOCAL_PATCHED_SRC) \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
 

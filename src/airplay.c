@@ -897,7 +897,12 @@ request_headers_add(struct evrtsp_request *req, struct airplay_session *rs, enum
 
   // We set Active-Remote as 32 bit unsigned decimal, as at least my device
   // can't handle any larger. Must be aligned with volume_byactiveremote().
-  snprintf(buf, sizeof(buf), "%" PRIu32, (uint32_t)rs->device_id);
+  // Use active_remote_override if set (from --active_remote CLI arg), otherwise use device_id
+  extern uint32_t active_remote_override;
+  if (active_remote_override != 0)
+    snprintf(buf, sizeof(buf), "%" PRIu32, active_remote_override);
+  else
+    snprintf(buf, sizeof(buf), "%" PRIu32, (uint32_t)rs->device_id);
   evrtsp_add_header(req->output_headers, "Active-Remote", buf);
 
 #if AIRPLAY_USE_STREAMID

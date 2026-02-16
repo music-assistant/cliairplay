@@ -38,6 +38,7 @@
 #include <limits.h>
 #include <grp.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 #ifdef HAVE_SIGNALFD
 # include <sys/signalfd.h>
@@ -90,6 +91,7 @@ static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
 mass_named_pipes_t mass_named_pipes = {0, 0};
+uint32_t active_remote_override = 0;  // Override for Active-Remote header (0 = use device_id)
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -208,6 +210,8 @@ usage(char *program)
   printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                 Authorization key.\n");
+  printf("  --dacp_id <dacp_id>               DACP ID (hex string) for remote control callbacks.\n");
+  printf("  --active_remote <id>              Active-Remote ID (decimal) for DACP device identification.\n");
   printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
@@ -381,7 +385,7 @@ parse_keyval(const char *str, struct keyval *kv)
   return 0;
 }
 
-// Check for valid named pipe.
+// Check for valid named pipe, creating it if it doesn't exist.
 // @param name the filename of the named pipe
 // @returns 0 on success, -1 on failure
 static
@@ -389,26 +393,37 @@ int check_pipe(const char *pipe_path)
 {
   struct stat st;
 
+  // Allow "-" to mean stdin
+  if (strcmp(pipe_path, "-") == 0) {
+      return 0;
+  }
+
   // Check if the file exists and get its information
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
+          DPRINTF(E_INFO, L_MAIN, "%s:Using existing pipe '%s'\n", __func__, pipe_path);
           return 0;
-      } 
+      }
       else {
           DPRINTF(E_FATAL, L_MAIN, "%s:File '%s' exists, but it is not a named pipe.\n", __func__, pipe_path);
           return -1;
       }
-  } 
+  }
   else {
-      // File does not exist or an error occurred
+      // File does not exist - create the pipe
       if (errno == ENOENT) {
-          DPRINTF(E_FATAL, L_MAIN, "%s:Named pipe '%s' does not exist.\n", __func__, pipe_path);
-      } 
+          if (mkfifo(pipe_path, 0666) == 0) {
+              DPRINTF(E_INFO, L_MAIN, "%s:Created pipe '%s'\n", __func__, pipe_path);
+              return 0;
+          }
+          DPRINTF(E_FATAL, L_MAIN, "%s:Failed to create pipe '%s': %s\n", __func__, pipe_path, strerror(errno));
+          return -1;
+      }
       else {
           DPRINTF(E_FATAL, L_MAIN, "%s:Error checking for named pipe %s. %s\n", __func__, pipe_path, strerror(errno));
+          return -1;
       }
-      return -1;
   }
 
   return 0;
@@ -513,6 +528,8 @@ main(int argc, char **argv)
     { "pipe",          1, NULL, 513 },
     { "command_pipe",  1, NULL, 514 },
     { "auth",          1, NULL, 515 },
+    { "dacp_id",       1, NULL, 516 },
+    { "active_remote", 1, NULL, 517 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -601,6 +618,25 @@ main(int argc, char **argv)
 
       case 515: // authorization key
         ap2_device_info.auth_key = optarg;
+        break;
+
+      case 516: // dacp_id - DACP ID for remote control callbacks
+        // Parse hex string to uint64 and set libhash
+        ret = safe_hextou64(optarg, &libhash);
+        if (ret < 0) {
+          fprintf(stderr, "Error: dacp_id must be a hex string in '--dacp_id %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        DPRINTF(E_DBG, L_MAIN, "DACP ID set to: %" PRIX64 "\n", libhash);
+        break;
+
+      case 517: // active_remote - Active-Remote ID for DACP device identification
+        ret = safe_atou32(optarg, &active_remote_override);
+        if (ret < 0) {
+          fprintf(stderr, "Error: active_remote must be a decimal number in '--active_remote %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        DPRINTF(E_DBG, L_MAIN, "Active-Remote override set to: %" PRIu32 "\n", active_remote_override);
         break;
 
         default:
