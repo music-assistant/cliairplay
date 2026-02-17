@@ -1637,7 +1637,7 @@ airplay_metadata_prepare(struct output_metadata *metadata)
   CHECK_NULL(L_AIRPLAY, rmd->metadata = evbuffer_new());
   CHECK_NULL(L_AIRPLAY, tmp = evbuffer_new());
 
-  ret = artwork_get_by_queue_item_id(rmd->artwork, queue_item->file_id, ART_DEFAULT_WIDTH, ART_DEFAULT_HEIGHT, 0);
+  ret = artwork_get_by_queue_item_id(rmd->artwork, queue_item->id, ART_DEFAULT_WIDTH, ART_DEFAULT_HEIGHT, 0);
   if (ret < 0)
     {
       DPRINTF(E_INFO, L_AIRPLAY, "Failed to retrieve artwork for file '%s'; no artwork will be sent\n", queue_item->path);
@@ -1898,7 +1898,6 @@ packet_send(struct airplay_session *rs, struct rtp_packet *pkt)
   uint8_t *encrypted;
   size_t encrypted_len;
   int ret;
-  // static uint64_t count = 0;
 
   if (!rs)
     return -1;
@@ -1924,17 +1923,13 @@ packet_send(struct airplay_session *rs, struct rtp_packet *pkt)
       return -1;
     }
 
-  // re-comment this out when debugged
-  // count++;
-  // if (rs->master_session->rtp_session->seqnum < 10 || count < 10) {
-  // DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
-  //   rs->master_session->rtp_session->seqnum,
-  //   rs->master_session->rtp_session->pos,
-  //   pkt->header[1],
-  //   rs->master_session->rtp_session->pktbuf_len
-  //   );
-  // }
-
+/*  DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
+    rs->master_session->rtp_session->seqnum,
+    rs->master_session->rtp_session->pos,
+    pkt->header[1],
+    rs->master_session->rtp_session->pktbuf_len
+    );
+*/
   return 0;
 }
 
@@ -2079,7 +2074,6 @@ packets_sync_send(struct airplay_master_session *rms)
   struct airplay_session *rs;
   struct timespec ts;
   bool is_sync_time;
-  int64_t lag_ms;
 
   // Check if it is time send a sync packet to sessions that are already running
   is_sync_time = rtp_sync_is_time(rms->rtp_session);
@@ -2098,17 +2092,14 @@ packets_sync_send(struct airplay_master_session *rms)
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x90);
 	  control_packet_send(rs, sync_pkt);
 
+	  DPRINTF(E_DBG, L_AIRPLAY, "Start sync packet sent to '%s': cur_pos=%" PRIu32 ", cur_ts=%ld.%09ld, clock=%ld.%09ld, rtptime=%" PRIu32 "\n",
+	    rs->devname, rms->cur_stamp.pos, (long)rms->cur_stamp.ts.tv_sec, (long)rms->cur_stamp.ts.tv_nsec, (long)ts.tv_sec, (long)ts.tv_nsec, rms->rtp_session->pos);
 	}
       else if (is_sync_time && rs->state == AIRPLAY_STATE_STREAMING)
 	{
 	  sync_pkt = rtp_sync_packet_next(rms->rtp_session, rms->cur_stamp, 0x80);
 	  control_packet_send(rs, sync_pkt);
-
 	}
-    lag_ms = ((int64_t)((ts.tv_sec - rms->cur_stamp.ts.tv_sec) * 1e3) + ((ts.tv_nsec - rms->cur_stamp.ts.tv_nsec)/1e6));
-    if (lag_ms >= (OUTPUTS_BUFFER_DURATION * 1e3)) {
-      DPRINTF(E_LOG, L_AIRPLAY, "%s:RTP packet timestamp in the past by %" PRId64 "ms. Audio almost certainly will not play\n", __func__, lag_ms);
-    }
     }
 }
 
@@ -2171,7 +2162,6 @@ timing_svc_cb(int fd, short what, void *arg)
   struct ntp_stamp recv_stamp;
   struct ntp_stamp xmit_stamp;
   int ret;
-  static uint64_t count = 0;
 
   ret = timing_get_clock_ntp(&recv_stamp);
   if (ret < 0)
@@ -2179,7 +2169,7 @@ timing_svc_cb(int fd, short what, void *arg)
       DPRINTF(E_LOG, L_AIRPLAY, "Couldn't get receive timestamp\n");
       return;
     }
-  count++;
+
   peer_addrlen = sizeof(peer_addr);
   ret = recvfrom(svc->fd, req, sizeof(req), 0, &peer_addr.sa, &peer_addrlen);
   if (ret < 0)
@@ -2246,11 +2236,6 @@ timing_svc_cb(int fd, short what, void *arg)
       DPRINTF(E_LOG, L_AIRPLAY, "Could not send timing reply to %s: %s\n", address, strerror(errno));
       return;
     }
-
-#if AIRPLAY_DUMP_TRAFFIC
-    DHEXDUMP(E_DBG, L_AIRPLAY, req, sizeof(req), "RTCP time sync request\n");
-    DHEXDUMP(E_DBG, L_AIRPLAY, res, sizeof(res), "RTCP time sync reply\n");
-#endif
 }
 
 static void
@@ -2863,8 +2848,6 @@ response_handler_pin_start(struct evrtsp_request *req, struct airplay_session *r
 static enum airplay_seq_type
 response_handler_record(struct evrtsp_request *req, struct airplay_session *rs)
 {
-  // Let's analyse the response to see if it contains latency information
-
   rs->state = AIRPLAY_STATE_RECORD;
 
   return AIRPLAY_SEQ_CONTINUE;
@@ -3056,15 +3039,6 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
   plist_t item;
   int ret;
 
-#if AIRPLAY_DUMP_TRAFFIC
-  uint8_t *buf;
-  size_t len;
-
-  buf = evbuffer_pullup(req->input_buffer, -1);
-  len = evbuffer_get_length(req->input_buffer);
-  DHEXDUMP(E_DBG, L_AIRPLAY, buf, len, "GET /info response\n");
-#endif
-
   device = outputs_device_get(rs->device_id);
   if (!device)
     return AIRPLAY_SEQ_ABORT;
@@ -3086,41 +3060,6 @@ response_handler_info_generic(struct evrtsp_request *req, struct airplay_session
   item = plist_dict_get_item(response, "statusFlags");
   if (item)
     plist_get_uint_val(item, &rs->statusflags);
-
-  // // Let's look for audioLatencies info
-  // item = plist_dict_get_item(response, "audioLatencies");
-  // if (item) {
-  //   plist_t latency_dict, audio_item;
-  //   uint32_t latency_array_size = plist_array_get_size(item);
-  //   uint32_t i;
-  //   uint32_t inputLatencyMicros, outputLatencyMicros, type;
-  //   char *audioType = NULL;
-
-  //   for (i=0; i < latency_array_size; i++) {
-  //     if (PLIST_IS_DICT(plist_array_get_item(item, i))) {
-  //       latency_dict = plist_array_get_item(item, i);
-  //       audio_item = plist_dict_get_item(latency_dict, "audioType");
-  //       if (audio_item) {
-  //         plist_get_string_val(audio_item, &audioType);
-  //       }
-  //       else {
-  //         audioType = NULL;
-  //       }
-  //       inputLatencyMicros = plist_dict_get_uint(latency_dict, "inputLatencyMicros");
-  //       outputLatencyMicros = plist_dict_get_uint(latency_dict, "outputLatencyMicros");
-  //       type = plist_dict_get_uint(latency_dict, "type");
-  //       DPRINTF(E_DBG, L_AIRPLAY,
-  //         "audioLatencies array item [%" PRIu32 "]"
-  //         " audioType:%s"
-  //         ", inputLatencyMicros:%" PRIu32 
-  //         ", outputLatencyMicros:%" PRIu32 
-  //         ", type:%" PRIu32 
-  //         "\n", 
-  //         i, audioType, inputLatencyMicros, outputLatencyMicros, type
-  //       );
-  //     }
-  //   }
-  // }
 
   plist_free(response);
 
@@ -3637,17 +3576,6 @@ sequence_continue(struct airplay_seq_ctx *seq_ctx)
   uri = (cur_request->uri) ? cur_request->uri : rs->session_url;
 
   DPRINTF(E_DBG, L_AIRPLAY, "%s: Sending %s to '%s'\n", seq_ctx->log_caller, cur_request->name, rs->devname);
-
-#if AIRPLAY_DUMP_TRAFFIC
-  uint8_t *buf;
-  size_t len;
-  buf = evbuffer_pullup(req->output_buffer, -1);
-  len = evbuffer_get_length(req->output_buffer);
-  DHEXDUMP(E_DBG, L_AIRPLAY, buf, len, "RTSP request payload\n");
-  if (len == 0) {
-    DPRINTF(E_DBG, L_AIRPLAY, "RTSP request %s has no payload\n", cur_request->name);
-  }
-#endif
 
   ret = evrtsp_make_request(rs->ctrl, req, cur_request->rtsp_type, uri);
   if (ret < 0)
