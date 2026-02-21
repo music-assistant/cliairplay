@@ -81,7 +81,7 @@
  * setting a start time, we must anticipate by the latency if we want the first
  * frame to be *exactly* played at that NTP value.
  * 
- * For for Music Assistant, we will simply subtract 250ms (11025 frames at 44100 sample rate)
+ * For Music Assistant, we will simply subtract 250ms (11025 frames at 44100 sample rate)
  * This approach may need to change when we implement higher quality streams
  */
 #define DAC_LATENCY_TS {0, 250e6}
@@ -91,7 +91,6 @@ static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
 mass_named_pipes_t mass_named_pipes = {0, 0};
-uint32_t active_remote_override = 0;  // Override for Active-Remote header (0 = use device_id)
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -211,12 +210,13 @@ usage(char *program)
   printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                 Authorization key.\n");
   printf("  --dacp_id <dacp_id>               DACP ID (hex string) for remote control callbacks.\n");
-  printf("  --active_remote <id>              Active-Remote ID (decimal) for DACP device identification.\n");
-  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. Mandatory in absence of --ntp.\n");
+  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
-  printf("  --ntpstart                        Start playback at NTP. Mandatory in absence of --ntp.\n");
-  printf("  --volume                          Initial volume (0-100). Defaults to 0\n");
+  printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
+  printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
+  // printf("  --password <password>             Device password.\n");
   printf("  -v, --version                     Display version information and exit\n");
   printf("\n\n");
 }
@@ -430,6 +430,28 @@ int check_pipe(const char *pipe_path)
 }
 
 /**
+ * Obtain the output buffer duration as a timespec
+ * @param ts  Pointer to a timespec structure where the output buffer duration will be returned
+ * @returns   void
+ * @note      Output buffer duration includes the inherent DAC latency of the output device. 
+ *            This is typically 250ms or 11025 frames at 44100 sample rate 
+ */
+static void
+get_output_buffer_ts(struct timespec *ts)
+{
+  uint64_t buffer_duration_ms;
+
+  buffer_duration_ms = cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms");
+  DPRINTF(E_DBG, L_MAIN, "%s:buffer_duration_ms: %" PRIu64 " ms\n", __func__, buffer_duration_ms);
+
+  ts->tv_sec = (time_t)(buffer_duration_ms / 1000);
+  ts->tv_nsec = (long)((buffer_duration_ms % 1000) * 1000 * 1000);
+  DPRINTF(E_DBG, L_MAIN, "%s:Output buffer duration is %ld sec, %ld nsec\n", __func__, ts->tv_sec, ts->tv_nsec);
+
+  return;
+}
+
+/**
  * Determine a valid playback start time given a specified NTP start time
  * @param ts        Pointer to a timespec structure where the start time will be returned
  * @param ntpstart  NTP start time encoded as uint64_t
@@ -443,7 +465,7 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   struct timespec start_ts;       // MA clock basis
   struct timespec delta_ts;       // delta between MA and OT clock basis
   struct timespec lag_ts;         // lag between now and start time
-  struct timespec dac_latency_ts = DAC_LATENCY_TS;
+  struct timespec latency_ts;     // output buffer duration, inclusive of DAC latency
   int32_t lag_ms;                 // lag in milliseconds between now and start time
   int ret;
 
@@ -464,9 +486,9 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
     DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
     return -1;
   }
-  timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding OUTPUTS_BUFFER_DURATION, in OwnTone time basis
-  ts->tv_sec -= OUTPUTS_BUFFER_DURATION; // Required to ensure we have sufficent data and are close to cliraop
-  timespec_subtract(ts, ts, &dac_latency_ts);
+  timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding latency, in OwnTone time basis
+  get_output_buffer_ts(&latency_ts);
+  timespec_subtract(ts, ts, &latency_ts);
   timespec_to_ntp(ts, &start_ns);
   timespec_subtract(&lag_ts, ts, &now_ts);
   DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld sec, %ld nsec\n", lag_ts.tv_sec, lag_ts.tv_nsec);
@@ -509,6 +531,7 @@ main(int argc, char **argv)
 
   uint64_t ntpstart = 0;
   int volume = 0;
+  uint64_t latency_ms = 0;
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
@@ -529,10 +552,14 @@ main(int argc, char **argv)
     { "command_pipe",  1, NULL, 514 },
     { "auth",          1, NULL, 515 },
     { "dacp_id",       1, NULL, 516 },
-    { "active_remote", 1, NULL, 517 },
+    { "latency",       1, NULL, 517 },
+    // { "password",      1, NULL, 518 },
 
     { NULL,            0, NULL, 0   }
   };
+
+  ap2_device_info.auth_key = (char *)NULL;
+  ap2_device_info.password = (char *)NULL;
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
@@ -617,7 +644,7 @@ main(int argc, char **argv)
         break;
 
       case 515: // authorization key
-        ap2_device_info.auth_key = optarg;
+        ap2_device_info.auth_key = strdup(optarg);
         break;
 
       case 516: // dacp_id - DACP ID for remote control callbacks
@@ -629,17 +656,22 @@ main(int argc, char **argv)
         }
         DPRINTF(E_DBG, L_MAIN, "DACP ID set to: %" PRIX64 "\n", libhash);
         break;
-
-      case 517: // active_remote - Active-Remote ID for DACP device identification
-        ret = safe_atou32(optarg, &active_remote_override);
+      
+      case 517: // latency in ms - not inclusive of DAC latency
+        ret = safe_atou64(optarg, &latency_ms);
         if (ret < 0) {
-          fprintf(stderr, "Error: active_remote must be a decimal number in '--active_remote %s'\n", optarg);
+          fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        DPRINTF(E_DBG, L_MAIN, "Active-Remote override set to: %" PRIu32 "\n", active_remote_override);
+        latency_ms += 250; // Add the 250ms inherent latency of the device DAC
+        DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of 250ms DAC latency\n", latency_ms);
         break;
 
-        default:
+      // case 518: // device password
+      //   ap2_device_info.password = optarg;
+      //   break;
+
+      default:
       case '?':
         usage(argv[0]);
         return EXIT_FAILURE;
@@ -656,13 +688,22 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe == (char*)NULL
      ) {
       usage(argv[0]);
+      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
   }
+  
+  ap2_device_info.name = name;
+  ap2_device_info.hostname = hostname;
+  ap2_device_info.address = address;
+  ap2_device_info.port = port;
+  ap2_device_info.volume = volume;
+  ap2_device_info.latency_ms = latency_ms;
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
     fprintf(stderr, "Could not initialize log facility\n");
 
+    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -671,6 +712,7 @@ main(int argc, char **argv)
     DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
 
     logger_deinit();
+    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -687,12 +729,14 @@ main(int argc, char **argv)
     fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
 
     conffile_unload();
+    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
   // Check that named pipes exist for audio streaming and metadata
   ret = check_pipe(mass_named_pipes.audio_pipe);
   if (ret < 0) {
+    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
   if (!mass_named_pipes.metadata_pipe) {
@@ -702,11 +746,13 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
     );
     if (ret < 0) {
+      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
     }
   }
   ret = check_pipe(mass_named_pipes.metadata_pipe);
   if (ret < 0) {
+    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -719,19 +765,13 @@ main(int argc, char **argv)
       txt);
     goto txt_fail;
   }
+  ap2_device_info.txt = txt_kv;
 
   if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
     DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
     ap2_device_info.start_ts.tv_sec = 0;
     ap2_device_info.start_ts.tv_nsec = 0;
   }
-  
-  ap2_device_info.name = name;
-  ap2_device_info.hostname = hostname;
-  ap2_device_info.address = address;
-  ap2_device_info.port = port;
-  ap2_device_info.txt = txt_kv;
-  ap2_device_info.volume = volume;
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
@@ -928,5 +968,6 @@ main(int argc, char **argv)
   conffile_unload();
   logger_deinit();
 
+  sleep(1); // Provide time for MA logging to capture exit reason
   return ret;
 }

@@ -54,6 +54,7 @@ OWNTONE_SRC = \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
+    ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/player.c \
@@ -63,7 +64,6 @@ OWNTONE_SRC = \
 	$(LEXER_SRC) $(PARSER_SRC)
 
 cliap2_SOURCES = \
-    airplay.c \
     cliap2.c \
     conffile.c \
     mass.c \

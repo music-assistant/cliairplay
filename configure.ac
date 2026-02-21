@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([cliap2], [0.2])
+AC_INIT([cliap2], [1.1])
 
 AC_CONFIG_SRCDIR([config.h.in])
 AC_CONFIG_MACRO_DIR([m4])
