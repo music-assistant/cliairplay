@@ -11,9 +11,11 @@ typedef struct ap2_device_info
   int port;
   struct keyval *txt;
   char pin[5];
-  const char *auth_key;
+  char *auth_key;
   struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_MONOTONIC)
   int volume;
+  uint64_t latency_ms; // output buffer duration, inclusive of DAC latency
+  char *password; // unencryptd device password
 } ap2_device_info_t;
 
 typedef struct mass_named_pipes

@@ -388,8 +388,15 @@ int
 db_speaker_save(struct output_device *device)
 {
     if (device->auth_key) {
-        DPRINTF(E_INFO, L_DB, "%s:Device %s has authorization key '%s'\n", 
-            __func__, device->name, device->auth_key
+        if (ap2_device_info.auth_key) {
+            DPRINTF(E_DBG, L_DB, "%s:Replacing existing auth_key %s with %s\n",
+                __func__, ap2_device_info.auth_key, device->auth_key
+            );
+            free(ap2_device_info.auth_key);
+        }
+        ap2_device_info.auth_key = strdup(device->auth_key);
+        DPRINTF(E_DBG, L_DB, "%s:Device %s new authorization key is %s\n", 
+            __func__, ap2_device_info.name, ap2_device_info.auth_key
         );
     }
     return 0;
@@ -401,7 +408,7 @@ db_speaker_get(struct output_device *device, uint64_t id)
     device->id = id;
     device->selected = 1;
     device->volume = ap2_device_info.volume;
-    device->auth_key = (char *)ap2_device_info.auth_key; // lose the const qualifier
+    device->auth_key = ap2_device_info.auth_key;
     device->selected_format = MEDIA_FORMAT_ALAC;
 
     return 0;

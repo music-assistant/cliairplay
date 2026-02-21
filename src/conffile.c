@@ -31,12 +31,16 @@
 #include <pwd.h>
 
 #include <errno.h>
+#include <inttypes.h>
 
 #include <confuse.h>
 
 #include "logger.h"
 #include "misc.h"
 #include "conffile.h"
+#include "cliap2.h"
+
+extern ap2_device_info_t ap2_device_info;
 
 
 /* Forward */
@@ -63,6 +67,7 @@ static cfg_opt_t sec_general[] =
     CFG_STR("user_agent", PACKAGE_NAME "/" PACKAGE_VERSION, CFGF_NONE),
     CFG_BOOL("ssl_verifypeer", cfg_true, CFGF_NONE),
     CFG_BOOL("timer_test", cfg_false, CFGF_NONE),
+    CFG_INT("start_buffer_ms", 2250, CFGF_NONE),
     CFG_END()
   };
 
@@ -149,6 +154,8 @@ static cfg_opt_t sec_airplay[] =
     CFG_STR("password", NULL, CFGF_NONE),
     CFG_BOOL("raop_disable", cfg_false, CFGF_NONE),
     CFG_STR("nickname", NULL, CFGF_NONE),
+    // Hidden options
+    CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
     CFG_END()
   };
 
@@ -157,6 +164,8 @@ static cfg_opt_t sec_fifo[] =
   {
     CFG_STR("nickname", "fifo", CFGF_NONE),
     CFG_STR("path", NULL, CFGF_NONE),
+    // Hidden options
+    CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
     CFG_END()
   };
 
@@ -178,6 +187,8 @@ static cfg_opt_t sec_streaming[] =
     CFG_INT("sample_rate", 44100, CFGF_NONE),
     CFG_INT("bit_rate", 192, CFGF_NONE),
     CFG_INT("icy_metaint", 16384, CFGF_NONE),
+    // Hidden options
+    CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
     CFG_END()
   };
 
@@ -269,6 +280,34 @@ conffile_load(char *file)
 
         goto out_fail;
       }
+  }
+
+  // Override defaults using values from cliap2 arguments
+  if (ap2_device_info.latency_ms != 0) {
+    DPRINTF(E_DBG, L_CONF, "%s:Overriding default start_buffer_ms from %ld ms to %" PRIu64 " ms\n",
+      __func__,
+      cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms"),
+      ap2_device_info.latency_ms
+    );
+
+    char *buf;
+    asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap2_device_info.latency_ms);
+    cfg_parse_buf(cfg, buf);
+    DPRINTF(E_DBG, L_CONF, "%s:Parsed \"%s\" to derive new start_buffer_ms value of %ld\n",
+      __func__, buf, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
+    );
+    free(buf);
+  }
+
+  if (ap2_device_info.password) {
+    char *buf;
+    asprintf(&buf, "airplay \"%s\" { password = \"%s\" }", ap2_device_info.name, ap2_device_info.password);
+    if (cfg_parse_buf(cfg, buf) != 0) {
+      DPRINTF(E_LOG, L_CONF, "%s:Error setting password configuration with %s\n", __func__, buf);
+      free(buf);
+      goto out_fail;
+    }
+    free(buf);
   }
 
   return 0;
