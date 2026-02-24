@@ -131,7 +131,7 @@ static cfg_opt_t sec_mass[] =
   {
     CFG_INT("pcm_sample_rate", 44100, CFGF_NONE),
     CFG_INT("pcm_bits_per_sample", 16, CFGF_NONE),
-
+    CFG_INT("pcm_channels", 2, CFGF_NONE),
   };
 
 

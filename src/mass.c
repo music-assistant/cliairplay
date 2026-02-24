@@ -107,8 +107,9 @@ static struct timespec paused_start_ts = {0, 0};
 static bool player_started = false;
 static bool player_paused = false;
 static int pipe_id = 0; // make a global of the id of our audio named pipe
-static pthread_mutex_t pause_lock;
+static pthread_mutex_t audio_command_lock; // for mass_cmd <> mass_aud inter-thread cooridnation
 static bool pause_flag = false; // we control when to pause and (re)commence reading from the audio pipe
+static bool stop_flag = false; // used to communicate the receipt of a STOP command between mass_cmd and mass_aud threads
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -1198,6 +1199,10 @@ mass_timer_cb(int fd, short what, void *arg)
 
     }
   }
+  else if (player_started && status.status == PLAY_STOPPED) {
+    DPRINTF(E_DBG, L_PLAYER, "%s:Time to exit gracefully\n", __func__);
+    exit(0);
+  }
   else { // this state can happen when audio has not yet been received on the named pipe
     DPRINTF(E_DBG, L_PLAYER, "%s:Player %sstarted. status:%s\n", __func__,
       player_started ? "" : "not ", play_status_str(status.status)
@@ -1210,6 +1215,19 @@ mass_timer_cb(int fd, short what, void *arg)
 }
 
 /**
+ * Sets the stop flag
+ * @note  This function runs in the mass_cmd thread and shares the stop flag with the
+ *        mass_aud thread. It therefore updates the flag within a mutex lock.
+ */
+static void
+self_stop(void)
+{
+  pthread_mutex_lock(&audio_command_lock);
+  stop_flag = true;
+  pthread_mutex_unlock(&audio_command_lock);
+}
+
+/**
  * Sets the pause flag
  * @note  This function runs in the mass_cmd thread and shares the pause flag with the
  *        mass_aud thread. It therefore updates the flag within a mutex lock.
@@ -1217,9 +1235,9 @@ mass_timer_cb(int fd, short what, void *arg)
 static void
 self_pause(void)
 {
-  pthread_mutex_lock(&pause_lock);
+  pthread_mutex_lock(&audio_command_lock);
   pause_flag = true;
-  pthread_mutex_unlock(&pause_lock);
+  pthread_mutex_unlock(&audio_command_lock);
 }
 
 /**
@@ -1230,9 +1248,9 @@ self_pause(void)
 static void
 self_resume(void)
 {
-  pthread_mutex_lock(&pause_lock);
+  pthread_mutex_lock(&audio_command_lock);
   pause_flag = false;
-  pthread_mutex_unlock(&pause_lock);
+  pthread_mutex_unlock(&audio_command_lock);
 }
 
 /**
@@ -1396,20 +1414,10 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_STOP) {
     DPRINTF(E_DBG, L_PLAYER, "%s:STOP:Stopping playback from command pipe command\n", __func__);
-    // We want to gracefully exit when we receive the STOP command. No longer working!
-    // Music Assistant is sending a signal to cause graceful exit, so this is ok for the moment.
-    if (status.status == PLAY_PLAYING) {
-      self_pause();
-      input_flush(NULL); // we don't care about losing data for the input_buffer on stop.
-      // Report status to Music Assistant
-      DPRINTF(E_INFO, L_PLAYER, "%s:Stop at %" PRIu32 "\n", __func__, status.pos_ms);
-      // work out a way to initate a graceful exit and call that function here.
-    }
-    else {
-      DPRINTF(E_WARN, L_PLAYER, "%s:Command received to STOP playback, but current state is %s. Ignoring command.\n",
-        __func__, play_status_str(status.status)
-      );
-    }
+    self_stop();
+    input_flush(NULL); // we don't care about losing data for the input_buffer on stop.
+    // Report status to Music Assistant
+    DPRINTF(E_INFO, L_PLAYER, "%s:Stop at %" PRIu32 "\n", __func__, status.pos_ms);
   }
 
  readd:
@@ -1564,13 +1572,19 @@ play(struct input_source *source)
   static size_t read_bytes = 0;
 #endif
 
-  pthread_mutex_lock(&pause_lock);
+  pthread_mutex_lock(&audio_command_lock);
   if (pause_flag) {
-    pthread_mutex_unlock(&pause_lock);
+    pthread_mutex_unlock(&audio_command_lock);
     input_wait();
     return 0; // loop
   }
-  pthread_mutex_unlock(&pause_lock);
+  if (stop_flag) {
+    input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
+    stop(source);
+    DPRINTF(E_INFO, L_PLAYER, "%s:STOP command initiated shutdown\n", __func__);
+    return -1;
+  }
+  pthread_mutex_unlock(&audio_command_lock);
 
   ret = evbuffer_read(source->evbuf, pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
   if (ret == 0) {
@@ -1700,7 +1714,7 @@ mass_init(void)
   // audio named pipe.
 
   CHECK_ERR(L_PLAYER, mutex_init(&pipe_metadata.prepared.lock));
-  CHECK_ERR(L_PLAYER, mutex_init(&pause_lock));
+  CHECK_ERR(L_PLAYER, mutex_init(&audio_command_lock));
 
   pipe_metadata.prepared.pict_tmpfile_fd = -1;
 
@@ -1737,7 +1751,7 @@ mass_deinit(void)
   pipe_thread_stop();
 
   CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
-  CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&pause_lock));
+  CHECK_ERR(L_PLAYER, pthread_mutex_destroy(&audio_command_lock));
 }
 
 /**

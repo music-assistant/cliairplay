@@ -294,7 +294,7 @@ int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
     if (qp->type == Q_ITEMS) {
-        DPRINTF(E_SPAM, L_DB, "Q_ITEMS. reshuffle:%c, item_id:%d\n", reshuffle, item_id);
+        DPRINTF(E_SPAM, L_DB, "%s:Q_ITEMS. reshuffle:%c, item_id:%d\n", __func__, reshuffle, item_id);
         if (position == -1) {
             // Add to end of queue
              struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));
@@ -310,9 +310,9 @@ db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id,
             item->data_kind = DATA_KIND_PIPE; // this is all we support for the moment
             item->media_kind = MEDIA_KIND_MUSIC; // we only support audio
             item->path = mass_named_pipes.audio_pipe;
-            item->bitrate = 0; // I don't think value matters for us.
+            item->bitrate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
             item->samplerate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
-            item->channels = 2;
+            item->channels = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_channels");
             if (db_queue_insert_atend(item)) {
                 if (count) *count = 1;
                 if (new_item_id) *new_item_id = item->id;
