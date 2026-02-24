@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <sys/socket.h>
 
 // Owntones headers
 #include "artwork.h"
@@ -486,11 +487,12 @@ int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
     if (!strncmp(AIRPLAY_SERVICE_TYPE, type, strlen(AIRPLAY_SERVICE_TYPE))) {
+        int family = strchr(ap2_device_info.address, ':') ? AF_INET6 : AF_INET;
         cb(ap2_device_info.name,
            AIRPLAY_SERVICE_TYPE,
            "local",
            ap2_device_info.hostname,
-           AF_INET,
+           family,
            ap2_device_info.address,
            ap2_device_info.port,
            ap2_device_info.txt);
