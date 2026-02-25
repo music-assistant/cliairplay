@@ -109,7 +109,8 @@ m4/lib-*.m4
 *.conf
 
 # Built package
-cliap2
+src/cliap
+src/cliap2
 
 # Test harness
 test*

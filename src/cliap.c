@@ -203,15 +203,15 @@ usage(char *program)
   printf("  --loglevel <number>                               Log level (0-5)\n");
   printf("  --logfile <filename>                              Log filename. Not supplying this argument will result in logging to stderr only.\n");
   printf("  --config <file>                                   Use <file> for the configuration file. No config file used if omitted.\n");
-  printf("  --name <name>                                     Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --hostname <hostname>                             Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --address <address>                               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --port <port>                                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --txt <txt>                                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --name <name>                                     Name of the AirPlay device. Mandatory in absence of --ntp.\n");
+  printf("  --hostname <hostname>                             Hostname of AirPlay device. Mandatory in absence of --ntp.\n");
+  printf("  --address <address>                               IP address to bind to for AirPlay service. Mandatory in absence of --ntp.\n");
+  printf("  --port <port>                                     Port number to bind to for AirPlay service. Mandatory in absence of --ntp.\n");
+  printf("  --txt <txt>                                       txt keyvals returned in mDNS for AirPlay service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                                 Authorization key.\n");
   printf("  --dacp_id <dacp_id>                               DACP ID (hex string) for remote control callbacks.\n");
-  printf("  --pipe <audio_filename>                           filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
-  printf("  --command_pipe <command_filename>                 filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
+  printf("  --pipe <audio_filename>                           Filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
+  printf("  --command_pipe <command_filename>                 Filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                                             Print current NTP time and exit.\n");
   printf("  --ntpstart <NTP>                                  Start playback at NTP. Mandatory in absence of --ntp.\n");
   printf("  --volume <volume>                                 Initial volume (0-100). Defaults to 0\n");
@@ -718,6 +718,7 @@ main(int argc, char **argv)
         ret = safe_atou64(optarg, (uint64_t *)&ntpstart);
         if (ret < 0) {
           fprintf(stderr, "Error: ntpstart must be an unsigned 64-bit integer in '--ntpstart %s'\n", optarg);
+          sleep(1);
           exit(EXIT_FAILURE);
         }
         break;
@@ -726,6 +727,7 @@ main(int argc, char **argv)
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
+          sleep(1);
           exit(EXIT_FAILURE);
         }
         break;
@@ -734,6 +736,7 @@ main(int argc, char **argv)
         ret = safe_atoi32(optarg, &airplay_version);
         if (ret < 0) {
           fprintf(stderr, "Error: AirPlay version must be an integer in '--version %s\n", optarg);
+          sleep(1);
           exit(EXIT_FAILURE);
         }
         switch (airplay_version) {
@@ -747,6 +750,7 @@ main(int argc, char **argv)
             fprintf(stderr, "Error: AirPlay version must be one of %d or %d in '--version %s\n",
               RAOP, AIRPLAY2, optarg
             );
+            sleep(1);
             exit(EXIT_FAILURE);
         }
 
