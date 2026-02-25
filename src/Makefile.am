@@ -1,5 +1,5 @@
 AUTOMAKE_OPTIONS = subdir-objects
-bin_PROGRAMS = cliap2
+bin_PROGRAMS = cliap
 
 GPERF_FILES = \
 	../owntone-server/src/daap_query.gperf \
@@ -37,8 +37,8 @@ PAIR_AP_SRC = \
 # Local copies of logger.c and misc.c with _exit() fix instead of abort()
 # to prevent hanging on pthread_mutex errors during shutdown
 LOCAL_PATCHED_SRC = \
-    logger.c \
-    misc.c
+    airplay.c \
+    transcode.c
 
 OWNTONE_SRC = \
     ../owntone-server/src/commands.c \
@@ -51,20 +51,21 @@ OWNTONE_SRC = \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
     ../owntone-server/src/listener.c \
+    ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
+    ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
-    ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
+    ../owntone-server/src/outputs/raop.c \
     ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/player.c \
-    ../owntone-server/src/transcode.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
 
-cliap2_SOURCES = \
-    cliap2.c \
+cliap_SOURCES = \
+    cliap.c \
     conffile.c \
     mass.c \
     wrappers.c \
@@ -72,7 +73,7 @@ cliap2_SOURCES = \
     $(OWNTONE_SRC) \
     $(PAIR_AP_SRC)
 
-cliap2_CPPFLAGS = \
+cliap_CPPFLAGS = \
 	$(OWNTONE_CPPFLAGS) \
 	$(OWNTONE_OPTS_CPPFLAGS) \
 	$(COMMON_CPPFLAGS) \
@@ -84,10 +85,10 @@ cliap2_CPPFLAGS = \
 	-DSTATEDIR=\"$(localstatedir)\"
 
 # TODO: @bradkeifer Eliminate debug flags before first production release
-cliap2_CFLAGS = \
+cliap_CFLAGS = \
     -ggdb -Og -Wall
 
-cliap2_LDADD = \
+cliap_LDADD = \
 	$(OWNTONE_LIBS) \
 	$(OWNTONE_OPTS_LIBS) \
 	$(COMMON_LIBS)

@@ -1,6 +1,6 @@
 /*
  * Wrapper functions to emulate owntones functions that are not required for 
- * cliap2. 
+ * cliap. 
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -31,11 +31,12 @@
 
 // Music Assistant specific headers
 #include "wrappers.h"
-#include "cliap2.h"
+#include "cliap.h"
 
 #define AIRPLAY_SERVICE_TYPE "_airplay._tcp"
+#define RAOP_SERVICE_TYPE "_raop._tcp"
 
-extern ap2_device_info_t ap2_device_info;
+extern ap_device_info_t ap_device_info;
 extern mass_named_pipes_t mass_named_pipes;
 
 /*
@@ -311,9 +312,9 @@ db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id,
             item->data_kind = DATA_KIND_PIPE; // this is all we support for the moment
             item->media_kind = MEDIA_KIND_MUSIC; // we only support audio
             item->path = mass_named_pipes.audio_pipe;
-            item->bitrate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
-            item->samplerate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
-            item->channels = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_channels");
+            item->bitrate = ap_device_info.quality.bit_rate;
+            item->samplerate = ap_device_info.quality.sample_rate;
+            item->channels = ap_device_info.quality.channels;
             if (db_queue_insert_atend(item)) {
                 if (count) *count = 1;
                 if (new_item_id) *new_item_id = item->id;
@@ -389,15 +390,15 @@ int
 db_speaker_save(struct output_device *device)
 {
     if (device->auth_key) {
-        if (ap2_device_info.auth_key) {
+        if (ap_device_info.auth_key) {
             DPRINTF(E_DBG, L_DB, "%s:Replacing existing auth_key %s with %s\n",
-                __func__, ap2_device_info.auth_key, device->auth_key
+                __func__, ap_device_info.auth_key, device->auth_key
             );
-            free(ap2_device_info.auth_key);
+            free(ap_device_info.auth_key);
         }
-        ap2_device_info.auth_key = strdup(device->auth_key);
+        ap_device_info.auth_key = strdup(device->auth_key);
         DPRINTF(E_DBG, L_DB, "%s:Device %s new authorization key is %s\n", 
-            __func__, ap2_device_info.name, ap2_device_info.auth_key
+            __func__, ap_device_info.name, ap_device_info.auth_key
         );
     }
     return 0;
@@ -408,8 +409,8 @@ db_speaker_get(struct output_device *device, uint64_t id)
 {
     device->id = id;
     device->selected = 1;
-    device->volume = ap2_device_info.volume;
-    device->auth_key = ap2_device_info.auth_key;
+    device->volume = ap_device_info.volume;
+    device->auth_key = ap_device_info.auth_key;
     device->selected_format = MEDIA_FORMAT_ALAC;
 
     return 0;
@@ -480,22 +481,34 @@ db_escape_string(const char *str)
 
  // Immediately call the mdns_browse_cb with the information about the 
  // airplay device we want to stream to.
- // TODO: @bradkeifer - see if we can trigger device connection after
- // the callback is complete. At the moment, device connection is triggered 
- // on receipt of first audio streaming data on the named pipe.
 int
 mdns_browse(char *type, mdns_browse_cb cb, enum mdns_options flags)
 {
-    if (!strncmp(AIRPLAY_SERVICE_TYPE, type, strlen(AIRPLAY_SERVICE_TYPE))) {
-        int family = strchr(ap2_device_info.address, ':') ? AF_INET6 : AF_INET;
-        cb(ap2_device_info.name,
+    if (ap_device_info.version == AIRPLAY2 && 
+        !strncmp(AIRPLAY_SERVICE_TYPE, type, strlen(AIRPLAY_SERVICE_TYPE)
+    )) {
+        int family = strchr(ap_device_info.address, ':') ? AF_INET6 : AF_INET;
+        cb(ap_device_info.name,
            AIRPLAY_SERVICE_TYPE,
            "local",
-           ap2_device_info.hostname,
+           ap_device_info.hostname,
            family,
-           ap2_device_info.address,
-           ap2_device_info.port,
-           ap2_device_info.txt);
+           ap_device_info.address,
+           ap_device_info.port,
+           ap_device_info.txt);
+    }
+    else if (ap_device_info.version == RAOP && 
+        !strncmp(RAOP_SERVICE_TYPE, type, strlen(RAOP_SERVICE_TYPE)
+    )) {
+        int family = strchr(ap_device_info.address, ':') ? AF_INET6 : AF_INET;
+        cb(ap_device_info.name,
+           RAOP_SERVICE_TYPE,
+           "local",
+           ap_device_info.hostname,
+           family,
+           ap_device_info.address,
+           ap_device_info.port,
+           ap_device_info.txt);
     }
     return 0;
 }
@@ -596,19 +609,9 @@ output_wrapper_device_cb_set(struct output_device *device, int callback_id) {
     return;
 }
 
-static void
-output_wrapper_device_free_extra(struct output_device *device) {
-    return;
-}
-
 static int
 output_wrapper_set_volume_one(struct output_device *device, int callback_id) {
     return 1;
-}
-
-static int
-output_wrapper_volume_to_pct(struct output_device *device, const char *volume) {
-    return 50;
 }
 
 static void
@@ -626,43 +629,10 @@ output_wrapper_metadata_send(struct output_metadata *metadata) {
     return;
 }
 
-static void
-output_wrapper_metadata_purge(void) {
-    return;
-}
-
 static int
 output_wrapper_device_authorize(struct output_device *device, const char *pin, int callback_id) {
     return 1;
 }
-
-
-struct output_definition output_raop =
-{
-  .name = "AirPlay 1",
-  .type = OUTPUT_TYPE_RAOP,
-#ifdef PREFER_AIRPLAY2
-  .priority = 2,
-#else
-  .priority = 1,
-#endif
-  .disabled = 1,
-  .init = output_wrapper_init,
-  .deinit = output_wrapper_deinit,
-  .device_start = output_wrapper_device_start,
-  .device_stop = output_wrapper_device_stop,
-  .device_flush = output_wrapper_device_flush,
-  .device_probe = output_wrapper_device_probe,
-  .device_cb_set = output_wrapper_device_cb_set,
-  .device_free_extra = output_wrapper_device_free_extra,
-  .device_volume_set = output_wrapper_set_volume_one,
-  .device_volume_to_pct = output_wrapper_volume_to_pct,
-  .write = output_wrapper_write,
-  .metadata_prepare = output_wrapper_metadata_prepare,
-  .metadata_send = output_wrapper_metadata_send,
-  .metadata_purge = output_wrapper_metadata_purge,
-  .device_authorize = output_wrapper_device_authorize,
-};
 
 struct output_definition output_streaming =
 {

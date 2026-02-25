@@ -62,7 +62,7 @@
 #include <event2/buffer.h>
 
 #include "artwork.h"
-#include "cliap2.h"
+#include "cliap.h"
 #include "commands.h"
 #include "conffile.h"
 #include "db.h"
@@ -95,8 +95,8 @@
 
 // #define DEBUG_MASS 1
 
-/* from cliap2.c */
-extern ap2_device_info_t ap2_device_info;
+/* from cliap.c */
+extern ap_device_info_t ap_device_info;
 extern mass_named_pipes_t mass_named_pipes;
 
  /* mass specific stuff */
@@ -198,10 +198,6 @@ static pthread_t tid_command_pipe;
 static struct event_base *evbase_audio_pipe;
 static struct event_base *evbase_command_pipe;
 static struct commands_base *cmdbase;
-
-// From config - the sample rate and bps of the pipe input
-static int pipe_sample_rate;
-static int pipe_bits_per_sample;
 
 // Global list of pipes we are watching (if watching/autostart is enabled)
 static struct pipe *pipe_watch_list;
@@ -1293,7 +1289,7 @@ mass_speaker_authorize(void)
   if (!spk.requires_auth) {
     return;
   }
-  player_speaker_authorize(spk.id, ap2_device_info.pin);
+  player_speaker_authorize(spk.id, ap_device_info.pin);
 }
 
 /**
@@ -1367,7 +1363,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_PIN) {
     DPRINTF(E_DBG, L_PLAYER, "%s:Setting PIN from command pipe to %s\n", __func__, pipe_metadata.prepared.pin);
-    strncpy(ap2_device_info.pin, pipe_metadata.prepared.pin, sizeof(ap2_device_info.pin) - 1);
+    strncpy(ap_device_info.pin, pipe_metadata.prepared.pin, sizeof(ap_device_info.pin) - 1);
     mass_speaker_authorize();
     free(pipe_metadata.prepared.pin);
 
@@ -1529,9 +1525,9 @@ setup(struct input_source *source)
 
   source->input_ctx = pipe;
 
-  source->quality.sample_rate = pipe_sample_rate;
-  source->quality.bits_per_sample = pipe_bits_per_sample;
-  source->quality.channels = 2;
+  source->quality.sample_rate = ap_device_info.quality.sample_rate;
+  source->quality.bits_per_sample = ap_device_info.quality.bits_per_sample;
+  source->quality.channels = ap_device_info.quality.channels;
 
   return 0;
 }
@@ -1616,7 +1612,7 @@ play(struct input_source *source)
 
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
-  if (read_count == 1 && ap2_device_info.start_ts.tv_sec != 0) {
+  if (read_count == 1 && ap_device_info.start_ts.tv_sec != 0) {
     // We want to control the time of playback of the first audio packet
     flags |= INPUT_FLAG_SYNC;
   }
@@ -1663,7 +1659,7 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 static int
 ts_get(struct timespec *ts, struct input_source *source)
 {
-  *ts = ap2_device_info.start_ts;
+  *ts = ap_device_info.start_ts;
   return 0;
 }
 
@@ -1720,18 +1716,6 @@ mass_init(void)
 
   pipe_listener_cb(0, NULL); // We will be in the pipe thread once this returns
   CHECK_ERR(L_PLAYER, listener_add(pipe_listener_cb, LISTENER_DATABASE, NULL));
-
-  pipe_sample_rate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
-  if (pipe_sample_rate != 44100 && pipe_sample_rate != 48000 && pipe_sample_rate != 88200 && pipe_sample_rate != 96000) {
-    DPRINTF(E_FATAL, L_PLAYER, "The configuration of pcm_sample_rate is invalid: %d\n", pipe_sample_rate);
-    return -1;
-  }
-
-  pipe_bits_per_sample = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
-  if (pipe_bits_per_sample != 16 && pipe_bits_per_sample != 32) {
-    DPRINTF(E_FATAL, L_PLAYER, "The configuration of pipe_bits_per_sample is invalid: %d\n", pipe_bits_per_sample);
-    return -1;
-  }
   
   command_pipe_init();
 

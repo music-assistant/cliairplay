@@ -38,9 +38,9 @@
 #include "logger.h"
 #include "misc.h"
 #include "conffile.h"
-#include "cliap2.h"
+#include "cliap.h"
 
-extern ap2_device_info_t ap2_device_info;
+extern ap_device_info_t ap_device_info;
 
 
 /* Forward */
@@ -126,15 +126,6 @@ static cfg_opt_t sec_library[] =
     CFG_END()
   };
 
-  /* Music Assistant section structure */
-static cfg_opt_t sec_mass[] =
-  {
-    CFG_INT("pcm_sample_rate", 44100, CFGF_NONE),
-    CFG_INT("pcm_bits_per_sample", 16, CFGF_NONE),
-    CFG_INT("pcm_channels", 2, CFGF_NONE),
-  };
-
-
 /* AirPlay/ApEx shared section structure */
 static cfg_opt_t sec_airplay_shared[] =
   {
@@ -196,7 +187,6 @@ static cfg_opt_t sec_streaming[] =
 static cfg_opt_t toplvl_cfg[] =
   {
     CFG_SEC("general", sec_general, CFGF_NONE),
-    CFG_SEC("mass", sec_mass, CFGF_NONE),
     CFG_SEC("library", sec_library, CFGF_NONE),
     // CFG_SEC("audio", sec_audio, CFGF_NONE),
     // CFG_SEC("alsa", sec_alsa, CFGF_MULTI | CFGF_TITLE),
@@ -282,16 +272,16 @@ conffile_load(char *file)
       }
   }
 
-  // Override defaults using values from cliap2 arguments
-  if (ap2_device_info.latency_ms != 0) {
+  // Override defaults using values from cliap arguments
+  if (ap_device_info.latency_ms != 0) {
     DPRINTF(E_DBG, L_CONF, "%s:Overriding default start_buffer_ms from %ld ms to %" PRIu64 " ms\n",
       __func__,
       cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms"),
-      ap2_device_info.latency_ms
+      ap_device_info.latency_ms
     );
 
     char *buf;
-    asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap2_device_info.latency_ms);
+    asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap_device_info.latency_ms);
     cfg_parse_buf(cfg, buf);
     DPRINTF(E_DBG, L_CONF, "%s:Parsed \"%s\" to derive new start_buffer_ms value of %ld\n",
       __func__, buf, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
@@ -299,9 +289,9 @@ conffile_load(char *file)
     free(buf);
   }
 
-  if (ap2_device_info.password) {
+  if (ap_device_info.password) {
     char *buf;
-    asprintf(&buf, "airplay \"%s\" { password = \"%s\" }", ap2_device_info.name, ap2_device_info.password);
+    asprintf(&buf, "airplay \"%s\" { password = \"%s\" }", ap_device_info.name, ap_device_info.password);
     if (cfg_parse_buf(cfg, buf) != 0) {
       DPRINTF(E_LOG, L_CONF, "%s:Error setting password configuration with %s\n", __func__, buf);
       free(buf);
