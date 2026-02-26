@@ -145,6 +145,9 @@ static cfg_opt_t sec_airplay[] =
     CFG_STR("password", NULL, CFGF_NONE),
     CFG_BOOL("raop_disable", cfg_false, CFGF_NONE),
     CFG_STR("nickname", NULL, CFGF_NONE),
+    CFG_INT("sample_rate", 44100, CFGF_NONE),
+    CFG_INT("bits_per_sample", 16, CFGF_NONE),
+    CFG_INT("channels", 2, CFGF_NONE),
     // Hidden options
     CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
     CFG_END()
@@ -250,6 +253,7 @@ int
 conffile_load(char *file)
 {
   int ret;
+  char *buf = NULL;
 
   cfg = cfg_init(toplvl_cfg, CFGF_NONE);
 
@@ -274,26 +278,49 @@ conffile_load(char *file)
 
   // Override defaults using values from cliap arguments
   if (ap_device_info.latency_ms != 0) {
-    DPRINTF(E_DBG, L_CONF, "%s:Overriding default start_buffer_ms from %ld ms to %" PRIu64 " ms\n",
-      __func__,
-      cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms"),
-      ap_device_info.latency_ms
-    );
-
-    char *buf;
     asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap_device_info.latency_ms);
-    cfg_parse_buf(cfg, buf);
-    DPRINTF(E_DBG, L_CONF, "%s:Parsed \"%s\" to derive new start_buffer_ms value of %ld\n",
-      __func__, buf, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
-    );
+    if (cfg_parse_buf(cfg, buf) != 0) {
+      DPRINTF(E_LOG, L_CONF, "%s:Error overriding start_buffer_ms configuration with %s\n", __func__, buf);
+      free(buf);
+      goto out_fail;
+    }
     free(buf);
   }
 
   if (ap_device_info.password) {
-    char *buf;
     asprintf(&buf, "airplay \"%s\" { password = \"%s\" }", ap_device_info.name, ap_device_info.password);
     if (cfg_parse_buf(cfg, buf) != 0) {
-      DPRINTF(E_LOG, L_CONF, "%s:Error setting password configuration with %s\n", __func__, buf);
+      DPRINTF(E_LOG, L_CONF, "%s:Error overriding password configuration with %s\n", __func__, buf);
+      free(buf);
+      goto out_fail;
+    }
+    free(buf);
+  }
+
+  if (ap_device_info.quality.sample_rate != 0) {
+    asprintf(&buf, "airplay \"%s\" { sample_rate = %d }", ap_device_info.name, ap_device_info.quality.sample_rate);
+    if (cfg_parse_buf(cfg, buf) != 0) {
+      DPRINTF(E_LOG, L_CONF, "%s:Error overriding sample_rate configuration with %s\n", __func__, buf);
+      free(buf);
+      goto out_fail;
+    }
+    free(buf);
+  }
+
+  if (ap_device_info.quality.bits_per_sample != 0) {
+    asprintf(&buf, "airplay \"%s\" { bits_per_sample = %d }", ap_device_info.name, ap_device_info.quality.bits_per_sample);
+    if (cfg_parse_buf(cfg, buf) != 0) {
+      DPRINTF(E_LOG, L_CONF, "%s:Error overriding bits_per_sample configuration with %s\n", __func__, buf);
+      free(buf);
+      goto out_fail;
+    }
+    free(buf);
+  }
+
+  if (ap_device_info.quality.channels != 0) {
+    asprintf(&buf, "airplay \"%s\" { channels = %d }", ap_device_info.name, ap_device_info.quality.channels);
+    if (cfg_parse_buf(cfg, buf) != 0) {
+      DPRINTF(E_LOG, L_CONF, "%s:Error overriding channels configuration with %s\n", __func__, buf);
       free(buf);
       goto out_fail;
     }

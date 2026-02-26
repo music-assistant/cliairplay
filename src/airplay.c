@@ -1198,7 +1198,7 @@ master_session_make(struct media_quality *quality)
 
   rms->quality = *quality;
   rms->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
-  rms->rawbuf_size = STOB(rms->samples_per_packet, quality->bits_per_sample, quality->channels);
+  rms->rawbuf_size = STOB(rms->samples_per_packet, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
   rms->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, rms->rawbuf = malloc(rms->rawbuf_size));
@@ -2522,16 +2522,22 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   int ret;
 
   stream = plist_new_dict();
-  wplist_dict_add_uint(stream, "audioFormat", 262144); // 0x40000 ALAC/44100/16/2
+  if (rs->master_session->quality.sample_rate == 44100)
+    wplist_dict_add_uint(stream, "audioFormat", 262144); // 0x40000 ALAC/44100/16/2
+  else if (rs->master_session->quality.sample_rate == 48000)
+    wplist_dict_add_uint(stream, "audioFormat", 2097152); // 0x200000 ALAC/48000/24/2
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
   wplist_dict_add_bool(stream, "isMedia", true); // ?
   wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
-  wplist_dict_add_uint(stream, "latencyMin", 11025); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
+  if (rs->master_session->quality.sample_rate == 44100)
+    wplist_dict_add_uint(stream, "latencyMin", 11025); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
+  else if (rs->master_session->quality.sample_rate == 48000)
+    wplist_dict_add_uint(stream, "latencyMin", 12000); // AIRPLAY_AUDIO_LATENCY_MS in samples 12000/48000 = 0.25 = 250ms
   wplist_dict_add_data(stream, "shk", rs->shared_secret, AIRPLAY_AUDIO_KEY_LEN);
   wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
-  wplist_dict_add_uint(stream, "sr", AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT); // sample rate
+  wplist_dict_add_uint(stream, "sr", rs->master_session->quality.sample_rate); // sample rate
   wplist_dict_add_uint(stream, "type", AIRPLAY_RTP_PAYLOADTYPE); // RTP type, 0x60 = 96 real time, 103 buffered
   wplist_dict_add_bool(stream, "supportsDynamicStreamID", false);
   wplist_dict_add_uint(stream, "streamConnectionID", rs->session_id); // Hopefully fine since we have one stream per session
@@ -3848,13 +3854,18 @@ airplay_device_cb(const char *name, const char *type, const char *domain, const 
 
   keyval_clear(&features_kv);
 
-  // Only default audio quality supported so far
-  // Maybe convert to config entry?
+  // Default audio quality
   rd->quality.sample_rate = AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT;
-  rd->quality.sample_rate = 48000;
   rd->quality.bits_per_sample = AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT;
-  rd->quality.bits_per_sample = 24;
   rd->quality.channels = AIRPLAY_QUALITY_CHANNELS_DEFAULT;
+
+  // And replace it with config if defined
+  if (devcfg && cfg_getint(devcfg, "sample_rate") != CFGF_NONE)
+    rd->quality.sample_rate = cfg_getint(devcfg, "sample_rate");
+  if (devcfg && cfg_getint(devcfg, "bits_per_sample") != CFGF_NONE)
+    rd->quality.bits_per_sample = cfg_getint(devcfg, "bits_per_sample");
+  if (devcfg && cfg_getint(devcfg, "channels") != CFGF_NONE)
+    rd->quality.channels = cfg_getint(devcfg, "channels");
 
   if (!quality_is_equal(&rd->quality, &airplay_quality_default))
     DPRINTF(E_INFO, L_AIRPLAY, "Device '%s' requested non-default audio quality (%d/%d/%d)\n", rd->name, rd->quality.sample_rate, rd->quality.bits_per_sample, rd->quality.channels);

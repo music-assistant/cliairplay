@@ -297,7 +297,7 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->audio_codec = AV_CODEC_ID_ALAC;
   if (quality->bits_per_sample == 16)
 	  settings->sample_format = AV_SAMPLE_FMT_S16P;
-  else if (quality->bits_per_sample ==24 || quality->bits_per_sample == 32)
+  else if (quality->bits_per_sample == 24 || quality->bits_per_sample == 32)
     settings->sample_format = AV_SAMPLE_FMT_S32P;
 	settings->frame_size = 352;
   DPRINTF(E_DBG, L_XCODE, "%s:XCODE_ALAC with quality bits per sample %d\n", __func__, quality->bits_per_sample);

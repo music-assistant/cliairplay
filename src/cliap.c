@@ -427,13 +427,11 @@ parse_quality(const char *str, struct media_quality *quality)
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract channels from %s\n", __func__, str);
   }
 
-  DPRINTF(E_DBG, L_MAIN, "%s:Extracted quality: sample rate=%d, bits per sample=%d, channels=%d\n",
-    __func__, q.sample_rate, q.bits_per_sample, q.channels
-  );
+  *quality = q;
 
-  quality->sample_rate = q.sample_rate;
-  quality->bits_per_sample = q.bits_per_sample;
-  quality->channels = q.channels;
+  DPRINTF(E_DBG, L_MAIN, "%s:Extracted quality: sample rate=%d, bits per sample=%d, channels=%d\n",
+    __func__, quality->sample_rate, quality->bits_per_sample, quality->channels
+  );
 
   return 0;
 }
