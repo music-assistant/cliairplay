@@ -220,6 +220,7 @@ usage(char *program)
   printf("  --quality <sample rate/bits per sample/channels>  Default is 44100/16/2\n");
   printf("  --password <password>                             Device password. Only relevant for AirPlay version 1 (RAOP)\n");
   printf("\n\n");
+  fflush(stdout);
 }
 
 
@@ -666,6 +667,14 @@ main(int argc, char **argv)
   ap_device_info.quality.channels = 2;
   ap_device_info.quality.bit_rate = 0; // Not sure when this gets used - need to validate
 
+  // Ensure stderr is unbuffered. Something from MA or from Python is resulting in stderr not being unbufferred.
+  ret = setvbuf(stderr, NULL, _IONBF, 0);
+  if (ret < 0) {
+    fprintf(stderr, "Error: Unable to set stderr to unbuffered. %s\n", strerror(errno));
+    fflush(stderr);
+    return EXIT_FAILURE;
+  }
+
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
       case 500: // loglevel
@@ -718,8 +727,7 @@ main(int argc, char **argv)
         ret = safe_atou64(optarg, (uint64_t *)&ntpstart);
         if (ret < 0) {
           fprintf(stderr, "Error: ntpstart must be an unsigned 64-bit integer in '--ntpstart %s'\n", optarg);
-          sleep(1);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         break;
       
@@ -727,8 +735,7 @@ main(int argc, char **argv)
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
-          sleep(1);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         break;
 
@@ -736,8 +743,7 @@ main(int argc, char **argv)
         ret = safe_atoi32(optarg, &airplay_version);
         if (ret < 0) {
           fprintf(stderr, "Error: AirPlay version must be an integer in '--version %s\n", optarg);
-          sleep(1);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         switch (airplay_version) {
           case RAOP:
@@ -750,8 +756,7 @@ main(int argc, char **argv)
             fprintf(stderr, "Error: AirPlay version must be one of %d or %d in '--version %s\n",
               RAOP, AIRPLAY2, optarg
             );
-            sleep(1);
-            exit(EXIT_FAILURE);
+            return EXIT_FAILURE;
         }
 
         break;
@@ -778,19 +783,17 @@ main(int argc, char **argv)
         ret = safe_hextou64(optarg, &libhash);
         if (ret < 0) {
           fprintf(stderr, "Error: dacp_id must be a hex string in '--dacp_id %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
-        DPRINTF(E_DBG, L_MAIN, "DACP ID set to: %" PRIX64 "\n", libhash);
         break;
       
       case 517: // latency in ms - not inclusive of DAC latency
         ret = safe_atou64(optarg, &latency_ms);
         if (ret < 0) {
           fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         latency_ms += 250; // Add the 250ms inherent latency of the device DAC
-        DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of 250ms DAC latency\n", latency_ms);
         break;
 
       case 518: // device password
@@ -818,7 +821,6 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe == (char*)NULL
      ) {
       usage(argv[0]);
-      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
   }
   
@@ -832,17 +834,13 @@ main(int argc, char **argv)
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
     fprintf(stderr, "Could not initialize log facility\n");
-
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
   ret = conffile_load(configfile);
   if (ret != 0) {
     DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
-
     logger_deinit();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -857,16 +855,13 @@ main(int argc, char **argv)
   ret = logger_init(logfile, logdomains, loglevel, logformat);
   if (ret != 0) {
     fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
-
     conffile_unload();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
   // Check that named pipes exist for audio streaming and metadata
   ret = check_pipe(mass_named_pipes.audio_pipe);
   if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
   if (!mass_named_pipes.metadata_pipe) {
@@ -876,13 +871,11 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
     );
     if (ret < 0) {
-      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
     }
   }
   ret = check_pipe(mass_named_pipes.metadata_pipe);
   if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -914,7 +907,6 @@ main(int argc, char **argv)
   }
 
   if (validate_quality() < 0) {
-    sleep(1); // Provide time for MA to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -1114,6 +1106,5 @@ main(int argc, char **argv)
   conffile_unload();
   logger_deinit();
 
-  sleep(1); // Provide time for MA logging to capture exit reason
   return ret;
 }
