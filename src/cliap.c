@@ -344,7 +344,7 @@ ffmpeg_lockmgr(void **pmutex, enum AVLockOp op)
 #endif
 
 // Checks if quality values are valid for device
-// these checks need to be improved to differentiate RAOP v AirPlay 2 and also check AirPlay 2 features
+// returns 0 if valid, -1 if invalid
 static int
 validate_quality(void)
 {
@@ -382,9 +382,8 @@ validate_quality(void)
 
 // Parses a stirng of "sample_rate/bits_per_sample/channels" into a quality structure
 static int
-parse_quality(const char *str, struct media_quality *quality)
+parse_quality(const char *str, struct media_quality *q)
 {
-  struct media_quality q = {0, 0, 0};
   const char delim[] = "/";
   char *token;
   char *s;
@@ -402,7 +401,7 @@ parse_quality(const char *str, struct media_quality *quality)
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract sample rate from %s\n", __func__, str);
     return -1;
   }
-  ret = safe_atoi32(token, &q.sample_rate);
+  ret = safe_atoi32(token, &q->sample_rate);
   if (ret < 0) {
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract sample rate from %s\n", __func__, str);
   }
@@ -412,7 +411,7 @@ parse_quality(const char *str, struct media_quality *quality)
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract bits per sample from %s\n", __func__, str);
     return -1;
   }
-  ret = safe_atoi32(token, &q.bits_per_sample);
+  ret = safe_atoi32(token, &q->bits_per_sample);
   if (ret < 0) {
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract bits per sample from %s\n", __func__, str);
   }
@@ -422,15 +421,13 @@ parse_quality(const char *str, struct media_quality *quality)
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract channels from %s\n", __func__, str);
     return -1;
   }
-  ret = safe_atoi32(token, &q.channels);
+  ret = safe_atoi32(token, &q->channels);
   if (ret < 0) {
     DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract channels from %s\n", __func__, str);
   }
 
-  *quality = q;
-
   DPRINTF(E_DBG, L_MAIN, "%s:Extracted quality: sample rate=%d, bits per sample=%d, channels=%d\n",
-    __func__, quality->sample_rate, quality->bits_per_sample, quality->channels
+    __func__, q->sample_rate, q->bits_per_sample, q->channels
   );
 
   return 0;
@@ -630,6 +627,7 @@ main(int argc, char **argv)
   int volume = 0;
   uint64_t latency_ms = 0;
   struct keyval *txt_kv = NULL;
+  struct media_quality q = {0, 0, 0};
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
@@ -663,9 +661,8 @@ main(int argc, char **argv)
   ap_device_info.quality.sample_rate = 44100;
   ap_device_info.quality.bits_per_sample = 16;
   ap_device_info.quality.channels = 2;
-  ap_device_info.quality.bit_rate = 0; // Not sure when this gets used - need to validate
 
-  // Ensure stderr is unbuffered. Something from MA or from Python is resulting in stderr not being unbufferred.
+  // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
   ret = setvbuf(stderr, NULL, _IONBF, 0);
   if (ret < 0) {
     fprintf(stderr, "Error: Unable to set stderr to unbuffered. %s\n", strerror(errno));
@@ -835,6 +832,20 @@ main(int argc, char **argv)
     return EXIT_FAILURE;
   }
 
+  if (quality) {
+    ret = parse_quality(quality, &q);
+    if (ret < 0) {
+      DPRINTF(E_FATAL, L_MAIN, "Error: Unable to parse quality parameters in '--quality %s'\n", quality);
+      goto quality_fail;
+    }
+    ap_device_info.quality = q;
+  }
+  DPRINTF(E_DBG, L_MAIN, "%s:ap_device_info.quality = %d/%d/%d\n", __func__, 
+    ap_device_info.quality.sample_rate, 
+    ap_device_info.quality.bits_per_sample, 
+    ap_device_info.quality.channels
+  );
+
   ret = conffile_load(configfile);
   if (ret != 0) {
     DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
@@ -887,14 +898,6 @@ main(int argc, char **argv)
     goto txt_fail;
   }
   ap_device_info.txt = txt_kv;
-
-  if (quality) {
-    ret = parse_quality(quality, &ap_device_info.quality);
-    if (ret < 0) {
-      DPRINTF(E_FATAL, L_MAIN, "Error: Unable to parse quality parameters in '--quality %s'\n", quality);
-      goto quality_fail;
-    }
-  }
 
   // Improve this by moving it into mass.c and ignore audio that should be streamed before we can stream it
   // i.e. Replicate cliraop behaviour
