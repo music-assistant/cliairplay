@@ -300,7 +300,6 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
   else if (quality->bits_per_sample == 24 || quality->bits_per_sample == 32)
     settings->sample_format = AV_SAMPLE_FMT_S32P;
 	settings->frame_size = 352;
-  DPRINTF(E_DBG, L_XCODE, "%s:XCODE_ALAC with quality bits per sample %d\n", __func__, quality->bits_per_sample);
 	break;
 
       case XCODE_MP4_ALAC:
@@ -393,7 +392,7 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 
   if (quality && quality->bits_per_sample && (quality->bits_per_sample != 8 * av_get_bytes_per_sample(settings->sample_format)))
     {
-      // Hmm. We have a problem here with 24-bit media quality, because it uses 32-bit profile.
+      // 24-bit media quality uses 32-bit profile.
       if (av_get_bytes_per_sample(settings->sample_format) == 4 && quality->bits_per_sample == 24)
         return 0;
       DPRINTF(E_LOG, L_XCODE, "Bug! Mismatch between profile (%d bps) and media quality (%d bps)\n", 8 * av_get_bytes_per_sample(settings->sample_format), quality->bits_per_sample);
@@ -453,20 +452,13 @@ init_settings_from_audio(struct settings_ctx *settings, enum transcode_profile p
 	break;
 
       default:
-	if (settings->sample_format && settings->audio_codec && settings->format) {
-    DPRINTF(E_DBG, L_XCODE, "%s:sample_format=%d, audio_codec=%d, format=%s\n", 
-      __func__, settings->sample_format, settings->audio_codec, settings->format
-    );
+	if (settings->sample_format && settings->audio_codec && settings->format)
 	  return 0;
-  }
 
 	DPRINTF(E_LOG, L_XCODE, "Bug! Profile %d has unset encoding parameters\n", profile);
 	return -1;
     }
 
-  DPRINTF(E_DBG, L_XCODE, "%s:sample_format=%d, audio_codec=%d, format=%s\n", 
-    __func__, settings->sample_format, settings->audio_codec, settings->format
-  );
   return 0;
 }
 
@@ -2608,9 +2600,9 @@ transcode_metadata_strings_set(struct transcode_metadata_string *s, enum transco
 	s->codectype = "wav";
 	s->description = "WAV audio file";
 
-	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
+	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
 
-	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, q->bits_per_sample / 8, q->channels, len_ms);
+	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample / 8, q->channels, len_ms);
 	snprintf(s->file_size, sizeof(s->file_size), "%d", (int)bytes);
 	break;
 
@@ -2621,7 +2613,7 @@ transcode_metadata_strings_set(struct transcode_metadata_string *s, enum transco
 
 	snprintf(s->bitrate, sizeof(s->bitrate), "%d", q->bit_rate / 1000);
 
-	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, q->bits_per_sample / 8, q->channels, len_ms);
+	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample / 8, q->channels, len_ms);
 	snprintf(s->file_size, sizeof(s->file_size), "%d", (int)bytes);
 	break;
 
@@ -2630,9 +2622,9 @@ transcode_metadata_strings_set(struct transcode_metadata_string *s, enum transco
 	s->codectype = "alac";
 	s->description = "Apple Lossless audio file";
 
-	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
+	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
 
-	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, q->bits_per_sample / 8, q->channels, len_ms);
+	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample / 8, q->channels, len_ms);
 	snprintf(s->file_size, sizeof(s->file_size), "%d", (int)bytes);
 	break;
 
