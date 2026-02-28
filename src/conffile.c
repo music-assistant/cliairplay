@@ -256,7 +256,6 @@ conffile_load(char *file)
   char *buf = NULL;
 
   cfg = cfg_init(toplvl_cfg, CFGF_NONE);
-
   cfg_set_error_function(cfg, logger_confuse);
 
   if (file) { // makes config file optional
@@ -264,73 +263,69 @@ conffile_load(char *file)
 
     if (ret == CFG_FILE_ERROR)
       {
-        DPRINTF(E_FATAL, L_CONF, "Could not open config file %s\n", file);
-
+        DPRINTF(E_FATAL, L_CONF, "%s:Could not open config file %s\n", __func__, file);
         goto out_fail;
       }
     else if (ret == CFG_PARSE_ERROR)
       {
-        DPRINTF(E_FATAL, L_CONF, "Parse error in config file %s\n", file);
-
+        DPRINTF(E_FATAL, L_CONF, "%s: Parse error in config file %s\n", __func__, file);
         goto out_fail;
       }
   }
 
-  // Override defaults using values from cliap arguments
+  // General config
   if (ap_device_info.latency_ms != 0) {
-    asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap_device_info.latency_ms);
+    asprintf(&buf, "general {start_buffer_ms = %" PRIu64 "}", ap_device_info.latency_ms);
     if (cfg_parse_buf(cfg, buf) != 0) {
       DPRINTF(E_LOG, L_CONF, "%s:Error overriding start_buffer_ms configuration with %s\n", __func__, buf);
       free(buf);
       goto out_fail;
     }
+    DPRINTF(E_DBG, L_CONF, "%s:start_buffer_ms overidden to %ld\n",
+      __func__, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
+    );
     free(buf);
   }
 
+  // Airplay device specific config
+  // NOTE: Calling cfg_parse_buf more than once causes earlier invocations to be lost
+  // Password might be required for RAOP, and also can't declare a null password, hence the
+  // need for the ugly if statement below
   if (ap_device_info.password) {
-    asprintf(&buf, "airplay \"%s\" { password = \"%s\" }", ap_device_info.name, ap_device_info.password);
-    if (cfg_parse_buf(cfg, buf) != 0) {
-      DPRINTF(E_LOG, L_CONF, "%s:Error overriding password configuration with %s\n", __func__, buf);
-      free(buf);
-      goto out_fail;
-    }
-    free(buf);
+    asprintf(&buf, 
+      "airplay \"%s\" {sample_rate = %d\nbits_per_sample = %d\nchannels = %d\nraop_disable = %s\npassword = \"%s\"}",
+      ap_device_info.name, ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample, 
+      ap_device_info.quality.channels, (ap_device_info.version == RAOP) ? "false" : "true",
+      ap_device_info.password
+    );
   }
-
-  if (ap_device_info.quality.sample_rate != 0) {
-    asprintf(&buf, "airplay \"%s\" { sample_rate = %d }", ap_device_info.name, ap_device_info.quality.sample_rate);
-    if (cfg_parse_buf(cfg, buf) != 0) {
-      DPRINTF(E_LOG, L_CONF, "%s:Error overriding sample_rate configuration with %s\n", __func__, buf);
-      free(buf);
-      goto out_fail;
-    }
-    free(buf);
+  else {
+    asprintf(&buf, 
+      "airplay \"%s\" {sample_rate = %d\nbits_per_sample = %d\nchannels = %d\nraop_disable = %s}",
+      ap_device_info.name, ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample, 
+      ap_device_info.quality.channels, (ap_device_info.version == RAOP) ? "false" : "true"
+    );
   }
-
-  if (ap_device_info.quality.bits_per_sample != 0) {
-    asprintf(&buf, "airplay \"%s\" { bits_per_sample = %d }", ap_device_info.name, ap_device_info.quality.bits_per_sample);
-    if (cfg_parse_buf(cfg, buf) != 0) {
-      DPRINTF(E_LOG, L_CONF, "%s:Error overriding bits_per_sample configuration with %s\n", __func__, buf);
-      free(buf);
-      goto out_fail;
-    }
+  DPRINTF(E_DBG, L_CONF, "%s:%s\n", __func__, buf);
+  if (cfg_parse_buf(cfg, buf) != 0) {
+    DPRINTF(E_LOG, L_CONF, "%s:Error setting airplay device configuration with %s\n", __func__, buf);
     free(buf);
+    goto out_fail;
   }
-
-  if (ap_device_info.quality.channels != 0) {
-    asprintf(&buf, "airplay \"%s\" { channels = %d }", ap_device_info.name, ap_device_info.quality.channels);
-    if (cfg_parse_buf(cfg, buf) != 0) {
-      DPRINTF(E_LOG, L_CONF, "%s:Error overriding channels configuration with %s\n", __func__, buf);
-      free(buf);
-      goto out_fail;
-    }
-    free(buf);
-  }
-
+  free(buf);
+  DPRINTF(E_DBG, L_CONF, 
+    "%s:airplay %s config is {sample_rate = %ld, bits_per_sample = %ld, channels = %ld, raop_disable = %d, password = %s}\n",
+    __func__, ap_device_info.name, 
+    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "sample_rate"),
+    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "bits_per_sample"),
+    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "channels"),
+    cfg_getbool(cfg_gettsec(cfg, "airplay", ap_device_info.name), "raop_disable"),
+    cfg_getstr(cfg_gettsec(cfg, "airplay", ap_device_info.name), "password")
+  );
   return 0;
 
  out_fail:
-  cfg_free(cfg);
+  if (cfg) cfg_free(cfg);
 
   return -1;
 }
