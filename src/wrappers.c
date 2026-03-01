@@ -106,7 +106,6 @@ db_queue_fetch_byitemid(uint32_t item_id)
         }
         q = q->next;
     }
-    DPRINTF(E_SPAM, L_DB, "%s(%d) returning %p\n", __func__, item_id, ret);
     return ret; 
 }
 
@@ -156,9 +155,6 @@ db_queue_inc_version(void)
 int
 db_queue_delete_byitemid(uint32_t item_id)
 {
-
-    DPRINTF(E_SPAM, L_DB, "%s(%d)\n", __func__, item_id);
-
     // find the queue item, then remove it from the linked list and dealloc
     if (queue == NULL) // queue already empty
         return 0;
@@ -172,10 +168,8 @@ db_queue_delete_byitemid(uint32_t item_id)
             if (prev_node) {
                 // remove node from the linked list
                 prev_node->next = node->next;
-                DPRINTF(E_SPAM, L_DB, "%s:Removed node with item id %d from the queue\n", __func__, node->item.id);
                 // free memory alloced for node and break from loop
                 free(node);
-                DPRINTF(E_SPAM, L_DB, "%s:Free'd memory for node with item id %d from the queue\n", __func__, item_id);
                 break;
             }
         }
@@ -192,7 +186,6 @@ db_queue_delete_byitemid(uint32_t item_id)
 int
 db_queue_clear(uint32_t keep_item_id)
 {
-    DPRINTF(E_SPAM, L_DB, "%s(%d)\n", __func__, keep_item_id);
     if (queue == NULL) // queue already empty
         return 0;
     
@@ -296,7 +289,6 @@ int
 db_queue_add_by_query(struct query_params *qp, char reshuffle, uint32_t item_id, int position, int *count, int *new_item_id)
 {
     if (qp->type == Q_ITEMS) {
-        DPRINTF(E_SPAM, L_DB, "%s:Q_ITEMS. reshuffle:%c, item_id:%d\n", __func__, reshuffle, item_id);
         if (position == -1) {
             // Add to end of queue
              struct db_queue_item *item = (struct db_queue_item *)calloc(1, sizeof(struct db_queue_item));
@@ -460,7 +452,7 @@ free_queue_item(struct db_queue_item *qi, int content_only)
         return; // No db_queue_item to free
     }
 
-    DPRINTF(E_SPAM, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged.\n", 
+    DPRINTF(E_DBG, L_DB, "%s(qi->id:%d, content_only:%d):We will not free anything until %s fully debugged for metadata.\n", 
         __func__, qi->id, content_only, PACKAGE_NAME);
 
     return;
@@ -788,7 +780,7 @@ artwork_read_byurl(struct evbuffer *evbuf, const char *url)
   int format;
   int ret;
 
-  DPRINTF(E_SPAM, L_ART, "Trying internet artwork in %s\n", url);
+  DPRINTF(E_DBG, L_ART, "Trying internet artwork in %s\n", url);
 
   format = ART_E_ERROR;
   CHECK_NULL(L_ART, kv = keyval_alloc());
