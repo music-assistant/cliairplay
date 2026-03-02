@@ -72,7 +72,7 @@
 #define AIRPLAY_USE_AUTH_SETUP               0
 
 // Full traffic dumps in the log in debug mode
-#define AIRPLAY_DUMP_TRAFFIC                 0
+#define AIRPLAY_DUMP_TRAFFIC                 1
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -2025,11 +2025,29 @@ packets_send(struct airplay_master_session *rms)
   struct rtp_packet *pkt;
   struct airplay_session *rs;
   int len;
+#ifdef AIRPLAY_DUMP_TRAFFIC
+  static uint64_t count = 0;
+  unsigned char *alac_data;
+  char *heading;
+#endif
 
   len = alac_encode(rms->encoded_buffer, rms->encode_ctx, rms->rawbuf, rms->rawbuf_size, rms->samples_per_packet, &rms->quality);
   if (len < 0)
     return -1;
 
+#ifdef AIRPLAY_DUMP_TRAFFIC
+  alac_data = malloc(len);
+  evbuffer_copyout(rms->encoded_buffer, alac_data, len);
+  if ((count % 1000) == 0) {
+    asprintf(&heading, "%d bytes ALAC data for RTP\n", len);
+    DHEXDUMP(E_DBG, L_AIRPLAY, alac_data, len, heading);
+    free(heading);
+  }
+  count++;
+  write(1, alac_data, len);
+  fflush(stdout);
+  free(alac_data);
+#endif
   pkt = rtp_packet_next(rms->rtp_session, len, rms->samples_per_packet, AIRPLAY_RTP_PAYLOADTYPE, 0);
 
   evbuffer_remove(rms->encoded_buffer, pkt->payload, pkt->payload_len);
@@ -2525,9 +2543,9 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
 
   stream = plist_new_dict();
   if (rs->master_session->quality.sample_rate == 44100)
-    wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
+    wplist_dict_add_uint(stream, "audioFormat", 262144); // 0x40000 ALAC/44100/16/2
   else if (rs->master_session->quality.sample_rate == 48000)
-    wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+    wplist_dict_add_uint(stream, "audioFormat", 2097152); // 0x200000 ALAC/48000/24/2
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
@@ -2941,13 +2959,19 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
       rs->control_port = uintval;
     }
 
+  item = plist_dict_get_item(stream, "type");
+  if (item)
+    {
+      plist_get_uint_val(item, &uintval);
+    }
+
   if (rs->data_port == 0 || rs->control_port == 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Missing port number in reply from '%s' (d=%u, c=%u)\n", rs->devname, rs->data_port, rs->control_port);
       goto error;
     }
 
-  DPRINTF(E_DBG, L_AIRPLAY, "Negotiated UDP streaming session; ports d=%u c=%u t=%u e=%u\n", rs->data_port, rs->control_port, rs->timing_port, rs->events_port);
+  DPRINTF(E_DBG, L_AIRPLAY, "Negotiated UDP streaming session type=%" PRIu64 "; ports d=%u c=%u t=%u e=%u\n", uintval, rs->data_port, rs->control_port, rs->timing_port, rs->events_port);
 
   rs->server_fd = net_connect(rs->address, rs->data_port, SOCK_DGRAM, "AirPlay data");
   if (rs->server_fd < 0)
@@ -3389,6 +3413,53 @@ response_handler_pair_verify2(struct evrtsp_request *req, struct airplay_session
   return AIRPLAY_SEQ_ABORT;
 }
 
+static enum airplay_seq_type
+response_handler_feedback(struct evrtsp_request *req, struct airplay_session *rs)
+{
+  plist_t response;
+  plist_t streams;
+  plist_t stream;
+  plist_t item;
+  uint64_t uintval;
+  int ret;
+
+  ret = wplist_from_evbuf(&response, req->input_buffer);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not parse plist from '%s'\n", rs->devname);
+      return AIRPLAY_SEQ_ABORT;
+    }
+
+  streams = plist_dict_get_item(response, "streams");
+  if (!streams)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not find streams item in response from '%s'\n", rs->devname);
+      goto error;
+    }
+
+  stream = plist_array_get_item(streams, 0);
+  if (!stream)
+    {
+      DPRINTF(E_LOG, L_AIRPLAY, "Could not find stream item in response from '%s'\n", rs->devname);
+      goto error;
+    }
+
+  item = plist_dict_get_item(stream, "type");
+  if (item)
+    {
+      plist_get_uint_val(item, &uintval);
+    }
+
+  DPRINTF(E_DBG, L_AIRPLAY, "POST /feedback response: type=%" PRIu64 "\n", uintval);
+
+  plist_free(response);
+  return AIRPLAY_SEQ_CONTINUE;
+
+ error:
+  plist_free(response);
+  return AIRPLAY_SEQ_ABORT;
+}
+
 
 /* ---------------------- Request/response sequence control ----------------- */
 
@@ -3501,7 +3572,7 @@ static struct airplay_seq_request airplay_seq_request[][7] =
     { AIRPLAY_SEQ_PAIR_TRANSIENT, "pair setup 2", EVRTSP_REQ_POST, payload_make_pair_setup2, response_handler_pair_setup2, "application/octet-stream", "/pair-setup", false },
   },
   {
-    { AIRPLAY_SEQ_FEEDBACK, "POST /feedback", EVRTSP_REQ_POST, NULL, NULL, NULL, "/feedback", true },
+    { AIRPLAY_SEQ_FEEDBACK, "POST /feedback", EVRTSP_REQ_POST, NULL, response_handler_feedback, NULL, "/feedback", true },
   },
 };
 

@@ -904,7 +904,7 @@ session_update_read_quality(struct media_quality *quality)
   pb_session.bufsize = STOB(samples_per_read, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
   pb_session.read_deficit_max = STOB(((uint64_t)quality->sample_rate * PLAYER_READ_BEHIND_MAX) / 1000, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
 
-  DPRINTF(E_DBG, L_PLAYER, "New session values (q=%d/%d/%d, spr=%d, bufsize=%zu)\n",
+  DPRINTF(E_DBG, L_PLAYER, "%s:New session values (q=%d/%d/%d, spr=%d, bufsize=%zu)\n", __func__,
     quality->sample_rate, quality->bits_per_sample, quality->channels, samples_per_read, pb_session.bufsize);
 
   if (pb_session.buffer)
