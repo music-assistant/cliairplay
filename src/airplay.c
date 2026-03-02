@@ -72,7 +72,10 @@
 #define AIRPLAY_USE_AUTH_SETUP               0
 
 // Full traffic dumps in the log in debug mode
-#define AIRPLAY_DUMP_TRAFFIC                 1
+#define AIRPLAY_DUMP_TRAFFIC                 0
+
+// dumps raw alac to stdout
+#define AIRPLAY_DUMP_ALAC                    0
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -2025,25 +2028,17 @@ packets_send(struct airplay_master_session *rms)
   struct rtp_packet *pkt;
   struct airplay_session *rs;
   int len;
-#ifdef AIRPLAY_DUMP_TRAFFIC
-  static uint64_t count = 0;
+#ifdef AIRPLAY_DUMP_ALAC
   unsigned char *alac_data;
-  char *heading;
 #endif
 
   len = alac_encode(rms->encoded_buffer, rms->encode_ctx, rms->rawbuf, rms->rawbuf_size, rms->samples_per_packet, &rms->quality);
   if (len < 0)
     return -1;
 
-#ifdef AIRPLAY_DUMP_TRAFFIC
+#ifdef AIRPLAY_DUMP_ALAC
   alac_data = malloc(len);
   evbuffer_copyout(rms->encoded_buffer, alac_data, len);
-  if ((count % 1000) == 0) {
-    asprintf(&heading, "%d bytes ALAC data for RTP\n", len);
-    DHEXDUMP(E_DBG, L_AIRPLAY, alac_data, len, heading);
-    free(heading);
-  }
-  count++;
   write(1, alac_data, len);
   fflush(stdout);
   free(alac_data);
