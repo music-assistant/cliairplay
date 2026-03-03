@@ -41,7 +41,8 @@
 
 // Disallow further writes to the buffer when its size exceeds this threshold.
 // The below gives us room to buffer 2 seconds of 48000/24/2 audio.
-#define INPUT_BUFFER_THRESHOLD STOB(96000, 24, 2)
+// Change this back to 42 when global STOB change is made
+#define INPUT_BUFFER_THRESHOLD STOB(96000, 32, 2)
 // How long (in nsec) to wait when the input buffer is full before looping
 #define INPUT_LOOP_TIMEOUT_NSEC 10000000
 // How long (in sec) to keep an input open without the player reading from it
@@ -818,7 +819,7 @@ input_read(void *data, size_t size, short *flag, void **flagdata)
   if (*flag & INPUT_FLAG_QUALITY)
     input_buffer.cur_read_quality = *((struct media_quality *)(*flagdata));
 
-  size_t one_sec_size = STOB(input_buffer.cur_read_quality.sample_rate, input_buffer.cur_read_quality.bits_per_sample, input_buffer.cur_read_quality.channels);
+  size_t one_sec_size = STOB(input_buffer.cur_read_quality.sample_rate, (input_buffer.cur_read_quality.bits_per_sample == 24) ? 32 : input_buffer.cur_read_quality.bits_per_sample, input_buffer.cur_read_quality.channels);
   debug_elapsed += len;
   if (*flag || (debug_elapsed > 10 * one_sec_size))
     {

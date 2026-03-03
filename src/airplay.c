@@ -1201,7 +1201,7 @@ master_session_make(struct media_quality *quality)
 
   rms->quality = *quality;
   rms->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
-  rms->rawbuf_size = STOB(rms->samples_per_packet, quality->bits_per_sample, quality->channels);
+  rms->rawbuf_size = STOB(rms->samples_per_packet, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
   rms->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, rms->rawbuf = malloc(rms->rawbuf_size));

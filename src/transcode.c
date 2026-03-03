@@ -2600,7 +2600,7 @@ transcode_metadata_strings_set(struct transcode_metadata_string *s, enum transco
 	s->codectype = "wav";
 	s->description = "WAV audio file";
 
-	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
+	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
 
 	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, ((q->bits_per_sample == 24) ? 32 : q->bits_per_sample) / 8, q->channels, len_ms);
 	snprintf(s->file_size, sizeof(s->file_size), "%d", (int)bytes);
@@ -2622,7 +2622,7 @@ transcode_metadata_strings_set(struct transcode_metadata_string *s, enum transco
 	s->codectype = "alac";
 	s->description = "Apple Lossless audio file";
 
-	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
+	snprintf(s->bitrate, sizeof(s->bitrate), "%d", 8 * STOB(q->sample_rate, (q->bits_per_sample == 24) ? 32 : q->bits_per_sample, q->channels) / 1000); // 44100/16/2 -> 1411
 
 	bytes = size_estimate(profile, q->bit_rate, q->sample_rate, ((q->bits_per_sample == 24) ? 32 : q->bits_per_sample) / 8, q->channels, len_ms);
 	snprintf(s->file_size, sizeof(s->file_size), "%d", (int)bytes);

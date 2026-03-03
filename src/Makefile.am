@@ -39,6 +39,8 @@ PAIR_AP_SRC = \
 LOCAL_PATCHED_SRC = \
     airplay.c \
     input.c \
+    outputs.c \
+    player.c \
     transcode.c
 
 OWNTONE_SRC = \
@@ -55,11 +57,9 @@ OWNTONE_SRC = \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_xml.c \
-    ../owntone-server/src/outputs.c \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/raop.c \
     ../owntone-server/src/outputs/rtp_common.c \
-    ../owntone-server/src/player.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
