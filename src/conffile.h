@@ -7,7 +7,7 @@
 
 #include <confuse.h>
 
-#define CONFFILE   CONFDIR "/cliap2.conf"
+#define CONFFILE   CONFDIR "/" PKG ".conf"
 
 // Some shorthand macros for poor man's
 #define CFG_NAME_UNKNOWN_TITLE (cfg_getstr(cfg_getsec(cfg, "library"), "name_unknown_title"))

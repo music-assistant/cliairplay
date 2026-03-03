@@ -2,7 +2,7 @@
 #define __WRAPPERS_H__
 
 #include "misc.h"
-#include "cliap2.h"
+#include "cliap.h"
 
 /*
  * Wrappers for db.c

@@ -67,7 +67,7 @@
 #include "worker.h"
 #include "outputs/rtp_common.h"
 #include "wrappers.h"
-#include "cliap2.h"
+#include "cliap.h"
 #include "mass.h"
 
 #define AIRPLAY2_CONNECT_TIME_MS (int32_t) 2500 // Minimum time we need to connect and buffer before starting playback
@@ -89,7 +89,7 @@
 struct event_base *evbase_main;
 static struct event *sig_event;
 static int main_exit;
-ap2_device_info_t ap2_device_info;
+ap_device_info_t ap_device_info;
 mass_named_pipes_t mass_named_pipes = {0, 0};
 
 static inline void
@@ -200,25 +200,27 @@ usage(char *program)
   printf("\n");
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
-  printf("  --loglevel <number>               Log level (0-5)\n");
-  printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
-  printf("  --config <file>                   Use <file> for the configuration file. No config file used if omitted.\n");
-  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --auth <auth_key>                 Authorization key.\n");
-  printf("  --dacp_id <dacp_id>               DACP ID (hex string) for remote control callbacks.\n");
-  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
-  printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
-  printf("  --ntp                             Print current NTP time and exit.\n");
-  printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
-  printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
-  printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
-  // printf("  --password <password>             Device password.\n");
-  printf("  -v, --version                     Display version information and exit\n");
+  printf("  --loglevel <number>                               Log level (0-5)\n");
+  printf("  --logfile <filename>                              Log filename. Not supplying this argument will result in logging to stderr only.\n");
+  printf("  --config <file>                                   Use <file> for the configuration file. No config file used if omitted.\n");
+  printf("  --name <name>                                     Name of the AirPlay device. Mandatory in absence of --ntp.\n");
+  printf("  --hostname <hostname>                             Hostname of AirPlay device. Mandatory in absence of --ntp.\n");
+  printf("  --address <address>                               IP address to bind to for AirPlay service. Mandatory in absence of --ntp.\n");
+  printf("  --port <port>                                     Port number to bind to for AirPlay service. Mandatory in absence of --ntp.\n");
+  printf("  --txt <txt>                                       txt keyvals returned in mDNS for AirPlay service. Mandatory in absence of --ntp.\n");
+  printf("  --auth <auth_key>                                 Authorization key.\n");
+  printf("  --dacp_id <dacp_id>                               DACP ID (hex string) for remote control callbacks.\n");
+  printf("  --pipe <audio_filename>                           Filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
+  printf("  --command_pipe <command_filename>                 Filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
+  printf("  --ntp                                             Print current NTP time and exit.\n");
+  printf("  --ntpstart <NTP>                                  Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --volume <volume>                                 Initial volume (0-100). Defaults to 0\n");
+  printf("  --latency <latency>                               ms of data to buffer in the output buffer. Defaults to 2000\n");
+  printf("  --version <airplay_version>                       Version of AirPlay protocol to use. 1 = RAOP, 2 = AirPlay 2. Default is AirPlay 2\n");
+  printf("  --quality <sample rate/bits per sample/channels>  Default is 44100/16/2\n");
+  printf("  --password <password>                             Device password. Only relevant for AirPlay version 1 (RAOP)\n");
   printf("\n\n");
+  fflush(stdout);
 }
 
 
@@ -340,6 +342,96 @@ ffmpeg_lockmgr(void **pmutex, enum AVLockOp op)
   return 1;
 }
 #endif
+
+// Checks if quality values are valid for device
+// returns 0 if valid, -1 if invalid
+static int
+validate_quality(void)
+{
+  DPRINTF(E_DBG, L_MAIN, "%s:Validating quality %d/%d/%d for AirPlay version %d\n",
+    __func__, ap_device_info.quality.sample_rate,
+    ap_device_info.quality.bits_per_sample, ap_device_info.quality.channels,
+    ap_device_info.version
+  );
+
+  // Check validity of q values
+  if (ap_device_info.quality.sample_rate == 44100 && 
+       ap_device_info.quality.bits_per_sample == 16 && 
+       ap_device_info.quality.channels == 2)
+  {
+    return 0;
+
+  }
+  if (ap_device_info.quality.sample_rate == 48000 && 
+      ap_device_info.quality.bits_per_sample == 24 && 
+      ap_device_info.quality.channels == 2 &&
+      ap_device_info.version == AIRPLAY2) 
+  {
+    return 0;
+  }
+
+  DPRINTF(E_LOG, L_MAIN, 
+    "%s:Invalid quality parameters supplied (%d/%d/%d) for AirPlay version %d. "
+    "Supported values are 44100/16/2 or 4800/24/2 (AirPlay 2 only)\n",
+    __func__, ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample,
+    ap_device_info.quality.channels, ap_device_info.version
+  );
+
+  return -1;
+}
+
+// Parses a stirng of "sample_rate/bits_per_sample/channels" into a quality structure
+static int
+parse_quality(const char *str, struct media_quality *q)
+{
+  const char delim[] = "/";
+  char *token;
+  char *s;
+  int ret;
+
+  s = (char *)str;
+
+  if (!s) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Empty quality string passed\n", __func__);
+    return -1;
+  }
+  
+  token = strtok(s, delim);
+  if (token == NULL) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract sample rate from %s\n", __func__, str);
+    return -1;
+  }
+  ret = safe_atoi32(token, &q->sample_rate);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract sample rate from %s\n", __func__, str);
+  }
+  
+  token = strtok(NULL, delim);
+  if (token == NULL) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract bits per sample from %s\n", __func__, str);
+    return -1;
+  }
+  ret = safe_atoi32(token, &q->bits_per_sample);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract bits per sample from %s\n", __func__, str);
+  }
+  
+  token = strtok(NULL, delim);
+  if (token == NULL) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract channels from %s\n", __func__, str);
+    return -1;
+  }
+  ret = safe_atoi32(token, &q->channels);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_MAIN, "%s:Unable to extract channels from %s\n", __func__, str);
+  }
+
+  DPRINTF(E_DBG, L_MAIN, "%s:Extracted quality: sample rate=%d, bits per sample=%d, channels=%d\n",
+    __func__, q->sample_rate, q->bits_per_sample, q->channels
+  );
+
+  return 0;
+}
 
 // Parses a string of "key=value" "key=value" into a keyval struct
 static int
@@ -515,6 +607,7 @@ main(int argc, char **argv)
   char *logdomains = NULL;
   char *logfile = NULL;
   char *logformat = NULL;
+  int32_t airplay_version;
   const char *av_version;
   const char *gcry_version;
   sigset_t sigs;
@@ -528,11 +621,13 @@ main(int argc, char **argv)
   const char *hostname = NULL;
   const char *address = NULL;
   const char *txt = NULL;
+  const char *quality = NULL;
 
   uint64_t ntpstart = 0;
   int volume = 0;
   uint64_t latency_ms = 0;
   struct keyval *txt_kv = NULL;
+  struct media_quality q = {0, 0, 0};
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
@@ -546,20 +641,34 @@ main(int argc, char **argv)
     { "ntp",           0, NULL, 508 },
     { "ntpstart",      1, NULL, 509 },
     { "volume",        1, NULL, 510 },
-    { "version",       0, NULL, 511 },
+    { "version",       1, NULL, 511 },
     { "testrun",       0, NULL, 512 }, // Used for CI, not documented to user
     { "pipe",          1, NULL, 513 },
     { "command_pipe",  1, NULL, 514 },
     { "auth",          1, NULL, 515 },
     { "dacp_id",       1, NULL, 516 },
     { "latency",       1, NULL, 517 },
-    // { "password",      1, NULL, 518 },
+    { "password",      1, NULL, 518 },
+    { "quality",       1, NULL, 519 },
 
     { NULL,            0, NULL, 0   }
   };
 
-  ap2_device_info.auth_key = (char *)NULL;
-  ap2_device_info.password = (char *)NULL;
+  // Default device parameters
+  ap_device_info.auth_key = (char *)NULL;
+  ap_device_info.password = (char *)NULL;
+  ap_device_info.version = AIRPLAY2;
+  ap_device_info.quality.sample_rate = 44100;
+  ap_device_info.quality.bits_per_sample = 16;
+  ap_device_info.quality.channels = 2;
+
+  // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
+  ret = setvbuf(stderr, NULL, _IONBF, 0);
+  if (ret < 0) {
+    fprintf(stderr, "Error: Unable to set stderr to unbuffered. %s\n", strerror(errno));
+    fflush(stderr);
+    return EXIT_FAILURE;
+  }
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
@@ -613,7 +722,7 @@ main(int argc, char **argv)
         ret = safe_atou64(optarg, (uint64_t *)&ntpstart);
         if (ret < 0) {
           fprintf(stderr, "Error: ntpstart must be an unsigned 64-bit integer in '--ntpstart %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         break;
       
@@ -621,13 +730,30 @@ main(int argc, char **argv)
         ret = safe_atoi32(optarg, &volume);
         if (ret < 0) {
           fprintf(stderr, "Error: volume must be an integer in '--volume %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         break;
 
-      case 511: // version
-        version();
-        return EXIT_SUCCESS;
+      case 511: // AirPlay version
+        ret = safe_atoi32(optarg, &airplay_version);
+        if (ret < 0) {
+          fprintf(stderr, "Error: AirPlay version must be an integer in '--version %s\n", optarg);
+          return EXIT_FAILURE;
+        }
+        switch (airplay_version) {
+          case RAOP:
+            ap_device_info.version = RAOP;
+            break;
+          case AIRPLAY2:
+            ap_device_info.version = AIRPLAY2;
+            break;
+          default:
+            fprintf(stderr, "Error: AirPlay version must be one of %d or %d in '--version %s\n",
+              RAOP, AIRPLAY2, optarg
+            );
+            return EXIT_FAILURE;
+        }
+
         break;
 
       case 512: // testrun
@@ -644,7 +770,7 @@ main(int argc, char **argv)
         break;
 
       case 515: // authorization key
-        ap2_device_info.auth_key = strdup(optarg);
+        ap_device_info.auth_key = strdup(optarg);
         break;
 
       case 516: // dacp_id - DACP ID for remote control callbacks
@@ -652,24 +778,26 @@ main(int argc, char **argv)
         ret = safe_hextou64(optarg, &libhash);
         if (ret < 0) {
           fprintf(stderr, "Error: dacp_id must be a hex string in '--dacp_id %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
-        DPRINTF(E_DBG, L_MAIN, "DACP ID set to: %" PRIX64 "\n", libhash);
         break;
       
       case 517: // latency in ms - not inclusive of DAC latency
         ret = safe_atou64(optarg, &latency_ms);
         if (ret < 0) {
           fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
-          exit(EXIT_FAILURE);
+          return EXIT_FAILURE;
         }
         latency_ms += 250; // Add the 250ms inherent latency of the device DAC
-        DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of 250ms DAC latency\n", latency_ms);
         break;
 
-      // case 518: // device password
-      //   ap2_device_info.password = optarg;
-      //   break;
+      case 518: // device password
+        ap_device_info.password = optarg;
+        break;
+      
+      case 519: // quality
+        quality = optarg;
+        break;
 
       default:
       case '?':
@@ -688,31 +816,40 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe == (char*)NULL
      ) {
       usage(argv[0]);
-      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
   }
   
-  ap2_device_info.name = name;
-  ap2_device_info.hostname = hostname;
-  ap2_device_info.address = address;
-  ap2_device_info.port = port;
-  ap2_device_info.volume = volume;
-  ap2_device_info.latency_ms = latency_ms;
+  ap_device_info.name = name;
+  ap_device_info.hostname = hostname;
+  ap_device_info.address = address;
+  ap_device_info.port = port;
+  ap_device_info.volume = volume;
+  ap_device_info.latency_ms = latency_ms;
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
     fprintf(stderr, "Could not initialize log facility\n");
-
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
+
+  if (quality) {
+    ret = parse_quality(quality, &q);
+    if (ret < 0) {
+      DPRINTF(E_FATAL, L_MAIN, "Error: Unable to parse quality parameters in '--quality %s'\n", quality);
+      goto quality_fail;
+    }
+    ap_device_info.quality = q;
+  }
+  DPRINTF(E_DBG, L_MAIN, "%s:ap_device_info.quality = %d/%d/%d\n", __func__, 
+    ap_device_info.quality.sample_rate, 
+    ap_device_info.quality.bits_per_sample, 
+    ap_device_info.quality.channels
+  );
 
   ret = conffile_load(configfile);
   if (ret != 0) {
     DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
-
     logger_deinit();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -727,16 +864,13 @@ main(int argc, char **argv)
   ret = logger_init(logfile, logdomains, loglevel, logformat);
   if (ret != 0) {
     fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
-
     conffile_unload();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
   // Check that named pipes exist for audio streaming and metadata
   ret = check_pipe(mass_named_pipes.audio_pipe);
   if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
   if (!mass_named_pipes.metadata_pipe) {
@@ -746,13 +880,11 @@ main(int argc, char **argv)
       mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
     );
     if (ret < 0) {
-      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
     }
   }
   ret = check_pipe(mass_named_pipes.metadata_pipe);
   if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -765,12 +897,18 @@ main(int argc, char **argv)
       txt);
     goto txt_fail;
   }
-  ap2_device_info.txt = txt_kv;
+  ap_device_info.txt = txt_kv;
 
-  if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
+  // Improve this by moving it into mass.c and ignore audio that should be streamed before we can stream it
+  // i.e. Replicate cliraop behaviour
+  if (get_start_ts(&ap_device_info.start_ts, ntpstart) < 0) {
     DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
-    ap2_device_info.start_ts.tv_sec = 0;
-    ap2_device_info.start_ts.tv_nsec = 0;
+    ap_device_info.start_ts.tv_sec = 0;
+    ap_device_info.start_ts.tv_nsec = 0;
+  }
+
+  if (validate_quality() < 0) {
+    return EXIT_FAILURE;
   }
 
   /* Set up libevent logging callback */
@@ -957,6 +1095,7 @@ main(int argc, char **argv)
  ffmpeg_init_fail:
 #endif
 
+ quality_fail:
  txt_fail:
   if (txt_kv) keyval_clear(txt_kv);
 
@@ -968,6 +1107,5 @@ main(int argc, char **argv)
   conffile_unload();
   logger_deinit();
 
-  sleep(1); // Provide time for MA logging to capture exit reason
   return ret;
 }
