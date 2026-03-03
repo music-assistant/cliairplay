@@ -1201,9 +1201,7 @@ master_session_make(struct media_quality *quality)
 
   rms->quality = *quality;
   rms->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
-  // 24 bit sampling doesn't fit nicely into word boundaries, hence needs to consume 32-bits.
-  // Refer comments in libavutil/samplefmt.h
-  rms->rawbuf_size = STOB(rms->samples_per_packet, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
+  rms->rawbuf_size = STOB(rms->samples_per_packet, quality->bits_per_sample, quality->channels);
   rms->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, rms->rawbuf = malloc(rms->rawbuf_size));
@@ -2028,7 +2026,7 @@ packets_send(struct airplay_master_session *rms)
   struct rtp_packet *pkt;
   struct airplay_session *rs;
   int len;
-#ifdef AIRPLAY_DUMP_ALAC
+#if AIRPLAY_DUMP_ALAC
   unsigned char *alac_data;
 #endif
 
@@ -2036,7 +2034,7 @@ packets_send(struct airplay_master_session *rms)
   if (len < 0)
     return -1;
 
-#ifdef AIRPLAY_DUMP_ALAC
+#if AIRPLAY_DUMP_ALAC
   alac_data = malloc(len);
   evbuffer_copyout(rms->encoded_buffer, alac_data, len);
   write(1, alac_data, len);
@@ -2538,9 +2536,9 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
 
   stream = plist_new_dict();
   if (rs->master_session->quality.sample_rate == 44100)
-    wplist_dict_add_uint(stream, "audioFormat", 262144); // 0x40000 ALAC/44100/16/2
+    wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
   else if (rs->master_session->quality.sample_rate == 48000)
-    wplist_dict_add_uint(stream, "audioFormat", 2097152); // 0x200000 ALAC/48000/24/2
+    wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
