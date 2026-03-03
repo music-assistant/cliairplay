@@ -38,7 +38,7 @@ PAIR_AP_SRC = \
 # to prevent hanging on pthread_mutex errors during shutdown
 LOCAL_PATCHED_SRC = \
     airplay.c \
-    player.c \
+    input.c \
     transcode.c
 
 OWNTONE_SRC = \
@@ -47,7 +47,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/evthr.c \
     ../owntone-server/src/evrtsp/rtsp.c \
     ../owntone-server/src/http.c \
-    ../owntone-server/src/input.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
@@ -60,6 +59,7 @@ OWNTONE_SRC = \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/raop.c \
     ../owntone-server/src/outputs/rtp_common.c \
+    ../owntone-server/src/player.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
