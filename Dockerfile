@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm-slim AS cliap2-builder
+FROM debian:bookworm-slim AS cliap-builder
 
 ARG TARGETARCH
 
@@ -14,7 +14,7 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
     echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
     echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list
 
-# Install build dependencies for cliap2
+# Install build dependencies for cliap
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
@@ -49,12 +49,12 @@ RUN set -x \
     && ./configure \
     && make \
     && mkdir -p release \
-    && cp -v src/cliap2 release/cliap2-$TARGETARCH \
-    && chmod +x release/cliap2-$TARGETARCH \
-    && file release/cliap2-$TARGETARCH \
-    && ldd release/cliap2-$TARGETARCH
+    && cp -v src/cliap release/cliap-$TARGETARCH \
+    && chmod +x release/cliap-$TARGETARCH \
+    && file release/cliap-$TARGETARCH \
+    && ldd release/cliap-$TARGETARCH
 
 FROM scratch
 ARG TARGETARCH
-COPY --from=cliap2-builder release/cliap2-$TARGETARCH /
-ENTRYPOINT ["/cliap2-$TARGETARCH --testrun"]
+COPY --from=cliap-builder release/cliap-$TARGETARCH /
+ENTRYPOINT ["/cliap-$TARGETARCH --testrun"]
