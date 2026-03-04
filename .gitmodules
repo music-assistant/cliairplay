@@ -1,3 +1,4 @@
 [submodule "owntone-server"]
 	path = owntone-server
 	url = https://github.com/owntone/owntone-server
+	branch = airptp1

@@ -41,7 +41,7 @@
 
 // Disallow further writes to the buffer when its size exceeds this threshold.
 // The below gives us room to buffer 2 seconds of 48000/24/2 audio.
-// Change this back to 42 when global STOB change is made
+// Change this back to 24 when global STOB change is made
 #define INPUT_BUFFER_THRESHOLD STOB(96000, 32, 2)
 // How long (in nsec) to wait when the input buffer is full before looping
 #define INPUT_LOOP_TIMEOUT_NSEC 10000000

@@ -52,6 +52,10 @@ OWNTONE_SRC = \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
+    ../owntone-server/src/libairptp/src/airptp.c \
+    ../owntone-server/src/libairptp/src/daemon.c \
+    ../owntone-server/src/libairptp/src/ptp_msg_handle.c \
+    ../owntone-server/src/libairptp/src/utils.c \
     ../owntone-server/src/listener.c \
     ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
@@ -80,6 +84,7 @@ cliap_CPPFLAGS = \
 	$(COMMON_CPPFLAGS) \
     -I../owntone-server/src \
     -I../owntone-server/src/outputs \
+    -I../owntone-server/src/libairptp \
 	-D_GNU_SOURCE \
     -DCONFIG_GCRYPT \
     -DCONFDIR=\".\" \

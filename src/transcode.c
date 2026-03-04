@@ -2373,7 +2373,7 @@ transcode_frame_new(void *data, size_t size, int nsamples, struct media_quality 
   f->format = bitdepth2format(quality->bits_per_sample);
   if (f->format == AV_SAMPLE_FMT_NONE)
     {
-      DPRINTF(E_LOG, L_XCODE, "%s() called with unsupported bps (%d)\n", __func__, quality->bits_per_sample);
+      DPRINTF(E_LOG, L_XCODE, "transcode_frame_new() called with unsupported bps (%d)\n", quality->bits_per_sample);
       av_frame_free(&f);
       return NULL;
     }
@@ -2395,8 +2395,8 @@ transcode_frame_new(void *data, size_t size, int nsamples, struct media_quality 
   ret = avcodec_fill_audio_frame(f, quality->channels, f->format, data, size, 1);
   if (ret < 0)
     {
-      DPRINTF(E_LOG, L_XCODE, "Error filling frame with rawbuf, format %d, size %zu, samples %d (%d/%d/%d): %s\n",
-	f->format, size, nsamples, quality->sample_rate, quality->bits_per_sample, quality->channels, err2str(ret));
+      DPRINTF(E_LOG, L_XCODE, "Error filling frame with rawbuf, size %zu, samples %d (%d/%d/%d): %s\n",
+	size, nsamples, quality->sample_rate, quality->bits_per_sample, quality->channels, err2str(ret));
 
       av_frame_free(&f);
       return NULL;
