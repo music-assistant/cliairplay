@@ -66,6 +66,7 @@
 #include "player.h"
 #include "worker.h"
 #include "outputs/rtp_common.h"
+#include "ptpd.h"
 #include "wrappers.h"
 #include "cliap.h"
 #include "mass.h"
@@ -962,6 +963,9 @@ main(int argc, char **argv)
       ret = EXIT_FAILURE;
       goto gcrypt_init_fail;
     }
+
+  /* ptpd binds to priviliged ports 319 and 320 (if they are available) */
+  ptpd_bind();
 
   /* We aren't handling anything sensitive, so give up on secure
    * memory, which is a scarce system resource.
