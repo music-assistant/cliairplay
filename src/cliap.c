@@ -964,9 +964,6 @@ main(int argc, char **argv)
       goto gcrypt_init_fail;
     }
 
-  /* ptpd binds to priviliged ports 319 and 320 (if they are available) */
-  ptpd_bind();
-
   /* We aren't handling anything sensitive, so give up on secure
    * memory, which is a scarce system resource.
    */
