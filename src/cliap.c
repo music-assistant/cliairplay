@@ -949,6 +949,9 @@ main(int argc, char **argv)
 #if HAVE_DECL_AVFORMAT_NETWORK_INIT
   avformat_network_init();
 #endif
+  if (loglevel >= E_DBG) {
+    av_log_set_level(AV_LOG_VERBOSE);
+  }
   av_log_set_callback(logger_ffmpeg);
 
   /* Initialize libcurl */
