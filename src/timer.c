@@ -111,7 +111,7 @@ play(struct input_source *source)
   else
     evbuffer_add(source->evbuf, ctx->silence, TIMER_BUFSIZE);
 
-  ctx->pos += BTOS(TIMER_BUFSIZE, TIMER_BPS, TIMER_CHANNELS);
+  ctx->pos += BTOS(TIMER_BUFSIZE, (TIMER_BPS == 24) ? 32 : TIMER_BPS, TIMER_CHANNELS);
 
   input_write(source->evbuf, &source->quality, flags);
 
