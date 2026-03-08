@@ -94,6 +94,7 @@
 #define MASS_METADATA_PIN_KEY      "PIN"
 
 // #define DEBUG_MASS 1
+// #define STD_INPUT_QUALITY 1
 
 /* from cliap.c */
 extern ap_device_info_t ap_device_info;
@@ -1528,6 +1529,13 @@ setup(struct input_source *source)
   // In the Music Assistant use case, we stream input at the same quality as we want playback
   // therefore, our input quality will be the same as our output quality
   source->quality = ap_device_info.quality;
+
+#if STD_INPUT_QUALITY
+  // for isolating encoing issues, let's use std quality as input quality.
+  source->quality.sample_rate = 41100;
+  source->quality.bits_per_sample =16;
+  source->quality.channels = 2;
+#endif
   DPRINTF(E_DBG, L_FIFO, "%s:source->quality = %d/%d/%d\n", __func__, 
     source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels
   );
