@@ -2535,10 +2535,22 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   int ret;
 
   stream = plist_new_dict();
-  if (rs->master_session->quality.sample_rate == 44100)
-    wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
-  else if (rs->master_session->quality.sample_rate == 48000)
-    wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+  if (rs->master_session->quality.sample_rate == 44100) {
+    if (rs->master_session->quality.bits_per_sample == 16) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
+    }
+    else if (rs->master_session->quality.bits_per_sample == 24) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x80000); // 0x80000 	ALAC/44100/24/2
+    }
+  }
+  else if (rs->master_session->quality.sample_rate == 48000) {
+    if (rs->master_session->quality.bits_per_sample == 16) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x100000); // 0x100000 	ALAC/48000/16/2
+    }
+    else if (rs->master_session->quality.bits_per_sample == 24) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+    }
+  }
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
