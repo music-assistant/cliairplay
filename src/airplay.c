@@ -3146,9 +3146,6 @@ handle_timingpeerinfo(uint32_t *slave_id, plist_t response, const char *local_v4
 	continue;
 
       // Append %ifname to ipv6 because libairptpd needs it to send if the address is link-local (fe80)
-      if (family == AF_INET6) {
-        DPRINTF(E_DBG, L_AIRPLAY, "%s:Attempting to append interface name\n", __func__);
-      }
       if (family == AF_INET6 && net_if_get(ifname, sizeof(ifname), local_v6_address) == 0)
 	snprintf(peer_straddress, sizeof(peer_straddress), "%s%%%s", ptr, ifname);
       else if (family == AF_INET)
@@ -3174,7 +3171,6 @@ response_handler_setup_session(struct evrtsp_request *req, struct airplay_sessio
   plist_t item;
   uint64_t uintval;
   int ret;
-
   if (req->response_code == RTSP_UNAUTHORIZED)
     {
       if (session->req_has_auth)
