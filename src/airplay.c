@@ -75,7 +75,7 @@
 #define AIRPLAY_DUMP_TRAFFIC                 0
 
 // dumps raw alac to stdout
-#define AIRPLAY_DUMP_ALAC                    0
+#define AIRPLAY_DEBUG_ALAC                   0
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -2026,20 +2026,21 @@ packets_send(struct airplay_master_session *rms)
   struct rtp_packet *pkt;
   struct airplay_session *rs;
   int len;
-#if AIRPLAY_DUMP_ALAC
-  unsigned char *alac_data;
+#if AIRPLAY_DEBUG_ALAC
+  // unsigned char *alac_data;
 #endif
 
   len = alac_encode(rms->encoded_buffer, rms->encode_ctx, rms->rawbuf, rms->rawbuf_size, rms->samples_per_packet, &rms->quality);
   if (len < 0)
     return -1;
 
-#if AIRPLAY_DUMP_ALAC
-  alac_data = malloc(len);
-  evbuffer_copyout(rms->encoded_buffer, alac_data, len);
-  write(1, alac_data, len);
-  fflush(stdout);
-  free(alac_data);
+#if AIRPLAY_DEBUG_ALAC
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:alac_encode length:%d\n", __func__, len);
+  // alac_data = malloc(len);
+  // evbuffer_copyout(rms->encoded_buffer, alac_data, len);
+  // write(1, alac_data, len);
+  // fflush(stdout);
+  // free(alac_data);
 #endif
   pkt = rtp_packet_next(rms->rtp_session, len, rms->samples_per_packet, AIRPLAY_RTP_PAYLOADTYPE, 0);
 
