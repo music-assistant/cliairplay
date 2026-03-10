@@ -216,7 +216,7 @@ usage(char *program)
   printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
   printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
   printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
-  printf("  --password <password>             Device password.\n");
+  // printf("  --password <password>             Device password.\n");
   printf("  -v, --version                     Display version information and exit\n");
   printf("\n\n");
 }
@@ -553,7 +553,7 @@ main(int argc, char **argv)
     { "auth",          1, NULL, 515 },
     { "dacp_id",       1, NULL, 516 },
     { "latency",       1, NULL, 517 },
-    { "password",      1, NULL, 518 },
+    // { "password",      1, NULL, 518 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -667,9 +667,9 @@ main(int argc, char **argv)
         DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of 250ms DAC latency\n", latency_ms);
         break;
 
-      case 518: // device password
-        ap2_device_info.password = strdup(optarg);
-        break;
+      // case 518: // device password
+      //   ap2_device_info.password = optarg;
+      //   break;
 
       default:
       case '?':
