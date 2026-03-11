@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autotools-dev \
     autoconf \
     automake \
+    autopoint \
     pkgconf \
     gettext \
     gawk \
