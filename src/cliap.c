@@ -365,7 +365,7 @@ validate_quality(void)
 
   // AirPlay2 only qualities
   if ((ap_device_info.quality.sample_rate == 44100 || ap_device_info.quality.sample_rate == 48000) && 
-      (ap_device_info.quality.bits_per_sample == 16 || ap_device_info.quality.bits_per_sample == 24) && 
+      (ap_device_info.quality.bits_per_sample == 16) && 
       ap_device_info.quality.channels == 2 &&
       ap_device_info.version == AIRPLAY2) 
   {
@@ -374,7 +374,7 @@ validate_quality(void)
 
   DPRINTF(E_LOG, L_MAIN, 
     "%s:Invalid quality parameters supplied (%d/%d/%d) for AirPlay version %d. "
-    "Supported values are 44100/16/2 or 44100,48000/16,24/2 (AirPlay 2 only)\n",
+    "Supported values are 44100/16/2 or 44100,48000/16/2 (AirPlay 2 only)\n",
     __func__, ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample,
     ap_device_info.quality.channels, ap_device_info.version
   );
