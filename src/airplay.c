@@ -75,7 +75,7 @@
 #define AIRPLAY_DUMP_TRAFFIC                 0
 
 // dumps raw alac to stdout
-#define AIRPLAY_DUMP_ALAC                    0
+#define AIRPLAY_DEBUG_ALAC                   0
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -2026,20 +2026,21 @@ packets_send(struct airplay_master_session *rms)
   struct rtp_packet *pkt;
   struct airplay_session *rs;
   int len;
-#if AIRPLAY_DUMP_ALAC
-  unsigned char *alac_data;
+#if AIRPLAY_DEBUG_ALAC
+  // unsigned char *alac_data;
 #endif
 
   len = alac_encode(rms->encoded_buffer, rms->encode_ctx, rms->rawbuf, rms->rawbuf_size, rms->samples_per_packet, &rms->quality);
   if (len < 0)
     return -1;
 
-#if AIRPLAY_DUMP_ALAC
-  alac_data = malloc(len);
-  evbuffer_copyout(rms->encoded_buffer, alac_data, len);
-  write(1, alac_data, len);
-  fflush(stdout);
-  free(alac_data);
+#if AIRPLAY_DEBUG_ALAC
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:alac_encode length:%d\n", __func__, len);
+  // alac_data = malloc(len);
+  // evbuffer_copyout(rms->encoded_buffer, alac_data, len);
+  // write(1, alac_data, len);
+  // fflush(stdout);
+  // free(alac_data);
 #endif
   pkt = rtp_packet_next(rms->rtp_session, len, rms->samples_per_packet, AIRPLAY_RTP_PAYLOADTYPE, 0);
 
@@ -2535,10 +2536,22 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   int ret;
 
   stream = plist_new_dict();
-  if (rs->master_session->quality.sample_rate == 44100)
-    wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
-  else if (rs->master_session->quality.sample_rate == 48000)
-    wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+  if (rs->master_session->quality.sample_rate == 44100) {
+    if (rs->master_session->quality.bits_per_sample == 16) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
+    }
+    else if (rs->master_session->quality.bits_per_sample == 24) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x80000); // 0x80000 	ALAC/44100/24/2
+    }
+  }
+  else if (rs->master_session->quality.sample_rate == 48000) {
+    if (rs->master_session->quality.bits_per_sample == 16) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x100000); // 0x100000 	ALAC/48000/16/2
+    }
+    else if (rs->master_session->quality.bits_per_sample == 24) {
+      wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+    }
+  }
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS

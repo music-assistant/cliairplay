@@ -41,6 +41,7 @@ LOCAL_PATCHED_SRC = \
     input.c \
     outputs.c \
     player.c \
+    timer.c \
     transcode.c
 
 OWNTONE_SRC = \
@@ -51,7 +52,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/http.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
-    ../owntone-server/src/inputs/timer.c \
     ../owntone-server/src/listener.c \
     ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
