@@ -392,19 +392,14 @@ validate_quality(void)
   }
 
   for (i = 0; i < q_cnt; i++, qualities++) {
-    if (qualities_match(&ap_device_info.quality, qualities) == true) {
-      DPRINTF(E_DBG, L_MAIN, "%s:Qualities %d/%d/%d and %d/%d/%d match.\n",
-        __func__,
-        ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample, ap_device_info.quality.channels,
-        qualities->sample_rate, qualities->bits_per_sample, qualities->channels
-      );
+    if (qualities_match(&ap_device_info.quality, qualities)) {
       return 0;
     }
   }
 
   // if we get here, we did not find a valid quality
   char *q_str = NULL;
-  q_str = malloc((q_cnt * 14) + 1); // Enough for 12 chars per quality plus NULL terminator
+  q_str = malloc((q_cnt * 14) + 1); // Enough for 14 chars per quality plus NULL terminator
   qualities -= q_cnt; // move pointer back to the start of the array of valid qualities
   for (i = 0; i < q_cnt; i++, qualities++) {
     sprintf(&q_str[i * 14], "%5d/%2d/%1d or ",
@@ -413,7 +408,7 @@ validate_quality(void)
       qualities->channels
     );
   }
-  q_str[(i * 14) - 4] = '\0'; // chop off the final ", " with a NULL termination
+  q_str[(i * 14) - 4] = '\0'; // chop off the final " or " with a NULL termination
   DPRINTF(E_LOG, L_MAIN, "%s:Invalid quality %d/%d/%d. Must be one of %s.\n", __func__,
     ap_device_info.quality.sample_rate,
     ap_device_info.quality.bits_per_sample,
@@ -424,7 +419,7 @@ validate_quality(void)
   return -1;
 }
 
-// Parses a stirng of "sample_rate/bits_per_sample/channels" into a quality structure
+// Parses a string of "sample_rate/bits_per_sample/channels" into a quality structure
 static int
 parse_quality(const char *str, struct media_quality *q)
 {
