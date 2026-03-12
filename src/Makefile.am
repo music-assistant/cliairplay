@@ -86,7 +86,7 @@ cliap_CPPFLAGS = \
 
 # TODO: @bradkeifer Eliminate debug flags before first production release
 cliap_CFLAGS = \
-    -ggdb -Og -Wall
+    -g3 -O0 -Wall -Wextra
 
 cliap_LDADD = \
 	$(OWNTONE_LIBS) \
