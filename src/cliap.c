@@ -343,42 +343,84 @@ ffmpeg_lockmgr(void **pmutex, enum AVLockOp op)
 }
 #endif
 
-// Checks if quality values are valid for device
-// returns 0 if valid, -1 if invalid
+// Checks two media qualities for a match.
+// @param q1 media quality 1
+// @param q2 media quality 2
+// @returns true on match, false on no match
+static bool
+qualities_match(struct media_quality *q1, struct media_quality *q2)
+{
+  if (q1->sample_rate != q2->sample_rate) return false;
+  if (q1->bits_per_sample != q2->bits_per_sample) return false;
+  if (q1->channels != q2->channels) return false;
+  return true;
+}
+
+// Checks if quality values are valid for the device represented in ap_device
+// @returns 0 if valid, -1 if invalid
 static int
 validate_quality(void)
 {
+  struct media_quality raop_qualities[] = { {44100, 16, 2, 0}, };
+  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, };
+  struct media_quality *qualities;
+  int q_cnt = 0; // count of possible valid qualities
+  int i;
+
   DPRINTF(E_DBG, L_MAIN, "%s:Validating quality %d/%d/%d for AirPlay version %d\n",
     __func__, ap_device_info.quality.sample_rate,
     ap_device_info.quality.bits_per_sample, ap_device_info.quality.channels,
     ap_device_info.version
   );
 
-  // Qualities supported by both RAOP and AirPlay2
-  if (ap_device_info.quality.sample_rate == 44100 && 
-       ap_device_info.quality.bits_per_sample == 16 && 
-       ap_device_info.quality.channels == 2)
-  {
-    return 0;
+  switch(ap_device_info.version) {
+    case RAOP:
+      qualities = raop_qualities;
+      q_cnt = sizeof(raop_qualities)/sizeof(struct media_quality);
+      break;
+    
+    case AIRPLAY2:
+      qualities = ap2_qualities;
+      q_cnt = sizeof(ap2_qualities)/sizeof(struct media_quality);
+      break;
 
+    default:
+      DPRINTF(E_LOG, L_MAIN, "%s:Invalid airplay version %d. Must be one of %d or %d\n",
+        __func__, ap_device_info.version, RAOP, AIRPLAY2
+      );
+      return -1;
   }
 
-  // AirPlay2 only qualities
-  if ((ap_device_info.quality.sample_rate == 44100 || ap_device_info.quality.sample_rate == 48000) && 
-      (ap_device_info.quality.bits_per_sample == 16) && 
-      ap_device_info.quality.channels == 2 &&
-      ap_device_info.version == AIRPLAY2) 
-  {
-    return 0;
+  for (i = 0; i < q_cnt; i++, qualities++) {
+    if (qualities_match(&ap_device_info.quality, qualities) == true) {
+      DPRINTF(E_DBG, L_MAIN, "%s:Qualities %d/%d/%d and %d/%d/%d match.\n",
+        __func__,
+        ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample, ap_device_info.quality.channels,
+        qualities->sample_rate, qualities->bits_per_sample, qualities->channels
+      );
+      return 0;
+    }
   }
 
-  DPRINTF(E_LOG, L_MAIN, 
-    "%s:Invalid quality parameters supplied (%d/%d/%d) for AirPlay version %d. "
-    "Supported values are 44100/16/2 or 44100,48000/16/2 (AirPlay 2 only)\n",
-    __func__, ap_device_info.quality.sample_rate, ap_device_info.quality.bits_per_sample,
-    ap_device_info.quality.channels, ap_device_info.version
+  // if we get here, we did not find a valid quality
+  char *q_str = NULL;
+  q_str = malloc((q_cnt * 14) + 1); // Enough for 12 chars per quality plus NULL terminator
+  qualities -= q_cnt; // move pointer back to the start of the array of valid qualities
+  for (i = 0; i < q_cnt; i++, qualities++) {
+    sprintf(&q_str[i * 14], "%5d/%2d/%1d or ",
+      qualities->sample_rate,
+      qualities->bits_per_sample,
+      qualities->channels
+    );
+  }
+  q_str[(i * 14) - 4] = '\0'; // chop off the final ", " with a NULL termination
+  DPRINTF(E_LOG, L_MAIN, "%s:Invalid quality %d/%d/%d. Must be one of %s.\n", __func__,
+    ap_device_info.quality.sample_rate,
+    ap_device_info.quality.bits_per_sample,
+    ap_device_info.quality.channels,
+    q_str
   );
-
+  free(q_str);
   return -1;
 }
 
@@ -629,7 +671,7 @@ main(int argc, char **argv)
   int volume = 0;
   uint64_t latency_ms = 0;
   struct keyval *txt_kv = NULL;
-  struct media_quality q = {0, 0, 0};
+  struct media_quality q = {0, 0, 0, 0};
 
   struct option option_map[] = {
     { "loglevel",      1, NULL, 500 },
