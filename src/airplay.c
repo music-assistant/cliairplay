@@ -2534,33 +2534,35 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *rs
   uint8_t *data;
   size_t len;
   int ret;
+  uint64_t audioFormat = 0x40000; // 0x40000 ALAC/44100/16/2
+  uint64_t latencyMin = 11025;    // Default for 44100/16/2 to achieve AIRPLAY_AUDIO_LATENCY_MS in samples
 
-  stream = plist_new_dict();
   if (rs->master_session->quality.sample_rate == 44100) {
     if (rs->master_session->quality.bits_per_sample == 16) {
-      wplist_dict_add_uint(stream, "audioFormat", 0x40000); // 0x40000 ALAC/44100/16/2
+      audioFormat = 0x40000; // 0x40000 ALAC/44100/16/2
     }
     else if (rs->master_session->quality.bits_per_sample == 24) {
-      wplist_dict_add_uint(stream, "audioFormat", 0x80000); // 0x80000 	ALAC/44100/24/2
+      audioFormat = 0x80000; // 0x80000 	ALAC/44100/24/2
     }
   }
   else if (rs->master_session->quality.sample_rate == 48000) {
     if (rs->master_session->quality.bits_per_sample == 16) {
-      wplist_dict_add_uint(stream, "audioFormat", 0x100000); // 0x100000 	ALAC/48000/16/2
+      audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
     }
     else if (rs->master_session->quality.bits_per_sample == 24) {
-      wplist_dict_add_uint(stream, "audioFormat", 0x200000); // 0x200000 ALAC/48000/24/2
+     audioFormat = 0x200000; // 0x200000 ALAC/48000/24/2
     }
   }
+  latencyMin = rs->master_session->quality.sample_rate * AIRPLAY_AUDIO_LATENCY_MS / 1000;
+
+  stream = plist_new_dict();
+  wplist_dict_add_uint(stream, "audioFormat", audioFormat);
   wplist_dict_add_string(stream, "audioMode", "default");
   wplist_dict_add_uint(stream, "controlPort", rs->control_svc->port);
   wplist_dict_add_uint(stream, "ct", 2); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
   wplist_dict_add_bool(stream, "isMedia", true); // ?
   wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
-  if (rs->master_session->quality.sample_rate == 44100)
-    wplist_dict_add_uint(stream, "latencyMin", 11025); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
-  else if (rs->master_session->quality.sample_rate == 48000)
-    wplist_dict_add_uint(stream, "latencyMin", 12000); // AIRPLAY_AUDIO_LATENCY_MS in samples 12000/48000 = 0.25 = 250ms
+  wplist_dict_add_uint(stream, "latencyMin", latencyMin); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
   wplist_dict_add_data(stream, "shk", rs->shared_secret, AIRPLAY_AUDIO_KEY_LEN);
   wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
   wplist_dict_add_uint(stream, "sr", rs->master_session->quality.sample_rate); // sample rate
