@@ -442,13 +442,38 @@ init_settings_from_audio(struct settings_ctx *settings, enum transcode_profile p
 	  settings->sample_format = (src_bytes_per_sample == 4) ? AV_SAMPLE_FMT_S32P : AV_SAMPLE_FMT_S16P;
 	break;
 
-      case XCODE_PCM_NATIVE:
+      case XCODE_PCM_NATIVE: // This logic prevents using PCM_S24LE codec and s24le format.
+      // We have the media quality here, so we could use it to differentiate?? 
 	if (!settings->sample_format)
 	  settings->sample_format = (src_bytes_per_sample == 4) ? AV_SAMPLE_FMT_S32 : AV_SAMPLE_FMT_S16;
-	if (!settings->audio_codec)
-	  settings->audio_codec = (src_bytes_per_sample == 4) ? AV_CODEC_ID_PCM_S32LE : AV_CODEC_ID_PCM_S16LE;
-	if (!settings->format)
-	  settings->format = (src_bytes_per_sample == 4) ? "s32le" : "s16le";
+	if (!settings->audio_codec) {
+	  // settings->audio_codec = (src_bytes_per_sample == 4) ? AV_CODEC_ID_PCM_S32LE : AV_CODEC_ID_PCM_S16LE;
+    switch (quality->bits_per_sample) {
+      case 16:
+        settings->audio_codec = AV_CODEC_ID_PCM_S16LE;
+        break;
+      case 24:
+        settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
+        break;
+      case 32:
+        settings->audio_codec = AV_CODEC_ID_PCM_S32LE;
+        break;
+    }
+  }
+	if (!settings->format) {
+	  // settings->format = (src_bytes_per_sample == 4) ? "s32le" : "s16le";
+    switch (quality->bits_per_sample) {
+      case 16:
+        settings->format = "s16le";
+        break;
+      case 24:
+        settings->format = "s24le";
+        break;
+      case 32:
+        settings->format = "s32le";
+        break;
+    }
+  }
 	break;
 
       default:
@@ -587,6 +612,7 @@ size_estimate(enum transcode_profile profile, uint32_t bit_rate, uint32_t sample
   else if (profile == XCODE_MP4_ALAC)
     bytes = nsamples * channels * bytes_per_sample / 2; // FIXME
 
+  DPRINTF(E_DBG, L_XCODE, "%s:profile = %d. returning bytes=%d\n", __func__, profile, bytes);
   return bytes;
 }
 
@@ -2000,6 +2026,7 @@ transcode_encode_setup(struct transcode_encode_setup_args args)
 
   dst_bytes_per_sample = av_get_bytes_per_sample(ctx->settings.sample_format);
   ctx->bytes_total = size_estimate(args.profile, ctx->settings.bit_rate, ctx->settings.sample_rate, dst_bytes_per_sample, ctx->settings.nb_channels, args.src_ctx->len_ms);
+  DPRINTF(E_DBG, L_XCODE, "%s:dst_bytes_per_sample=%d, ctx->bytes_total=%ld\n", __func__, dst_bytes_per_sample, ctx->bytes_total);
 
   if (ctx->settings.with_icy && args.src_ctx->is_http)
     ctx->icy_interval = METADATA_ICY_INTERVAL * ctx->settings.nb_channels * dst_bytes_per_sample * ctx->settings.sample_rate;
@@ -2371,6 +2398,7 @@ transcode_frame_new(void *data, size_t size, int nsamples, struct media_quality 
     }
 
   f->format = bitdepth2format(quality->bits_per_sample);
+  DPRINTF(E_DBG, L_XCODE, "%s:f->format=%d\n", __func__, f->format);
   if (f->format == AV_SAMPLE_FMT_NONE)
     {
       DPRINTF(E_LOG, L_XCODE, "%s() called with unsupported bps (%d)\n", __func__, quality->bits_per_sample);
@@ -2393,6 +2421,9 @@ transcode_frame_new(void *data, size_t size, int nsamples, struct media_quality 
   // We don't align because the frame won't be given directly to the encoder
   // anyway, it will first go through the filter (which might align it...?)
   ret = avcodec_fill_audio_frame(f, quality->channels, f->format, data, size, 1);
+  DPRINTF(E_DBG, L_XCODE, "%s:avcodec_fill_audio_frame(f, channels=%d, f->format=%d, data, size=%ld, 1) returned %d\n",
+    __func__, quality->channels, f->format, size, ret
+  );
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_XCODE, "Error filling frame with rawbuf, format %d, size %zu, samples %d (%d/%d/%d): %s\n",

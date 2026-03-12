@@ -491,8 +491,12 @@ alac_encode(struct evbuffer *evbuf, struct encode_ctx *encode_ctx, uint8_t *rawb
       DPRINTF(E_LOG, L_AIRPLAY, "Could not convert raw PCM to frame (bufsize=%zu)\n", rawbuf_size);
       return -1;
     }
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:transcode_frame_new(rawbuf, rawbuf_size=%ld, nsamples=%d, quality=%d/%d/%d\n)",
+    __func__, rawbuf_size, nsamples, quality->sample_rate, quality->bits_per_sample, quality->channels
+  );
 
   len = transcode_encode(evbuf, encode_ctx, frame, 0);
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:transcode_encode() returned %d\n", __func__, len);
   transcode_frame_free(frame);
   if (len < 0)
     {

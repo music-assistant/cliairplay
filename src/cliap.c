@@ -362,7 +362,7 @@ static int
 validate_quality(void)
 {
   struct media_quality raop_qualities[] = { {44100, 16, 2, 0}, };
-  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, };
+  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, {44100, 24, 2, 0}, {48000, 24, 2, 0}, };
   struct media_quality *qualities;
   int q_cnt = 0; // count of possible valid qualities
   int i;
@@ -989,7 +989,9 @@ main(int argc, char **argv)
   avformat_network_init();
 #endif
   if (loglevel >= E_DBG) {
-    av_log_set_level(AV_LOG_VERBOSE);
+    // av_log_set_level(AV_LOG_VERBOSE);
+    av_log_set_level(AV_LOG_DEBUG);
+    DPRINTF(E_DBG, L_MAIN, "av_log_set_level(AV_LOG_DEBUG) done\n");
   }
   av_log_set_callback(logger_ffmpeg);
 
