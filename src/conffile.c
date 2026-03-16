@@ -54,7 +54,11 @@ static cfg_opt_t sec_general[] =
     CFG_INT_CB("loglevel", E_LOG, CFGF_NONE, &cb_loglevel),
     CFG_STR("logformat", "default", CFGF_NONE),
     CFG_STR_LIST("trusted_networks", "{lan}", CFGF_NONE),
+#ifdef __APPLE__
+    CFG_BOOL("ipv6", cfg_false, CFGF_NONE),
+#else
     CFG_BOOL("ipv6", cfg_true, CFGF_NONE),
+#endif
     CFG_STR("bind_address", NULL, CFGF_NONE),
     CFG_BOOL("speaker_autoselect", cfg_true, CFGF_NONE),
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
@@ -156,6 +160,7 @@ static cfg_opt_t sec_airplay[] =
     CFG_STR("nickname", NULL, CFGF_NONE),
     // Hidden options
     CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
+    CFG_BOOL("ptp_disable", cfg_false, CFGF_NONE),
     CFG_END()
   };
 
