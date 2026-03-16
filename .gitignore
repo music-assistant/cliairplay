@@ -88,9 +88,9 @@ stamp-h1
 autotools-stamp
 build-stamp
 ylwrap
-m4/libtool.m4
-m4/lt*.m4
-m4/lib-*.m4
+po/*
+build-aux/*
+ABOUT-NLS
 
 /.settings
 /.cproject
