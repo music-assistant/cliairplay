@@ -34,6 +34,12 @@ PAIR_AP_SRC = \
     ../owntone-server/src/pair_ap/pair-internal.h \
     ../owntone-server/src/pair_ap/pair.h
 
+PTP_SRC = \
+    ../owntone-server/src/libairptp/src/airptp.c \
+    ../owntone-server/src/libairptp/src/daemon.c \
+    ../owntone-server/src/libairptp/src/ptp_msg_handle.c \
+    ../owntone-server/src/libairptp/src/utils.c
+
 # Local copies of logger.c and misc.c with _exit() fix instead of abort()
 # to prevent hanging on pthread_mutex errors during shutdown
 LOCAL_PATCHED_SRC = \
@@ -60,6 +66,7 @@ OWNTONE_SRC = \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/raop.c \
     ../owntone-server/src/outputs/rtp_common.c \
+    ../owntone-server/src/ptpd.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
 	$(LEXER_SRC) $(PARSER_SRC)
@@ -71,7 +78,8 @@ cliap_SOURCES = \
     wrappers.c \
     $(LOCAL_PATCHED_SRC) \
     $(OWNTONE_SRC) \
-    $(PAIR_AP_SRC)
+    $(PAIR_AP_SRC) \
+    $(PTP_SRC)
 
 cliap_CPPFLAGS = \
 	$(OWNTONE_CPPFLAGS) \
@@ -86,7 +94,7 @@ cliap_CPPFLAGS = \
 
 # TODO: @bradkeifer Eliminate debug flags before first production release
 cliap_CFLAGS = \
-    -g3 -O0 -Wall -Wextra
+    -g3 -O0 -Wall
 
 cliap_LDADD = \
 	$(OWNTONE_LIBS) \

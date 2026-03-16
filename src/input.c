@@ -48,7 +48,7 @@
 // How long (in sec) to keep an input open without the player reading from it
 #define INPUT_OPEN_TIMEOUT 600
 
-//#define DEBUG_INPUT 1
+#define DEBUG_INPUT 1
 // For testing http stream underruns
 //#define DEBUG_UNDERRUN 1
 
