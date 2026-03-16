@@ -34,11 +34,18 @@ PAIR_AP_SRC = \
     ../owntone-server/src/pair_ap/pair-internal.h \
     ../owntone-server/src/pair_ap/pair.h
 
+PTP_SRC = \
+    ../owntone-server/src/libairptp/src/airptp.c \
+    ../owntone-server/src/libairptp/src/daemon.c \
+    ../owntone-server/src/libairptp/src/ptp_msg_handle.c \
+    ../owntone-server/src/libairptp/src/utils.c
+
 # Local copies of logger.c and misc.c with _exit() fix instead of abort()
-# to prevent hanging on pthread_mutex errors during shutdown
-LOCAL_PATCHED_SRC = \
-    logger.c \
-    misc.c
+# to prevent hanging on pthread_mutex errors during shutdown - no longer required because
+# we exit gracefully on STOP command or on EOF on stdin
+LOCAL_PATCHED_SRC =
+    # logger.c \
+    # misc.c
 
 OWNTONE_SRC = \
     ../owntone-server/src/commands.c \
@@ -51,13 +58,16 @@ OWNTONE_SRC = \
     ../owntone-server/src/inputs/http.c \
     ../owntone-server/src/inputs/timer.c \
     ../owntone-server/src/listener.c \
+    ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
+    ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs.c \
     ../owntone-server/src/outputs/airplay.c \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/player.c \
+    ../owntone-server/src/ptpd.c \
     ../owntone-server/src/transcode.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \
@@ -70,7 +80,8 @@ cliap2_SOURCES = \
     wrappers.c \
     $(LOCAL_PATCHED_SRC) \
     $(OWNTONE_SRC) \
-    $(PAIR_AP_SRC)
+    $(PAIR_AP_SRC) \
+    $(PTP_SRC)
 
 cliap2_CPPFLAGS = \
 	$(OWNTONE_CPPFLAGS) \
