@@ -353,6 +353,7 @@ qualities_match(struct media_quality *q1, struct media_quality *q2)
   if (q1->sample_rate != q2->sample_rate) return false;
   if (q1->bits_per_sample != q2->bits_per_sample) return false;
   if (q1->channels != q2->channels) return false;
+  if (q1->bit_rate != q2->bit_rate) return false;
   return true;
 }
 
@@ -362,7 +363,7 @@ static int
 validate_quality(void)
 {
   struct media_quality raop_qualities[] = { {44100, 16, 2, 0}, };
-  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, {44100, 24, 2, 0}, {48000, 24, 2, 0}, };
+  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, {44100, 32, 2, 0}, {48000, 32, 2, 0}, };
   struct media_quality *qualities;
   int q_cnt = 0; // count of possible valid qualities
   int i;
