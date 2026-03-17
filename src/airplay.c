@@ -77,6 +77,7 @@
 
 // Dump transcoded audio to stdout
 #define AIRPLAY_DUMP_AUDIO                   0
+#define AIRPLAY_PCM_OVERRIDE                 0
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -1176,6 +1177,7 @@ master_session_make(struct media_quality *quality, bool use_ptp)
 	return ams;
     }
 
+#if AIRPLAY_PCM_OVERRIDE
     // Override encoding profile for 24-bit. Possible 24-bit ALAC encoder bug
   if (quality->bits_per_sample == 24) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24\n", __func__);
@@ -1183,12 +1185,13 @@ master_session_make(struct media_quality *quality, bool use_ptp)
   }
   else if (quality->bits_per_sample == 16) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM16BE\n", __func__);
-    encode_args.profile = XCODE_PCM16BE;
+    // encode_args.profile = XCODE_PCM16BE;
   }
   else if (quality->bits_per_sample == 32) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24TEST\n", __func__);
-    encode_args.profile = XCODE_PCM24TEST;
+    encode_args.profile = XCODE_PCM24;
   }
+#endif
 
   // Let's create a master session
   ret = outputs_quality_subscribe(quality);
@@ -2644,26 +2647,34 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *se
 
   if (session->master_session->quality.sample_rate == 44100) {
     if (session->master_session->quality.bits_per_sample == 16) {
-      // audioFormat = 0x40000; // 0x40000 	ALAC/44100/16/2
+      audioFormat = 0x40000; // 0x40000 	ALAC/44100/16/2
+#if AIRPLAY_PCM_OVERRIDE
       audioFormat = 0x800; // 0x800 	PCM/44100/16/2
       ct = 1;
+#endif
     }
     else if (session->master_session->quality.bits_per_sample == 24 || session->master_session->quality.bits_per_sample == 32) {
-      // audioFormat = 0x80000; // 0x80000 	ALAC/44100/24/2
+      audioFormat = 0x80000; // 0x80000 	ALAC/44100/24/2
+#if AIRPLAY_PCM_OVERRIDE
       audioFormat = 0x2000; // 0x2000 	PCM/44100/24/2
       ct = 1;
+#endif
     }
   }
   else if (session->master_session->quality.sample_rate == 48000) {
     if (session->master_session->quality.bits_per_sample == 16) {
-      // audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
+      audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
+#if AIRPLAY_PCM_OVERRIDE
       audioFormat = 0x8000; // 0x20000 	PCM/48000/16/2
       ct = 1;
+#endif
     }
     else if (session->master_session->quality.bits_per_sample == 24 || session->master_session->quality.bits_per_sample == 32) {
-      // audioFormat = 0x200000; // 0x200000 	ALAC/48000/24/2
+      audioFormat = 0x200000; // 0x200000 	ALAC/48000/24/2
+#if AIRPLAY_PCM_OVERRIDE
       audioFormat = 0x20000; // 0x20000 	PCM/48000/24/2
       ct = 1;
+#endif
     }
   }
   latencyMin = session->master_session->quality.sample_rate * AIRPLAY_AUDIO_LATENCY_MS / 1000;
