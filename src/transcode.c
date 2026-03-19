@@ -263,31 +263,36 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->sample_format = AV_SAMPLE_FMT_S16;
 	break;
 
-  //       case XCODE_PCM16BE:
-	// settings->encode_audio = true;
-	// settings->format = "s16be";
-	// settings->audio_codec = AV_CODEC_ID_PCM_S16BE;
-	// settings->sample_format = AV_SAMPLE_FMT_S16;
-	// break;
+        case XCODE_PCM16BE:
+	settings->encode_audio = true;
+	settings->format = "s16be";
+	settings->audio_codec = AV_CODEC_ID_PCM_S16BE;
+	settings->sample_format = AV_SAMPLE_FMT_S16;
+	break;
 
       case XCODE_PCM24:
 	settings->encode_audio = true;
 	settings->format = "s24le";
 	settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
 	settings->sample_format = AV_SAMPLE_FMT_S32;
+	// settings->with_user_filters = true;
 	break;
 
-  //     case XCODE_PCM24TEST:
-	// settings->encode_audio = true;
+      case XCODE_PCM24TEST:
+	settings->encode_audio = true;
   // failed - static
 	// settings->format = "s24be";
 	// settings->audio_codec = AV_CODEC_ID_PCM_S24BE;
   // settings->sample_format = AV_SAMPLE_FMT_S32;
 
-  // worked perfectly - but with some distortion
+  // worked reasonable well - but with some distortion - likely clipping of 32 to 24 bit
 	// settings->format = "s24le";
 	// settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
 	// settings->sample_format = AV_SAMPLE_FMT_S32;
+
+	settings->format = "s32le";
+	settings->audio_codec = AV_CODEC_ID_PCM_S32LE;
+	settings->sample_format = AV_SAMPLE_FMT_S32;
 
   // worked - but with distortion
   // settings->format = "u24le";

@@ -1580,13 +1580,13 @@ play(struct input_source *source)
 #endif
 
   pthread_mutex_lock(&audio_command_lock);
-  if (pause_flag) {
+  if (pause_flag) { // PAUSE command received
     pthread_mutex_unlock(&audio_command_lock);
     input_wait();
     return 0; // loop
   }
-  if (stop_flag) {
-    input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
+  if (stop_flag) { // STOP command received
+    input_write(source->evbuf, NULL, INPUT_FLAG_EOF);
     stop(source);
     DPRINTF(E_INFO, L_FIFO, "%s:STOP command initiated shutdown\n", __func__);
     return -1;

@@ -76,8 +76,8 @@
 #define AIRPLAY_DUMP_TRAFFIC                 0
 
 // Dump transcoded audio to stdout
-#define AIRPLAY_DUMP_AUDIO                   0
-#define AIRPLAY_PCM_OVERRIDE                 0
+#define AIRPLAY_DUMP_AUDIO                   1
+#define AIRPLAY_PCM_OVERRIDE                 1
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -1178,18 +1178,18 @@ master_session_make(struct media_quality *quality, bool use_ptp)
     }
 
 #if AIRPLAY_PCM_OVERRIDE
-    // Override encoding profile for 24-bit. Possible 24-bit ALAC encoder bug
+    // Override encoding to be PCM
   if (quality->bits_per_sample == 24) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24\n", __func__);
     encode_args.profile = XCODE_PCM24;
   }
   else if (quality->bits_per_sample == 16) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM16BE\n", __func__);
-    // encode_args.profile = XCODE_PCM16BE;
+    encode_args.profile = XCODE_PCM16BE;
   }
   else if (quality->bits_per_sample == 32) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24TEST\n", __func__);
-    encode_args.profile = XCODE_PCM24;
+    encode_args.profile = XCODE_PCM24TEST;
   }
 #endif
 
@@ -2665,7 +2665,7 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *se
     if (session->master_session->quality.bits_per_sample == 16) {
       audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
 #if AIRPLAY_PCM_OVERRIDE
-      audioFormat = 0x8000; // 0x20000 	PCM/48000/16/2
+      audioFormat = 0x8000; // 0x8000 	PCM/48000/16/2
       ct = 1;
 #endif
     }
