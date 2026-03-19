@@ -2115,6 +2115,10 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality 
   // In raw mode we won't actually need to read or decode, but we still setup
   // the decode_ctx because transcode_encode_setup() gets info about the input
   // through this structure (TODO dont' do that)
+  // But if we have 24-bit raw data samples (ala s24le) then we will need to
+  // demux so that the avcodec functions will work
+  // I think that means getting the format option set to "s42le" in ifmt_ctx?
+  // Or implement the demuxing in mass.c before passing the input data to the input module.
   decoder = avcodec_find_decoder(ctx->settings.audio_codec);
   if (!decoder)
     {
@@ -2123,6 +2127,7 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality 
     }
 
   CHECK_NULL(L_XCODE, ctx->ifmt_ctx = avformat_alloc_context());
+  if (quality->bits_per_sample == 24) ctx->ifmt_ctx->iformat = av_find_input_format("s24le"); // Did not have an impact. Probably because we do not decode.
   CHECK_NULL(L_XCODE, ctx->audio_stream.codec = avcodec_alloc_context3(decoder));
   CHECK_NULL(L_XCODE, ctx->audio_stream.stream = avformat_new_stream(ctx->ifmt_ctx, NULL));
 

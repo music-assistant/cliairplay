@@ -1260,7 +1260,10 @@ source_read(int *nbytes, int *nsamples, uint8_t *buf, int len)
       return 0;
     }
 
-  *nsamples = BTOS(*nbytes, (pb_session.quality.bits_per_sample == 24) ? 32 : pb_session.quality.bits_per_sample, pb_session.quality.channels);
+  // Maybe this is wrong for PCM_S24LE input data
+  // *nsamples = BTOS(*nbytes, (pb_session.quality.bits_per_sample == 24) ? 32 : pb_session.quality.bits_per_sample, pb_session.quality.channels);
+  // Audio data in buf is in raw input format and not yet decoded. So s24le raw data will use 24 bits.
+  *nsamples = BTOS(*nbytes, pb_session.quality.bits_per_sample, pb_session.quality.channels);
 
   event_read(*nsamples);
 

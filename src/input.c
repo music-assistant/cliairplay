@@ -819,7 +819,8 @@ input_read(void *data, size_t size, short *flag, void **flagdata)
   if (*flag & INPUT_FLAG_QUALITY)
     input_buffer.cur_read_quality = *((struct media_quality *)(*flagdata));
 
-  size_t one_sec_size = STOB(input_buffer.cur_read_quality.sample_rate, (input_buffer.cur_read_quality.bits_per_sample == 24) ? 32 : input_buffer.cur_read_quality.bits_per_sample, input_buffer.cur_read_quality.channels);
+  // data is in raw format, so s24le format will use 24 bits - not yet 24-in-32 packed
+  size_t one_sec_size = STOB(input_buffer.cur_read_quality.sample_rate, input_buffer.cur_read_quality.bits_per_sample, input_buffer.cur_read_quality.channels);
   debug_elapsed += len;
   if (*flag || (debug_elapsed > 10 * one_sec_size))
     {
