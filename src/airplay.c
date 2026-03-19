@@ -1236,8 +1236,8 @@ master_session_make(struct media_quality *quality, bool use_ptp)
   ams->quality = *quality;
   ams->use_ptp = use_ptp;
   ams->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
-  // rawbuf is raw data - therefore s24le is 24 bits/sample and not yet 24-in-32 packed.
-  ams->rawbuf_size = STOB(ams->samples_per_packet, quality->bits_per_sample, quality->channels);
+  // rawbuf is demuxed raw data - therefore s24le is 24-in-32 packed.
+  ams->rawbuf_size = STOB(ams->samples_per_packet, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
   ams->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, ams->rawbuf = malloc(ams->rawbuf_size));

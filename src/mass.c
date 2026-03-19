@@ -103,7 +103,6 @@ extern mass_named_pipes_t mass_named_pipes;
  /* mass specific stuff */
 static struct event *mass_timer_event = NULL;
 static struct timeval mass_tv = { MASS_UPDATE_INTERVAL_SEC, 0};
-// static struct timespec playback_start_ts = {0, 0};
 static struct timespec paused_start_ts = {0, 0};
 static bool player_started = false;
 static bool player_paused = false;
@@ -111,6 +110,7 @@ static int pipe_id = 0; // make a global of the id of our audio named pipe
 static pthread_mutex_t audio_command_lock; // for mass_cmd <> mass_aud inter-thread cooridnation
 static bool pause_flag = false; // we control when to pause and (re)commence reading from the audio pipe
 static bool stop_flag = false; // used to communicate the receipt of a STOP command between mass_cmd and mass_aud threads
+static struct evbuffer *mass_evbuf = NULL;
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
@@ -1084,6 +1084,29 @@ pipe_thread_stop(void)
 }
 
 /**
+ * Obtain demuxed input raw data
+ * 
+ * @param source demuxed raw data read is added to this source
+ * @param fd the file descriptor to obtain the raw unmuxed data from
+ * @param max_len maximum number of bytes to demux
+ * 
+ * @returns number of bytes demuxed on success, 0 on end of file and -1 on error
+ * 
+ * @details Read up to max_len bytes from the input file descriptor, demux if required
+ * and place into evbuf
+ * 
+ */
+static int
+mass_read(struct input_source *source, int fd, int max_len)
+{
+  int ret;
+
+  ret = evbuffer_read(source->evbuf, fd, max_len);
+
+  return ret;
+}
+
+/**
  * Create the pipelist of streamed audio named pipes to subsequently watch
  * @returns pointer to the head of the created pipelist
  * @note  For Music Assistant, the pipelist created will always contain one entry for the
@@ -1519,6 +1542,7 @@ setup(struct input_source *source)
     return -1;
 
   CHECK_NULL(L_FIFO, source->evbuf = evbuffer_new());
+  CHECK_NULL(L_FIFO, mass_evbuf = evbuffer_new());
 
   pipe = pipe_create(source->path, source->id, PIPE_PCM, NULL);
 
@@ -1548,7 +1572,7 @@ setup(struct input_source *source)
  * @param source  Input source to stop
  * @note  For Music Assistant integration, we never want to close the audio
  *        named pipe until a graceful shutdown is triggered by Music Assistant.
- *        Therfore, the input module sending us a stop is treated as a no-op.
+ *        Therefore, the input module sending us a stop is treated as a no-op.
  * @returns 0
  */
 static int
@@ -1593,7 +1617,7 @@ play(struct input_source *source)
   }
   pthread_mutex_unlock(&audio_command_lock);
 
-  ret = evbuffer_read(source->evbuf, pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
+  ret = mass_read(source, pipe->fd, PIPE_READ_MAX); // obtain demuxed raw pcm
   if (ret == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
     stop(source);
@@ -1747,6 +1771,7 @@ mass_deinit(void)
 
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&audio_command_lock));
+  if (mass_evbuf) evbuffer_free(mass_evbuf);
 }
 
 /**

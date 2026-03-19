@@ -275,7 +275,6 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->format = "s24le";
 	settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
 	settings->sample_format = AV_SAMPLE_FMT_S32;
-	// settings->with_user_filters = true;
 	break;
 
       case XCODE_PCM24TEST:
@@ -2127,7 +2126,6 @@ transcode_decode_setup_raw(enum transcode_profile profile, struct media_quality 
     }
 
   CHECK_NULL(L_XCODE, ctx->ifmt_ctx = avformat_alloc_context());
-  if (quality->bits_per_sample == 24) ctx->ifmt_ctx->iformat = av_find_input_format("s24le"); // Did not have an impact. Probably because we do not decode.
   CHECK_NULL(L_XCODE, ctx->audio_stream.codec = avcodec_alloc_context3(decoder));
   CHECK_NULL(L_XCODE, ctx->audio_stream.stream = avformat_new_stream(ctx->ifmt_ctx, NULL));
 
