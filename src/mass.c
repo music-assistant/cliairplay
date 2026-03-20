@@ -61,6 +61,11 @@
 #include <event2/event.h>
 #include <event2/buffer.h>
 
+// #include <libavutil/samplefmt.h>
+// #include <libavutil/timestamp.h>
+#include <libavformat/avformat.h>
+
+
 #include "artwork.h"
 #include "cliap.h"
 #include "commands.h"
@@ -93,8 +98,7 @@
 #define MASS_METADATA_ACTION_KEY   "ACTION"
 #define MASS_METADATA_PIN_KEY      "PIN"
 
-// #define DEBUG_MASS 1
-// #define STD_INPUT_QUALITY 1
+#define DEBUG_MASS 1
 
 /* from cliap.c */
 extern ap_device_info_t ap_device_info;
@@ -110,12 +114,15 @@ static int pipe_id = 0; // make a global of the id of our audio named pipe
 static pthread_mutex_t audio_command_lock; // for mass_cmd <> mass_aud inter-thread cooridnation
 static bool pause_flag = false; // we control when to pause and (re)commence reading from the audio pipe
 static bool stop_flag = false; // used to communicate the receipt of a STOP command between mass_cmd and mass_aud threads
-static struct evbuffer *mass_evbuf = NULL;
+static AVFormatContext *fmt_ctx = NULL;
+static char errbuf[64]; // Used for passing errors to DPRINTF (can't count on av_err2str being present)
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
 // Max number of bytes to read from the audio pipe at a time
 #define PIPE_READ_MAX 65536
+// Max number of bytes to read from the audio pipe when demuxing is required i.e. 24-in-32 packing required
+#define UNMUXED_READ_MAX PIPE_READ_MAX * 24 / 32
 // Max number of bytes to buffer from the command/metadata pipe
 #define PIPE_METADATA_BUFLEN_MAX 1048576
 // Ignore pictures with larger size than this
@@ -226,6 +233,14 @@ static const char *play_status_str(enum play_status status)
     default:
       return "unknown";
     }
+}
+
+
+static inline char *
+err2str(int errnum)
+{
+  av_strerror(errnum, errbuf, sizeof(errbuf));
+  return errbuf;
 }
 
 /**
@@ -1083,8 +1098,48 @@ pipe_thread_stop(void)
   tid_audio_pipe = 0;
 }
 
+// AVIO callback to read data
+int read_callback(void *opaque, uint8_t *buf, int buf_size) {
+    int fd = *(int*)opaque;
+    return read(fd, buf, buf_size);
+}
+
 /**
- * Obtain demuxed input raw data
+ * Populate source->evbuf with demuxed data read from fd
+ * 
+ * @param source the input_source
+ * @param fd the file descriptor to read input data stream from
+ * @param max_len maximum number of demuxed bytes to populate
+ */
+static int
+read_and_demux(struct input_source *source, int fd, int max_len)
+{
+  int ret;
+  AVPacket *pkt = av_packet_alloc();
+#if DEBUG_MASS
+  static int bytes_read = 0;
+#endif
+
+  ret = av_read_frame(fmt_ctx, pkt);
+  if (ret < 0) {
+    DPRINTF(E_LOG, L_FIFO, "%s:Error demuxing data. %s\n", __func__, err2str(ret));
+    goto out_free;
+  }
+  
+  CHECK_ERR(L_FIFO, evbuffer_add(source->evbuf, pkt->data, pkt->size));
+  ret = pkt->size;
+  bytes_read += pkt->size;
+#if DEBUG_MASS
+  DPRINTF(E_DBG, L_FIFO, "%s:%d demuxed bytes added to source->evbuf. Bytes read:%d\n", __func__, pkt->size, bytes_read);
+#endif
+
+out_free:
+  av_packet_free(&pkt);
+  return ret;
+}
+
+/**
+ * Obtain input raw data, in format ready to feed into transcoding chain
  * 
  * @param source demuxed raw data read is added to this source
  * @param fd the file descriptor to obtain the raw unmuxed data from
@@ -1099,11 +1154,10 @@ pipe_thread_stop(void)
 static int
 mass_read(struct input_source *source, int fd, int max_len)
 {
-  int ret;
-
-  ret = evbuffer_read(source->evbuf, fd, max_len);
-
-  return ret;
+  if (source->quality.bits_per_sample == 24) {
+    return read_and_demux(source, fd, max_len);
+  }
+  return evbuffer_read(source->evbuf, fd, max_len);
 }
 
 /**
@@ -1542,7 +1596,6 @@ setup(struct input_source *source)
     return -1;
 
   CHECK_NULL(L_FIFO, source->evbuf = evbuffer_new());
-  CHECK_NULL(L_FIFO, mass_evbuf = evbuffer_new());
 
   pipe = pipe_create(source->path, source->id, PIPE_PCM, NULL);
 
@@ -1554,15 +1607,18 @@ setup(struct input_source *source)
   // therefore, our input quality will be the same as our output quality
   source->quality = ap_device_info.quality;
 
-#if STD_INPUT_QUALITY
-  // for isolating encoing issues, let's use std quality as input quality.
-  source->quality.sample_rate = 41100;
-  source->quality.bits_per_sample =16;
-  source->quality.channels = 2;
-#endif
-  DPRINTF(E_DBG, L_FIFO, "%s:source->quality = %d/%d/%d\n", __func__, 
-    source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels
-  );
+  // However, 24-bit raw audio data must be demuxed before feeding to the input module
+  if (source->quality.bits_per_sample == 24) {
+    const char *format_short_name = "s24le";
+    unsigned char *avio_buffer = av_malloc(UNMUXED_READ_MAX);
+    AVInputFormat *input_format = NULL;
+
+    AVIOContext *avio_ctx = avio_alloc_context(avio_buffer, UNMUXED_READ_MAX, 0, &fd, &read_callback, NULL, NULL);
+    CHECK_NULL(L_FIFO, fmt_ctx = avformat_alloc_context());
+    fmt_ctx->pb = avio_ctx;
+    CHECK_NULL(L_FIFO, input_format = (AVInputFormat *) av_find_input_format(format_short_name));
+    CHECK_ERR(L_FIFO, avformat_open_input(&fmt_ctx, NULL, input_format, NULL));
+  }
 
   return 0;
 }
@@ -1599,7 +1655,7 @@ play(struct input_source *source)
   short flags;
   int ret;
   static size_t read_count = 0;
-#ifdef DEBUG_MASS
+#if DEBUG_MASS
   static size_t read_bytes = 0;
 #endif
 
@@ -1641,7 +1697,7 @@ play(struct input_source *source)
   }
 
   read_count++;
-#ifdef DEBUG_MASS
+#if DEBUG_MASS
   read_bytes += ret;
 #endif
 
@@ -1771,7 +1827,10 @@ mass_deinit(void)
 
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&audio_command_lock));
-  if (mass_evbuf) evbuffer_free(mass_evbuf);
+  if (fmt_ctx) {
+    avformat_close_input(&fmt_ctx);
+    avformat_free_context(fmt_ctx);
+  }
 }
 
 /**
