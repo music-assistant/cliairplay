@@ -54,7 +54,11 @@ static cfg_opt_t sec_general[] =
     CFG_INT_CB("loglevel", E_LOG, CFGF_NONE, &cb_loglevel),
     CFG_STR("logformat", "default", CFGF_NONE),
     CFG_STR_LIST("trusted_networks", "{lan}", CFGF_NONE),
+#ifdef __APPLE__
+    CFG_BOOL("ipv6", cfg_false, CFGF_NONE), // dual stack doesn't work with macos
+#else
     CFG_BOOL("ipv6", cfg_true, CFGF_NONE),
+#endif
     CFG_STR("bind_address", NULL, CFGF_NONE),
     CFG_BOOL("speaker_autoselect", cfg_true, CFGF_NONE),
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
@@ -66,7 +70,7 @@ static cfg_opt_t sec_general[] =
     CFG_STR("allow_origin", "*", CFGF_NONE),
     CFG_STR("user_agent", PACKAGE_NAME "/" PACKAGE_VERSION, CFGF_NONE),
     CFG_BOOL("ssl_verifypeer", cfg_true, CFGF_NONE),
-    CFG_BOOL("timer_false", cfg_true, CFGF_NONE), // if true, then ignores input and plays ticks
+    CFG_BOOL("timer_test", cfg_false, CFGF_NONE), // if true, then ignores input and plays ticks
     CFG_INT("start_buffer_ms", 2250, CFGF_NONE),
     CFG_END()
   };
