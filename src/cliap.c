@@ -210,6 +210,7 @@ usage(char *program)
   printf("  --txt <txt>                                       txt keyvals returned in mDNS for AirPlay service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                                 Authorization key.\n");
   printf("  --dacp_id <dacp_id>                               DACP ID (hex string) for remote control callbacks.\n");
+  // With change to using ffmpeg libraries to read the raw pcm, re-check the validity of calling this a pipe @todo bradkeifer
   printf("  --pipe <audio_filename>                           Filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename>                 Filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                                             Print current NTP time and exit.\n");
@@ -909,10 +910,10 @@ main(int argc, char **argv)
   }
 
   // Check that named pipes exist for audio streaming and metadata
-  ret = check_pipe(mass_named_pipes.audio_pipe);
-  if (ret < 0) {
-    return EXIT_FAILURE;
-  }
+  // ret = check_pipe(mass_named_pipes.audio_pipe);
+  // if (ret < 0) {
+  //   return EXIT_FAILURE;
+  // }
   if (!mass_named_pipes.metadata_pipe) {
     // Adopt the default
     metadata_pipe_defaulted = true;

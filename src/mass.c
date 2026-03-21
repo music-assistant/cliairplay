@@ -63,7 +63,7 @@
 
 // #include <libavutil/samplefmt.h>
 // #include <libavutil/timestamp.h>
-#include <libavformat/avformat.h>
+// #include <libavformat/avformat.h>
 
 
 #include "artwork.h"
@@ -85,6 +85,7 @@
 #include "rtp_common.h"
 #include "mass.h"
 #include "wrappers.h"
+#include "transcode.h"
 
 #define MASS_UPDATE_INTERVAL_SEC   1 // every second
 #define MASS_METADATA_KEYVAL_SEP   "="  // Key-value separator in metadata
@@ -97,6 +98,8 @@
 #define MASS_METADATA_DURATION_KEY "DURATION"
 #define MASS_METADATA_ACTION_KEY   "ACTION"
 #define MASS_METADATA_PIN_KEY      "PIN"
+
+#define STDIN_FILENAME  "-"
 
 #define DEBUG_MASS 1
 
@@ -114,15 +117,11 @@ static int pipe_id = 0; // make a global of the id of our audio named pipe
 static pthread_mutex_t audio_command_lock; // for mass_cmd <> mass_aud inter-thread cooridnation
 static bool pause_flag = false; // we control when to pause and (re)commence reading from the audio pipe
 static bool stop_flag = false; // used to communicate the receipt of a STOP command between mass_cmd and mass_aud threads
-static AVFormatContext *fmt_ctx = NULL;
-static char errbuf[64]; // Used for passing errors to DPRINTF (can't count on av_err2str being present)
 
 // Maximum number of pipes to watch for data
 #define PIPE_MAX_WATCH 4
-// Max number of bytes to read from the audio pipe at a time
+// Max number of bytes to read from the input streams (both audio and commands/metadata) at a time
 #define PIPE_READ_MAX 65536
-// Max number of bytes to read from the audio pipe when demuxing is required i.e. 24-in-32 packing required
-#define UNMUXED_READ_MAX PIPE_READ_MAX * 24 / 32
 // Max number of bytes to buffer from the command/metadata pipe
 #define PIPE_METADATA_BUFLEN_MAX 1048576
 // Ignore pictures with larger size than this
@@ -130,6 +129,13 @@ static char errbuf[64]; // Used for passing errors to DPRINTF (can't count on av
 // Where we store pictures for the artwork module to read
 #define PIPE_TMPFILE_TEMPLATE "/tmp/" PACKAGE_NAME ".XXXXXX.ext"
 #define PIPE_TMPFILE_TEMPLATE_EXTLEN 4
+
+struct mass_ctx
+{
+  struct pipe *pipe;
+  struct decode_ctx *decode_ctx;
+  struct evbuffer *evbuf;
+};
 
 enum pipetype
 {
@@ -235,12 +241,48 @@ static const char *play_status_str(enum play_status status)
     }
 }
 
-
-static inline char *
-err2str(int errnum)
+static enum transcode_profile
+quality_to_xcode(struct media_quality *quality)
 {
-  av_strerror(errnum, errbuf, sizeof(errbuf));
-  return errbuf;
+  if (quality->bits_per_sample == 16)
+    return XCODE_PCM16;
+  if (quality->bits_per_sample == 24)
+    return XCODE_PCM24;
+  if (quality->bits_per_sample == 32)
+    return XCODE_PCM32;
+
+  return XCODE_UNKNOWN;
+}
+
+/**
+ * Determines if demuxing of raw input audio is required.
+ * 
+ * @note
+ * Raw 24-bit audio needs to be demuxed to get the data into s32
+ * sample format
+ * 
+ * @param quality the quality parameters of the raw input audio
+ * @returns true if demuxing required, false if not
+ */
+static bool
+demux_required(struct media_quality *quality)
+{
+  if (quality->bits_per_sample == 24) {
+    return true;
+  }
+  return false;
+}
+
+/** 
+ * Check if a path refers to stdin
+ * 
+ * @param path  the path to check
+ * @returns true if path is "-" (stdin), false otherwise
+ */
+static bool
+is_stdin(const char *path)
+{
+  return (strncmp(path, STDIN_FILENAME, strlen(STDIN_FILENAME)) == 0);
 }
 
 /**
@@ -276,7 +318,7 @@ pipe_free(struct pipe *pipe)
   free(pipe);
 }
 
-/** Opens a file for reading and validates it is a FIFO pipe (or stdin if path is "-")
+/** Opens a file for reading and validates it is a FIFO pipe or stdin
  * @param path    the pathname of the file to open, or "-" for stdin
  * @param silent  suppress fstat error if it occurs
  * @returns the file descriptor on success, -1 on failure
@@ -288,7 +330,7 @@ pipe_open(const char *path, bool silent)
   int fd;
 
   // Handle stdin special case
-  if (strcmp(path, "-") == 0) {
+  if (is_stdin(path)) {
     DPRINTF(E_INFO, L_FIFO, "Using stdin for audio input\n");
     return STDIN_FILENO;
   }
@@ -330,16 +372,6 @@ pipe_close(int fd)
 {
   if (fd > 0)  // Don't close stdin
     close(fd);
-}
-
-/** Check if a path refers to stdin
- * @param path  the path to check
- * @returns true if path is "-" (stdin), false otherwise
- */
-static bool
-is_stdin(const char *path)
-{
-  return (strcmp(path, "-") == 0);
 }
 
 /** Add a libevent read event for the pipe
@@ -1017,17 +1049,13 @@ pipe_watch_update(void *arg, int *retval)
 }
 
 /** 
- * Sets the thread name and launches the event loop for audio data from a named pipe.
+ * Sets the thread name and launches the event loop for processing input audio data.
  * Exits the thread upon break from the event loop.
  */
 static void *
-pipe_thread_run(void *arg)
+mass_audio_thread_run(void *arg)
 {
-  char my_thread[32];
-
   thread_setname("mass_aud");
-  thread_getnametid(my_thread, sizeof(my_thread));
-  DPRINTF(E_DBG, L_FIFO, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_audio_pipe);
 
   pthread_exit(NULL);
@@ -1067,7 +1095,7 @@ pipe_thread_start(void)
   CHECK_NULL(L_FIFO, evbase_audio_pipe = event_base_new());
 #endif
   CHECK_NULL(L_FIFO, cmdbase = commands_base_new(evbase_audio_pipe, NULL));
-  CHECK_ERR(L_FIFO, pthread_create(&tid_audio_pipe, NULL, pipe_thread_run, NULL));
+  CHECK_ERR(L_FIFO, pthread_create(&tid_audio_pipe, NULL, mass_audio_thread_run, NULL));
 
 }
 
@@ -1096,68 +1124,6 @@ pipe_thread_stop(void)
 
   event_base_free(evbase_audio_pipe);
   tid_audio_pipe = 0;
-}
-
-// AVIO callback to read data
-int read_callback(void *opaque, uint8_t *buf, int buf_size) {
-    int fd = *(int*)opaque;
-    return read(fd, buf, buf_size);
-}
-
-/**
- * Populate source->evbuf with demuxed data read from fd
- * 
- * @param source the input_source
- * @param fd the file descriptor to read input data stream from
- * @param max_len maximum number of demuxed bytes to populate
- */
-static int
-read_and_demux(struct input_source *source, int fd, int max_len)
-{
-  int ret;
-  AVPacket *pkt = av_packet_alloc();
-#if DEBUG_MASS
-  static int bytes_read = 0;
-#endif
-
-  ret = av_read_frame(fmt_ctx, pkt);
-  if (ret < 0) {
-    DPRINTF(E_LOG, L_FIFO, "%s:Error demuxing data. %s\n", __func__, err2str(ret));
-    goto out_free;
-  }
-  
-  CHECK_ERR(L_FIFO, evbuffer_add(source->evbuf, pkt->data, pkt->size));
-  ret = pkt->size;
-  bytes_read += pkt->size;
-#if DEBUG_MASS
-  DPRINTF(E_DBG, L_FIFO, "%s:%d demuxed bytes added to source->evbuf. Bytes read:%d\n", __func__, pkt->size, bytes_read);
-#endif
-
-out_free:
-  av_packet_free(&pkt);
-  return ret;
-}
-
-/**
- * Obtain input raw data, in format ready to feed into transcoding chain
- * 
- * @param source demuxed raw data read is added to this source
- * @param fd the file descriptor to obtain the raw unmuxed data from
- * @param max_len maximum number of bytes to demux
- * 
- * @returns number of bytes demuxed on success, 0 on end of file and -1 on error
- * 
- * @details Read up to max_len bytes from the input file descriptor, demux if required
- * and place into evbuf
- * 
- */
-static int
-mass_read(struct input_source *source, int fd, int max_len)
-{
-  if (source->quality.bits_per_sample == 24) {
-    return read_and_demux(source, fd, max_len);
-  }
-  return evbuffer_read(source->evbuf, fd, max_len);
 }
 
 /**
@@ -1537,10 +1503,10 @@ pipe_metadata_watch_add(const char *path)
  * Spawn the mass_cmd thread, setup the command/metadata events and dispatch the 
  * command pipe event loop
  * @param arg Not used. Can be NULL
- * @note This function does not return unless the command pipe eent loop is broken.
+ * @note This function does not return unless the command pipe event loop is broken.
  */
 static void *
-command_pipe_thread_run(void *arg)
+mass_command_thread_run(void *arg)
 {
   char my_thread[32];
 
@@ -1582,43 +1548,57 @@ command_pipe_thread_stop(void)
 /**
  * Input definition callback function to setup the mass (Music Assistant) module.
  * Called by the input module.
+ * 
+ * @note
+ * We read raw audio data either from stdin or from a named pipe. If the raw audio data
+ * does not need demuxing, then it is passed directly to the input module as is. 24-bit
+ * quality requires demuxing to get the data into the correct sample format of s32.
+ * 
  * @param source  Input source to be setup
  * @returns 0 on success, -1 on failure
  */
 static int
 setup(struct input_source *source)
 {
-  struct pipe *pipe;
+  struct transcode_decode_setup_args decode_args = {};
+  struct mass_ctx *ctx;
   int fd;
 
+  CHECK_NULL(L_FIFO, ctx = calloc(1, sizeof(struct mass_ctx)));
+
   fd = pipe_open(source->path, 0);
-  if (fd < 0)
+  if (fd < 0) {
     return -1;
+  }
+  ctx->pipe = pipe_create(source->path, source->id, PIPE_PCM, NULL);
+  ctx->pipe->fd = fd;
 
   CHECK_NULL(L_FIFO, source->evbuf = evbuffer_new());
 
-  pipe = pipe_create(source->path, source->id, PIPE_PCM, NULL);
+  if (demux_required(&ap_device_info.quality)) {
+    decode_args.quality = &ap_device_info.quality;
+    decode_args.profile = quality_to_xcode(&ap_device_info.quality);
 
-  pipe->fd = fd;
+    CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
+    CHECK_NULL(L_FIFO, decode_args.evbuf_io = calloc(1, sizeof(struct transcode_evbuf_io)));
+    decode_args.evbuf_io->evbuf = ctx->evbuf;
+    decode_args.evbuf_io->seekfn = NULL;
+    DPRINTF(E_DBG, L_FIFO, "%s:ctx->evbuf:%p will contain raw audio to be demuxed\n", __func__, ctx->evbuf);
 
-  source->input_ctx = pipe;
+    ctx->decode_ctx = transcode_decode_setup(decode_args);
+    if (!ctx->decode_ctx) {
+      return -1;
+    }
+  } else {
+    // We point the mass_ctx evbuffer directly to the source evbuffer
+    ctx->evbuf = source->evbuf;
+  }
+
+  source->input_ctx = ctx;
 
   // In the Music Assistant use case, we stream input at the same quality as we want playback
   // therefore, our input quality will be the same as our output quality
   source->quality = ap_device_info.quality;
-
-  // However, 24-bit raw audio data must be demuxed before feeding to the input module
-  if (source->quality.bits_per_sample == 24) {
-    const char *format_short_name = "s24le";
-    unsigned char *avio_buffer = av_malloc(UNMUXED_READ_MAX);
-    AVInputFormat *input_format = NULL;
-
-    AVIOContext *avio_ctx = avio_alloc_context(avio_buffer, UNMUXED_READ_MAX, 0, &fd, &read_callback, NULL, NULL);
-    CHECK_NULL(L_FIFO, fmt_ctx = avformat_alloc_context());
-    fmt_ctx->pb = avio_ctx;
-    CHECK_NULL(L_FIFO, input_format = (AVInputFormat *) av_find_input_format(format_short_name));
-    CHECK_ERR(L_FIFO, avformat_open_input(&fmt_ctx, NULL, input_format, NULL));
-  }
 
   return 0;
 }
@@ -1626,14 +1606,29 @@ setup(struct input_source *source)
 /**
  * Input definition callback function called when input is stopped.
  * @param source  Input source to stop
- * @note  For Music Assistant integration, we never want to close the audio
- *        named pipe until a graceful shutdown is triggered by Music Assistant.
- *        Therefore, the input module sending us a stop is treated as a no-op.
  * @returns 0
  */
 static int
 stop(struct input_source *source)
 {
+  struct mass_ctx *ctx = source->input_ctx;
+
+  if (demux_required(&source->quality)) {
+    transcode_decode_cleanup(&ctx->decode_ctx);
+    evbuffer_free(ctx->evbuf);
+  }
+
+  if (source->evbuf) {
+    evbuffer_free(source->evbuf);
+  }
+
+  if (ctx) {
+    free(ctx);
+  }
+
+  source->input_ctx = NULL;
+  source->evbuf = NULL;
+
   return 0;
 }
 
@@ -1642,8 +1637,10 @@ stop(struct input_source *source)
  * @param source  The input source to obtain audio data for
  * @returns 0 on success, -1 on failure
  * @note  We check (inside a mutex lock) if the player is paused, and if not, then we 
- *        read up to PIPE_READ_MAX bytes from the audio named pipe event buffer and
- *        pass this to the input module.
+ *        transcode the raw pcm audio input and pass it to the input module via the source->evbuffer.
+ *        Whilst 16-bit and 32-bit raw pcm audio input does not need to be transcoded, it is necessary
+ *        to demux 24-bit raw pcm audio input in order to get the data into 32-bit sample format
+ *        a.k.a 24-in-32.
  *        If the player is paused or there is no data to read, we wait for a period by 
  *        calling input_wait() and return.
  * 
@@ -1651,12 +1648,13 @@ stop(struct input_source *source)
 static int
 play(struct input_source *source)
 {
-  struct pipe *pipe = source->input_ctx;
+  struct mass_ctx *ctx = source->input_ctx;
   short flags;
   int ret;
   static size_t read_count = 0;
+  bool demux_flag = demux_required(&source->quality);
 #if DEBUG_MASS
-  static size_t read_bytes = 0;
+  static size_t bytes_read = 0;
 #endif
 
   pthread_mutex_lock(&audio_command_lock);
@@ -1673,7 +1671,24 @@ play(struct input_source *source)
   }
   pthread_mutex_unlock(&audio_command_lock);
 
-  ret = mass_read(source, pipe->fd, PIPE_READ_MAX); // obtain demuxed raw pcm
+  ret = evbuffer_read(ctx->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
+  if (demux_flag && ret > 0) {
+    DPRINTF(E_DBG, L_FIFO, "%s:ctx->evbuf:%p contains raw audio to be demuxed\n", __func__, ctx->evbuf);
+    // We have raw audio data that requires demuxing
+    transcode_frame *frame = NULL;
+    int decode_ret;
+    while ((decode_ret = transcode_decode(frame, ctx->decode_ctx)) != 0) {
+      if (decode_ret < 0) {
+        DPRINTF(E_LOG, L_FIFO, "%s:Error decoding raw audio input data.\n", __func__);
+        input_write(NULL, NULL, INPUT_FLAG_ERROR);
+        stop(source);
+        return -1;
+      }
+      DPRINTF(E_DBG, L_FIFO, "%s:transcode_decode() returned %d. sizeof(frame):%zu\n", __func__, decode_ret, sizeof(frame));
+      evbuffer_add(source->evbuf, frame, decode_ret);
+
+    }
+  }
   if (ret == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
     stop(source);
@@ -1698,7 +1713,7 @@ play(struct input_source *source)
 
   read_count++;
 #if DEBUG_MASS
-  read_bytes += ret;
+  bytes_read += ret;
 #endif
 
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
@@ -1709,7 +1724,7 @@ play(struct input_source *source)
   }
 
 #ifdef DEBUG_MASS
-  DPRINTF(E_DBG, L_FIFO, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, read_bytes);
+  DPRINTF(E_DBG, L_FIFO, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, bytes_read);
 #endif
   input_write(source->evbuf, &source->quality, flags);
 
@@ -1767,7 +1782,7 @@ command_pipe_init(void)
   int ret;
 
   evbase_command_pipe = event_base_new();
-  ret = pthread_create(&tid_command_pipe, NULL, command_pipe_thread_run, NULL);
+  ret = pthread_create(&tid_command_pipe, NULL, mass_command_thread_run, NULL);
   if (ret !=0) {
     DPRINTF(E_LOG, L_FIFO, "%s:Unable to create command thread. %s\n", __func__, strerror(errno));
     return -1;
@@ -1796,10 +1811,6 @@ command_pipe_deinit()
 int
 mass_init(void)
 {
-  // Maybe we can add a call to player_device_add(device) in here somewhere to initiate device connection before
-  // audio is streamed to the named pipe. Currently, device connection is initiatied on receipt of data on the 
-  // audio named pipe.
-
   CHECK_ERR(L_FIFO, mutex_init(&pipe_metadata.prepared.lock));
   CHECK_ERR(L_FIFO, mutex_init(&audio_command_lock));
 
@@ -1827,10 +1838,6 @@ mass_deinit(void)
 
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&pipe_metadata.prepared.lock));
   CHECK_ERR(L_FIFO, pthread_mutex_destroy(&audio_command_lock));
-  if (fmt_ctx) {
-    avformat_close_input(&fmt_ctx);
-    avformat_free_context(fmt_ctx);
-  }
 }
 
 /**

@@ -275,6 +275,7 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->format = "s24le";
 	settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
 	settings->sample_format = AV_SAMPLE_FMT_S32;
+  settings->in_format = "s24le";
 	break;
 
       case XCODE_PCM24TEST:
@@ -1387,7 +1388,18 @@ open_decoder(AVCodecContext **dec_ctx, unsigned int *stream_index, struct decode
   // Filter creation will need the sample rate and format that the decoder is
   // giving us - however sample rate of dec_ctx will be 0 if we don't prime it
   // with the streams codecpar data.
-  ret = avcodec_parameters_to_context(*dec_ctx, ctx->ifmt_ctx->streams[*stream_index]->codecpar);
+  // Hmmm - what if the streams codec parameters are wrong? They seem to get defaulted with 44100 sample_rate
+  if (type == AVMEDIA_TYPE_AUDIO && ctx->settings.sample_rate != ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate) 
+    {
+      DPRINTF(E_WARN, L_XCODE, "Sample rate for stream #%d (%d) does not match settings sample rate (%d).\n",
+        *stream_index, ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate,
+        ctx->settings.sample_rate
+      );
+      ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate = ctx->settings.sample_rate;
+      ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout = ctx->settings.channel_layout;
+    }
+
+    ret = avcodec_parameters_to_context(*dec_ctx, ctx->ifmt_ctx->streams[*stream_index]->codecpar);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_XCODE, "Failed to copy codecpar for stream #%d: %s\n", *stream_index, err2str(ret));
