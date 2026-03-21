@@ -101,7 +101,8 @@
 
 #define STDIN_FILENAME  "-"
 
-#define DEBUG_MASS 1
+#define DEBUG_MASS 0
+#define DEBUG_DEMUX 0
 
 /* from cliap.c */
 extern ap_device_info_t ap_device_info;
@@ -133,7 +134,6 @@ static bool stop_flag = false; // used to communicate the receipt of a STOP comm
 struct mass_ctx
 {
   struct pipe *pipe;
-  struct transcode_ctx *transcode_ctx; // optional context if transcoding is required
   struct evbuffer *evbuf;  // the evbuffer to read raw audio into
 };
 
@@ -241,19 +241,6 @@ static const char *play_status_str(enum play_status status)
     }
 }
 
-static enum transcode_profile
-quality_to_xcode(struct media_quality *quality)
-{
-  if (quality->bits_per_sample == 16)
-    return XCODE_PCM16;
-  if (quality->bits_per_sample == 24)
-    return XCODE_PCM24;
-  if (quality->bits_per_sample == 32)
-    return XCODE_PCM32;
-
-  return XCODE_UNKNOWN;
-}
-
 /**
  * Determines if demuxing of raw input audio is required.
  * 
@@ -271,6 +258,70 @@ demux_required(struct media_quality *quality)
     return true;
   }
   return false;
+}
+
+/**
+ * Demuxes a raw 24-bit source evbuffer to a 24-in-32 destination evbuffer
+ * 
+ * @note
+ * Source evbuffer is modified, with the demuxed bytes removed from it.
+ * It may contain residual raw bytes if it did not contain an integral
+ * number of 24-bit frames.
+ * 
+ * @param dst the destination evbuffer to add the demuxed frames
+ * @param src the source evbuffer to extract raw frames
+ * @returns -1 on failure, number of demuxed bytes on success
+ */
+static int
+demux_to_24_in_32(struct evbuffer *dst, struct evbuffer *src)
+{
+  uint8_t demuxed_frame[4] = {0x00, 0x00, 0x00, 0x00};
+  size_t demuxed_bytes = 0;
+  size_t removed_bytes = 0;
+  size_t residual_bytes = evbuffer_get_length(src);
+  int ret;
+
+  while (residual_bytes >= 3) {
+    removed_bytes = evbuffer_remove(src, &demuxed_frame[1], 3); // assumes little endian??
+    if (removed_bytes != 3) {
+      DPRINTF(E_LOG, L_FIFO, "%s:Error trying to remove 3 bytes from src evbuffer. src evbuffer length = %ld.\n",
+        __func__, residual_bytes
+      );
+      goto out_err;
+    }
+    demuxed_bytes += removed_bytes;
+    residual_bytes = evbuffer_get_length(src);
+
+#if DEBUG_DEMUX
+    if (demuxed_frame[1] || demuxed_frame[2] || demuxed_frame[3]) {
+      // We have something other than silence
+      DPRINTF(E_SPAM, L_FIFO, "%s: Demuxed frame 0x%02x,0x%02x,0x%02x,0x%02x. Demuxed bytes:%ld. Residual bytes:%ld.\n", 
+        __func__, demuxed_frame[0], demuxed_frame[1], demuxed_frame[2], demuxed_frame[3],
+        demuxed_bytes, residual_bytes
+      );
+    }
+#endif
+
+    ret = evbuffer_add(dst, demuxed_frame, 4);
+    if (ret < 0) {
+      DPRINTF(E_LOG, L_FIFO, "%s:Error adding frame 0x%02x,0x%02x,0x%02x,0x%02x to evbuffer. Demuxed bytes = %ld",
+        __func__, demuxed_frame[0], demuxed_frame[1], demuxed_frame[2], demuxed_frame[3], demuxed_bytes
+      );
+      goto out_err;
+    }
+  }
+#if DEBUG_DEMUX
+  DPRINTF(E_DBG, L_FIFO, "%s:Success. Demuxed:%ld. Residual:%ld. Destination evbuffer length:%ld.\n",
+    __func__, demuxed_bytes, residual_bytes, evbuffer_get_length(dst)
+  );
+#endif
+  return demuxed_bytes;
+
+out_err:
+  DPRINTF(E_LOG, L_FIFO, "%s:Error. Demuxed:%ld. Residual:%ld. Destination evbuffer length:%ld.\n",
+    __func__, demuxed_bytes, residual_bytes, evbuffer_get_length(dst)
+  );
+  return -1;
 }
 
 /** 
@@ -1560,8 +1611,6 @@ command_pipe_thread_stop(void)
 static int
 setup(struct input_source *source)
 {
-  struct transcode_decode_setup_args decode_args = {};
-  struct transcode_encode_setup_args encode_args = {};
   struct mass_ctx *ctx;
   int fd;
 
@@ -1577,24 +1626,11 @@ setup(struct input_source *source)
   CHECK_NULL(L_FIFO, source->evbuf = evbuffer_new());
 
   if (demux_required(&ap_device_info.quality)) {
-    decode_args.quality = &ap_device_info.quality;
-    decode_args.profile = quality_to_xcode(&ap_device_info.quality);
+    // create an evbuffer for raw audio input to be read into
     CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
-    CHECK_NULL(L_FIFO, decode_args.evbuf_io = calloc(1, sizeof(struct transcode_evbuf_io)));
-    decode_args.evbuf_io->evbuf = ctx->evbuf; // unmuxed raw audio will be read into this evbuffer
-    decode_args.evbuf_io->seekfn = NULL;
-
-    encode_args.quality = &ap_device_info.quality;
-    encode_args.profile = quality_to_xcode(&ap_device_info.quality);
-
-    ctx->transcode_ctx = transcode_setup(decode_args, encode_args);
-    if (!ctx->transcode_ctx) {
-      return -1;
-    }
   } else {
     // We point the mass_ctx evbuffer directly to the source evbuffer
     ctx->evbuf = source->evbuf;
-    ctx->transcode_ctx = NULL;
   }
 
   source->input_ctx = ctx;
@@ -1617,7 +1653,6 @@ stop(struct input_source *source)
   struct mass_ctx *ctx = source->input_ctx;
 
   if (demux_required(&source->quality)) {
-    transcode_cleanup(&ctx->transcode_ctx);
     evbuffer_free(ctx->evbuf);
   }
 
@@ -1677,15 +1712,11 @@ play(struct input_source *source)
   ret = evbuffer_read(ctx->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
   if (demux_flag && ret > 0) {
     // We have raw audio data that requires demuxing
-    int want_bytes = ret * 32 / source->quality.bits_per_sample;
-    int transcode_ret = transcode(source->evbuf, NULL, ctx->transcode_ctx, want_bytes);
-    DPRINTF(E_DBG, L_FIFO, "%s:%d raw bytes, wanted %d transcoded bytes, transcoded %d bytes\n", __func__, ret, want_bytes, transcode_ret);
-    if (transcode_ret > 0 && transcode_ret != want_bytes) {
-      DPRINTF(E_WARN, L_FIFO, "%s:Unexpected transcoding mismatch. From %d raw bytes, expected to transcode %d bytes, but actually decoded %d bytes.\n",
-        __func__, ret, want_bytes,transcode_ret
-      );
+    int demuxed_bytes = demux_to_24_in_32(source->evbuf, ctx->evbuf);
+    if (demuxed_bytes < 0) {
+      DPRINTF(E_WARN, L_FIFO, "%s:Error demuxing. Playback will not work.\n", __func__);
+      ret = demuxed_bytes;
     }
-    ret = transcode_ret;
   }
   if (ret == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
@@ -1721,7 +1752,7 @@ play(struct input_source *source)
     flags |= INPUT_FLAG_SYNC;
   }
 
-#ifdef DEBUG_MASS
+#if DEBUG_MASS
   DPRINTF(E_DBG, L_FIFO, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, bytes_read);
 #endif
   input_write(source->evbuf, &source->quality, flags);
