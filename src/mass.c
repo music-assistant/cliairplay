@@ -133,8 +133,8 @@ static bool stop_flag = false; // used to communicate the receipt of a STOP comm
 struct mass_ctx
 {
   struct pipe *pipe;
-  struct decode_ctx *decode_ctx;
-  struct evbuffer *evbuf;
+  struct transcode_ctx *transcode_ctx; // optional context if transcoding is required
+  struct evbuffer *evbuf;  // the evbuffer to read raw audio into
 };
 
 enum pipetype
@@ -1561,6 +1561,7 @@ static int
 setup(struct input_source *source)
 {
   struct transcode_decode_setup_args decode_args = {};
+  struct transcode_encode_setup_args encode_args = {};
   struct mass_ctx *ctx;
   int fd;
 
@@ -1578,20 +1579,22 @@ setup(struct input_source *source)
   if (demux_required(&ap_device_info.quality)) {
     decode_args.quality = &ap_device_info.quality;
     decode_args.profile = quality_to_xcode(&ap_device_info.quality);
-
     CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
     CHECK_NULL(L_FIFO, decode_args.evbuf_io = calloc(1, sizeof(struct transcode_evbuf_io)));
-    decode_args.evbuf_io->evbuf = ctx->evbuf;
+    decode_args.evbuf_io->evbuf = ctx->evbuf; // unmuxed raw audio will be read into this evbuffer
     decode_args.evbuf_io->seekfn = NULL;
-    DPRINTF(E_DBG, L_FIFO, "%s:ctx->evbuf:%p will contain raw audio to be demuxed\n", __func__, ctx->evbuf);
 
-    ctx->decode_ctx = transcode_decode_setup(decode_args);
-    if (!ctx->decode_ctx) {
+    encode_args.quality = &ap_device_info.quality;
+    encode_args.profile = quality_to_xcode(&ap_device_info.quality);
+
+    ctx->transcode_ctx = transcode_setup(decode_args, encode_args);
+    if (!ctx->transcode_ctx) {
       return -1;
     }
   } else {
     // We point the mass_ctx evbuffer directly to the source evbuffer
     ctx->evbuf = source->evbuf;
+    ctx->transcode_ctx = NULL;
   }
 
   source->input_ctx = ctx;
@@ -1614,7 +1617,7 @@ stop(struct input_source *source)
   struct mass_ctx *ctx = source->input_ctx;
 
   if (demux_required(&source->quality)) {
-    transcode_decode_cleanup(&ctx->decode_ctx);
+    transcode_cleanup(&ctx->transcode_ctx);
     evbuffer_free(ctx->evbuf);
   }
 
@@ -1673,21 +1676,16 @@ play(struct input_source *source)
 
   ret = evbuffer_read(ctx->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
   if (demux_flag && ret > 0) {
-    DPRINTF(E_DBG, L_FIFO, "%s:ctx->evbuf:%p contains raw audio to be demuxed\n", __func__, ctx->evbuf);
     // We have raw audio data that requires demuxing
-    transcode_frame *frame = NULL;
-    int decode_ret;
-    while ((decode_ret = transcode_decode(frame, ctx->decode_ctx)) != 0) {
-      if (decode_ret < 0) {
-        DPRINTF(E_LOG, L_FIFO, "%s:Error decoding raw audio input data.\n", __func__);
-        input_write(NULL, NULL, INPUT_FLAG_ERROR);
-        stop(source);
-        return -1;
-      }
-      DPRINTF(E_DBG, L_FIFO, "%s:transcode_decode() returned %d. sizeof(frame):%zu\n", __func__, decode_ret, sizeof(frame));
-      evbuffer_add(source->evbuf, frame, decode_ret);
-
+    int want_bytes = ret * 32 / source->quality.bits_per_sample;
+    int transcode_ret = transcode(source->evbuf, NULL, ctx->transcode_ctx, want_bytes);
+    DPRINTF(E_DBG, L_FIFO, "%s:%d raw bytes, wanted %d transcoded bytes, transcoded %d bytes\n", __func__, ret, want_bytes, transcode_ret);
+    if (transcode_ret > 0 && transcode_ret != want_bytes) {
+      DPRINTF(E_WARN, L_FIFO, "%s:Unexpected transcoding mismatch. From %d raw bytes, expected to transcode %d bytes, but actually decoded %d bytes.\n",
+        __func__, ret, want_bytes,transcode_ret
+      );
     }
+    ret = transcode_ret;
   }
   if (ret == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
