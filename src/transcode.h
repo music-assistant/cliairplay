@@ -20,7 +20,6 @@ enum transcode_profile
   XCODE_PCM16,
   XCODE_PCM16BE,
   XCODE_PCM24,
-  XCODE_PCM24TEST,
   XCODE_PCM32,
   // Transcodes the best audio stream to MP3
   XCODE_MP3,
