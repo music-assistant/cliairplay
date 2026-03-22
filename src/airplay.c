@@ -77,7 +77,9 @@
 
 // Dump transcoded audio to stdout
 #define AIRPLAY_DUMP_AUDIO                   1
-#define AIRPLAY_PCM_OVERRIDE                 1
+
+// Use PCM codec to the device instead of ALAC - useful for validation of transcoding
+#define AIRPLAY_PCM_OVERRIDE                 0
 
 #define AIRPLAY_QUALITY_SAMPLE_RATE_DEFAULT     44100
 #define AIRPLAY_QUALITY_BITS_PER_SAMPLE_DEFAULT 16
@@ -1178,7 +1180,7 @@ master_session_make(struct media_quality *quality, bool use_ptp)
     }
 
 #if AIRPLAY_PCM_OVERRIDE
-    // Override encoding to be PCM
+    // Override output device encoding to be PCM
   if (quality->bits_per_sample == 24) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24\n", __func__);
     encode_args.profile = XCODE_PCM24;
@@ -1186,10 +1188,6 @@ master_session_make(struct media_quality *quality, bool use_ptp)
   else if (quality->bits_per_sample == 16) {
     DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM16BE\n", __func__);
     encode_args.profile = XCODE_PCM16BE;
-  }
-  else if (quality->bits_per_sample == 32) {
-    DPRINTF(E_INFO, L_AIRPLAY, "%s: Overriding encoded output from ALAC to PCM24TEST\n", __func__);
-    encode_args.profile = XCODE_PCM24TEST;
   }
 #endif
 
@@ -2607,6 +2605,7 @@ Bit 	Value 	Type
 5 	0x20 	PCM/16000/16/2
 6 	0x40 	PCM/24000/16/1
 7 	0x80 	PCM/24000/16/2
+NOTE: 16-bit PCM streaming to device must be in PCM big-endian codec
 8 	0x100 	PCM/32000/16/1
 9 	0x200 	PCM/32000/16/2
 10 	0x400 	PCM/44100/16/1
