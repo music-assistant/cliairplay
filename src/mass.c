@@ -101,6 +101,11 @@
 
 #define STDIN_FILENAME  "-"
 
+// The below three options are in descending priority
+#define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
+#define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing
+#define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing
+
 #define DEBUG_MASS 0
 #define DEBUG_DEMUX 0
 
@@ -134,6 +139,11 @@ static bool stop_flag = false; // used to communicate the receipt of a STOP comm
 struct mass_ctx
 {
   struct pipe *pipe;
+#if DEMUX_TRANSCODE_DECODE
+  struct decode_ctx *decode_ctx; // optional context if demuxing/decoding is required
+#elif DEMUX_TRANSCODE
+  struct transcode_ctx *transcode_ctx; // optional context if transcoding is required
+#endif
   struct evbuffer *evbuf;  // the evbuffer to read raw audio into
 };
 
@@ -260,6 +270,7 @@ demux_required(struct media_quality *quality)
   return false;
 }
 
+#if DEMUX_LOCAL
 /**
  * Demuxes a raw 24-bit source evbuffer to a 24-in-32 destination evbuffer
  * 
@@ -272,7 +283,7 @@ demux_required(struct media_quality *quality)
  * @param src the source evbuffer to extract raw frames
  * @returns -1 on failure, number of demuxed bytes on success
  */
-static int
+static inline int
 demux_to_24_in_32(struct evbuffer *dst, struct evbuffer *src)
 {
   uint8_t demuxed_frame[4] = {0x00, 0x00, 0x00, 0x00};
@@ -323,6 +334,21 @@ out_err:
   );
   return -1;
 }
+#elif DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+
+static enum transcode_profile
+quality_to_xcode(struct media_quality *quality)
+{
+  if (quality->bits_per_sample == 16)
+    return XCODE_PCM16;
+  if (quality->bits_per_sample == 24)
+    return XCODE_PCM24;
+  if (quality->bits_per_sample == 32)
+    return XCODE_PCM32;
+
+  return XCODE_UNKNOWN;
+}
+#endif
 
 /** 
  * Check if a path refers to stdin
@@ -1628,6 +1654,28 @@ setup(struct input_source *source)
   if (demux_required(&ap_device_info.quality)) {
     // create an evbuffer for raw audio input to be read into
     CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
+#if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    struct transcode_decode_setup_args decode_args = {};
+    decode_args.quality = &ap_device_info.quality;
+    decode_args.profile = quality_to_xcode(&ap_device_info.quality);
+    decode_args.evbuf_io->evbuf = ctx->evbuf;
+    decode_args.evbuf_io->seekfn = NULL;
+#endif
+#if DEMUX_TRANSCODE_DECODE
+    ctx->decode_ctx = transcode_decode_setup(decode_args);
+    if (!ctx->decode_ctx) {
+      return -1;
+    }
+#endif
+#if DEMUX_TRANSCODE
+    struct transcode_encode_setup_args encode_args = {};
+    encode_args.quality = &ap_device_info.quality;
+    encode_args.profile = quality_to_xcode(&ap_device_info.quality);
+    ctx->transcode_ctx = transcode_setup(decode_args, encode_args);
+    if (!ctx->transcode_ctx) {
+      return -1;
+    }
+#endif
   } else {
     // We point the mass_ctx evbuffer directly to the source evbuffer
     ctx->evbuf = source->evbuf;
@@ -1637,6 +1685,8 @@ setup(struct input_source *source)
 
   // In the Music Assistant use case, we stream input at the same quality as we want playback
   // therefore, our input quality will be the same as our output quality
+  // NOTE: If transcode() can be made to work, then it opens up possibility of accepting different
+  // quality and/or codec as raw input stream - but the utility of this is questionable.
   source->quality = ap_device_info.quality;
 
   return 0;
@@ -1653,6 +1703,11 @@ stop(struct input_source *source)
   struct mass_ctx *ctx = source->input_ctx;
 
   if (demux_required(&source->quality)) {
+#if DEMUX_TRANSCODE_DECODE
+    transcode_decode_cleanup(&ctx->decode_ctx);
+#elif DEMUX_TRANSCODE
+    transcode_cleanup(&ctx->transcode_ctx);
+#endif
     evbuffer_free(ctx->evbuf);
   }
 
@@ -1704,6 +1759,7 @@ play(struct input_source *source)
   if (stop_flag) { // STOP command received
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF);
     stop(source);
+    pthread_mutex_unlock(&audio_command_lock);
     DPRINTF(E_INFO, L_FIFO, "%s:STOP command initiated shutdown\n", __func__);
     return -1;
   }
@@ -1712,11 +1768,37 @@ play(struct input_source *source)
   ret = evbuffer_read(ctx->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
   if (demux_flag && ret > 0) {
     // We have raw audio data that requires demuxing
+#if DEMUX_LOCAL
     int demuxed_bytes = demux_to_24_in_32(source->evbuf, ctx->evbuf);
     if (demuxed_bytes < 0) {
       DPRINTF(E_WARN, L_FIFO, "%s:Error demuxing. Playback will not work.\n", __func__);
       ret = demuxed_bytes;
     }
+#elif DEMUX_TRANSCODE_DECODE
+    transcode_frame *frame = NULL;
+    int decode_ret;
+    while ((decode_ret = transcode_decode(frame, ctx->decode_ctx)) != 0) {
+      if (decode_ret < 0) {
+        DPRINTF(E_LOG, L_FIFO, "%s:Error decoding raw audio input data.\n", __func__);
+        input_write(NULL, NULL, INPUT_FLAG_ERROR);
+        stop(source);
+        return -1;
+      }
+      DPRINTF(E_DBG, L_FIFO, "%s:transcode_decode() returned %d. sizeof(frame):%zu\n", __func__, decode_ret, sizeof(frame));
+      evbuffer_add(source->evbuf, frame, decode_ret);
+
+    }
+#elif DEMUX_TRANSCODE
+    int want_bytes = ret * 32 / source->quality.bits_per_sample;
+    int transcode_ret = transcode(source->evbuf, NULL, ctx->transcode_ctx, want_bytes);
+    DPRINTF(E_DBG, L_FIFO, "%s:%d raw bytes, wanted %d transcoded bytes, transcoded %d bytes\n", __func__, ret, want_bytes, transcode_ret);
+    if (transcode_ret > 0 && transcode_ret != want_bytes) {
+      DPRINTF(E_WARN, L_FIFO, "%s:Unexpected transcoding mismatch. From %d raw bytes, expected to transcode %d bytes, but actually decoded %d bytes.\n",
+        __func__, ret, want_bytes,transcode_ret
+      );
+    }
+    ret = transcode_ret;
+#endif
   }
   if (ret == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
