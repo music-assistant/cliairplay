@@ -276,6 +276,7 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->format = "s24le";
 	settings->audio_codec = AV_CODEC_ID_PCM_S24LE;
 	settings->sample_format = AV_SAMPLE_FMT_S32;
+  settings->in_format = "s24le";
 	break;
 
       case XCODE_PCM32:
@@ -470,6 +471,13 @@ init_settings_from_audio(struct settings_ctx *settings, enum transcode_profile p
   return 0;
 }
 
+/**
+ * Copies settings context to stream context
+ * 
+ * @param[out] s  The stream context to be copied to
+ * @param[in] settings  The settings context to be copied from
+ * @param[in] type  The media type
+ */
 static void
 stream_settings_set(struct stream_ctx *s, struct settings_ctx *settings, enum AVMediaType type)
 {
@@ -1331,6 +1339,7 @@ make_mp4_header(struct evbuffer **mp4_header, const char *url)
 static int
 open_decoder(AVCodecContext **dec_ctx, unsigned int *stream_index, struct decode_ctx *ctx, enum AVMediaType type)
 {
+  AVDictionary *options = NULL;
 #if USE_CONST_AVCODEC
   const AVCodec *decoder;
 #else
@@ -1353,35 +1362,51 @@ open_decoder(AVCodecContext **dec_ctx, unsigned int *stream_index, struct decode
 
   // Filter creation will need the sample rate and format that the decoder is
   // giving us - however sample rate of dec_ctx will be 0 if we don't prime it
-  // with the streams codecpar data.
-  // Hmmm - what if the streams codec parameters are wrong? They seem to get defaulted with 44100 sample_rate
+  // with the streams codecpar data. But streams codecpar data can be wrong!
   if (type == AVMEDIA_TYPE_AUDIO && ctx->settings.sample_rate != ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate) 
     {
       DPRINTF(E_WARN, L_XCODE, "Sample rate for stream #%d (%d) does not match settings sample rate (%d).\n",
         *stream_index, ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate,
         ctx->settings.sample_rate
       );
-      ctx->ifmt_ctx->streams[*stream_index]->codecpar->sample_rate = ctx->settings.sample_rate;
-      ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout = ctx->settings.channel_layout;
     }
+#if USE_CH_LAYOUT
+  if (type == AVMEDIA_TYPE_AUDIO && 
+    (ctx->settings.channel_layout.order != ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout.order ||
+    ctx->settings.channel_layout.nb_channels != ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout.nb_channels)
+  ) 
+    {
+      DPRINTF(E_WARN, L_XCODE, "Channel layout for stream #%d (%d/%d) does not match settings channel layout (%d/%d)\n",
+        *stream_index, ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout.order,
+        ctx->ifmt_ctx->streams[*stream_index]->codecpar->ch_layout.nb_channels,
+        ctx->settings.channel_layout.order, ctx->settings.channel_layout.nb_channels
+      );
+      if (ctx->settings.channel_layout.nb_channels == 2)
+        av_dict_set(&options, "ac", "2", 0);
+    }
+#endif
 
     ret = avcodec_parameters_to_context(*dec_ctx, ctx->ifmt_ctx->streams[*stream_index]->codecpar);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_XCODE, "Failed to copy codecpar for stream #%d: %s\n", *stream_index, err2str(ret));
       avcodec_free_context(dec_ctx);
-      return ret;
+      goto out_free;
     }
 
-  ret = avcodec_open2(*dec_ctx, NULL, NULL);
+  ret = avcodec_open2(*dec_ctx, NULL, &options);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_XCODE, "Failed to open decoder for stream #%d: %s\n", *stream_index, err2str(ret));
       avcodec_free_context(dec_ctx);
-      return ret;
+      goto out_free;
     }
 
   return 0;
+
+out_free:
+  if (options) free(options);
+  return ret;
 }
 
 static void
@@ -1452,9 +1477,28 @@ open_input(struct decode_ctx *ctx, const char *path, struct transcode_evbuf_io *
 	  goto out_fail;
 	}
 
+      if (ctx->settings.sample_rate == 48000)
+        av_dict_set(&options, "sample_rate", "48000", 0);
+
       CHECK_NULL(L_XCODE, ctx->avio = avio_evbuffer_open(evbuf_io, 0));
 
       ctx->ifmt_ctx->pb = ctx->avio;
+
+       // ifmt_ctx.streams settings are made by the following call. This results in defaulted quality
+       // parameters when ifmt = "s24le".
+       // specifically: 
+       // - ifmt_ctx.streams[0].timebase = 1_44100
+       // - ifmt_ctx.streams[0].codecpar.sample_rate = 44100
+       // - ifmt_ctx.streams[0].codecpar.channel_layout = 0
+       // - ifmt_ctx.streams[0].codecpar.channels = 1
+       // - ifmt_ctx.streams[0].codecpar.ch_layout.order = AV_CHANNEL_ORDER_UNSPEC
+       // - ifmt_ctx.streams[0].codecpar.ch_layout.nb_channels = 1
+       // Maybe setting some options values might overcome this, or doing some subsequent
+       // copying of quality context values from ctx.settings??
+       // Look at how transcode_decode_setup_raw() does it.
+  // Copy the data we just set to the structs we will be querying later, e.g. in open_filter
+  // ctx->audio_stream.stream->time_base = ctx->audio_stream.codec->time_base;
+  // ret = avcodec_parameters_from_context(ctx->audio_stream.stream->codecpar, ctx->audio_stream.codec);
       ret = avformat_open_input(&ctx->ifmt_ctx, NULL, ifmt, &options);
     }
   else
