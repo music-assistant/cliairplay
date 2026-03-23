@@ -102,8 +102,8 @@
 #define STDIN_FILENAME  "-"
 
 // The below three options are in descending priority
-#define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
-#define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing
+#define DEMUX_LOCAL            0 // Set to 1 to use local demux_24_to_32() 
+#define DEMUX_TRANSCODE_DECODE 1 // Set to 1 to use transcode_decode() for 24-bit demuxing
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing
 
 #define DEBUG_MASS 0
@@ -1639,6 +1639,12 @@ setup(struct input_source *source)
 {
   struct mass_ctx *ctx;
   int fd;
+#if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    struct transcode_decode_setup_args decode_args = {};
+#endif
+#if DEMUX_TRANSCODE
+    struct transcode_encode_setup_args encode_args = {};
+#endif
 
   CHECK_NULL(L_FIFO, ctx = calloc(1, sizeof(struct mass_ctx)));
 
@@ -1655,26 +1661,30 @@ setup(struct input_source *source)
     // create an evbuffer for raw audio input to be read into
     CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
 #if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
-    struct transcode_decode_setup_args decode_args = {};
     decode_args.quality = &ap_device_info.quality;
     decode_args.profile = quality_to_xcode(&ap_device_info.quality);
+    CHECK_NULL(L_FIFO, decode_args.evbuf_io = calloc(1, sizeof(struct transcode_evbuf_io)));
     decode_args.evbuf_io->evbuf = ctx->evbuf;
     decode_args.evbuf_io->seekfn = NULL;
 #endif
 #if DEMUX_TRANSCODE_DECODE
     ctx->decode_ctx = transcode_decode_setup(decode_args);
     if (!ctx->decode_ctx) {
+      free(decode_args.evbuf_io);
       return -1;
     }
 #endif
 #if DEMUX_TRANSCODE
-    struct transcode_encode_setup_args encode_args = {};
     encode_args.quality = &ap_device_info.quality;
     encode_args.profile = quality_to_xcode(&ap_device_info.quality);
     ctx->transcode_ctx = transcode_setup(decode_args, encode_args);
     if (!ctx->transcode_ctx) {
+      free(decode_args.evbuf_io);
       return -1;
     }
+#endif
+#if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    free(decode_args.evbuf_io);
 #endif
   } else {
     // We point the mass_ctx evbuffer directly to the source evbuffer
