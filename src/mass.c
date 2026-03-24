@@ -104,7 +104,8 @@
 // Select one of the three below options for 24-bit demuxing solution
 // Note: transcoding with OwnTone transcode module currently not working. There is something not correct
 // with the establishment of the decoding context, resulting in Invalid Argument errors when
-// avcodec_send_packet() is called.
+// avcodec_send_packet() is called. Sample rate and channel info for the s24le demuxer is now good, but there
+// must be one or more invalidly set context options - perhaps for the decoder, rather than the demuxer.
 #define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
 #define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
@@ -1800,7 +1801,6 @@ play(struct input_source *source)
       }
       DPRINTF(E_DBG, L_FIFO, "%s:transcode_decode() returned %d. sizeof(frame):%zu\n", __func__, decode_ret, sizeof(frame));
       evbuffer_add(source->evbuf, frame, decode_ret);
-
     }
 #elif DEMUX_TRANSCODE
     int want_bytes = ret * 32 / source->quality.bits_per_sample;
