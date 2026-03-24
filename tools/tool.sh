@@ -7,23 +7,14 @@ COMMAND_PIPE="/tmp/cliap.cmd"
 VOLUME="50"
 SECS="3"
 AUTH="DEADBEEF"
-
-# Locate the binary
-CLIAP=`whereis -b cliap | awk -F: '{ print $2 }'`
-if [[ -z "$CLIAP" ]]; then
-    echo "cliap not found in \$PATH. Looking in src directory"
-    CLIAP=`whereis -B src -b cliap | awk -F: '{ print $2 }'`
-    if [ -z "$CLIAP" ]; then
-        echo "cliap binary not found in \$PATH or in src directory"
-        exit 1
-    fi
-fi
+PASSWORD=""
+PID=$$
 
 # Usage function for error messages
 usage() {
   echo "A tool to make it easy to test $CLIAP from the command line."
-  echo "Raw PCM audio is rad from stdin and played on the device"
-  echo "Usage: $0 [-h] [-d device_name] [-4 | -6] [-q quality] [-c command_pipe] [-v volume]"
+  echo "Raw PCM audio is read from stdin and played on the device"
+  echo "Usage: $0 [-h] [-d device_name] [-4 | -6] [-q quality] [-c command_pipe] [-v volume] [-a auth_key] [-p password]"
   echo "Defaults:"
   echo "    -4 for IPv4"
   echo "    44100/16/2 for quality"
@@ -32,9 +23,68 @@ usage() {
   exit 1
 }
 
+# MDNS resolver function
+resolve_mdns() {
+  # Generate sed script file to replace hex representation of 
+  # special characters with the ascii value
+  # Note: This does not deal with non-ascii character sets
+  echo "s/\\032/ /g" > /tmp/tool$PID.sed
+  echo "s/\\033/!/g" >> /tmp/tool$PID.sed
+  echo "s/\\034/\"/g" >> /tmp/tool$PID.sed
+  echo "s/\\035/#/g" >> /tmp/tool$PID.sed
+  echo "s/\\036/$/g" >> /tmp/tool$PID.sed
+  echo "s/\\037/%/g" >> /tmp/tool$PID.sed
+  echo "s/\\038/&/g" >> /tmp/tool$PID.sed
+  echo "s/\\039/\'/g" >> /tmp/tool$PID.sed
+  echo "s/\\040/(/g" >> /tmp/tool$PID.sed
+  echo "s/\\041/)/g" >> /tmp/tool$PID.sed
+  echo "s/\\042/\*/g" >> /tmp/tool$PID.sed
+  echo "s/\\043/+/g" >> /tmp/tool$PID.sed
+  echo "s/\\044/,/g" >> /tmp/tool$PID.sed
+  echo "s/\\045/-/g" >> /tmp/tool$PID.sed
+  echo "s/\\046/./g" >> /tmp/tool$PID.sed
+  echo "s/\\047/\//g" >> /tmp/tool$PID.sed
+  echo "s/\\058/:/g" >> /tmp/tool$PID.sed
+  echo "s/\\060/</g" >> /tmp/tool$PID.sed
+  echo "s/\\061/=/g" >> /tmp/tool$PID.sed
+  echo "s/\\062/>/g" >> /tmp/tool$PID.sed
+  echo "s/\\063/?/g" >> /tmp/tool$PID.sed
+  echo "s/\\064/@/g" >> /tmp/tool$PID.sed
+  echo "s/\\091/[/g" >> /tmp/tool$PID.sed
+  echo "s/\\092/\\\/g" >> /tmp/tool$PID.sed
+  echo "s/\\093/]/g" >> /tmp/tool$PID.sed
+  echo "s/\\095/\^/g" >> /tmp/tool$PID.sed
+  # echo "s/\\096/\`/g" >> /tmp/tool$PID.sed
+  # echo "s/\\123/{/g" >> /tmp/tool$PID.sed
+  # echo "s/\\124/\|/g" >> /tmp/tool$PID.sed
+  # echo "s/\\125/}/g" >> /tmp/tool$PID.sed
+  # echo "s/\\126/~/g" >> /tmp/tool$PID.sed
+
+  export MDNS=`avahi-browse -p -t -k -v -r _airplay._tcp | \
+      sed --debug -f /tmp/tool$PID.sed | \
+      grep "$DEVICE_NAME" | \
+      grep "$PROTOCOL" | \
+      grep "^="`
+  
+  rm /tmp/tool$PID.sed
+}
+
+# Locate the binary
+CLIAP=`whereis -b cliap | awk -F: '{ print $2 }'`
+if [[ -z "$CLIAP" ]]; then
+    echo -n "cliap not found in \$PATH. Looking in src directory ... "
+    CLIAP=`whereis -B src -b cliap | awk -F: '{ print $2 }'`
+    if [ -z "$CLIAP" ]; then
+      echo "cliap binary not found in \$PATH or in src directory"
+      exit 1
+    else
+      echo "found"
+    fi
+fi
+
 # Process options with getopts
 # : suppresses errors; n: and t: expect arguments
-while getopts ":hd:46q:c:v:" opt; do
+while getopts ":hd:46q:c:v:a:p:" opt; do
   case $opt in
     h)
       usage
@@ -58,6 +108,12 @@ while getopts ":hd:46q:c:v:" opt; do
     v)
       VOLUME="$OPTARG"
       ;;
+    a)
+      AUTH="$OPTARG"
+      ;;
+    p)
+      PASSWORD="$OPTARG"
+      ;;
     :)
       echo "Error: -${OPTARG} requires an argument."
       usage
@@ -71,10 +127,10 @@ while getopts ":hd:46q:c:v:" opt; do
 done
 
 # Shift positional parameters past the options
-shift $((OPTIND - 1))
+# shift $((OPTIND - 1))
 
 # Process remaining positional arguments (e.g., filenames)
-echo "Positional arguments (files): $@"
+# echo "Positional arguments (files): $@"
 echo "Device Name: $DEVICE_NAME, Protocol: $PROTOCOL"
 
 # Validate arguments
@@ -95,12 +151,8 @@ fi
 
 
 # Resolve the mDNS entry for the protocol
-MDNS=`avahi-browse -p -t -k -v -r _airplay._tcp | \
-    sed -f tool.sed | \
-    grep "$DEVICE_NAME" | \
-    grep "$PROTOCOL" | \
-    grep "^="`
-
+resolve_mdns
+echo mdns:"$MDNS"
 
 if [ -z "$MDNS" ]; then
     echo "Device $DEVICE_NAME not found with $PROTOCOL details"
@@ -130,5 +182,8 @@ CMD="$CLIAP --loglevel 4 \
     --command_pipe "$COMMAND_PIPE" \
     --ntpstart "$NTPSTART" \
     --volume "$VOLUME" \
-    --quality "$QUALITY" "
+    --quality "$QUALITY" \
+    --password "$PASSWORD" \
+    --auth "$AUTH" \
+    "
 echo $CMD
