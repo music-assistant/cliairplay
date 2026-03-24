@@ -102,13 +102,17 @@
 #define STDIN_FILENAME  "-"
 
 // Select one of the three below options for 24-bit demuxing solution
-// Note: transcoding with OwnTone transcode module currently not working. There is something not correct
-// with the establishment of the decoding context, resulting in Invalid Argument errors when
-// avcodec_send_packet() is called. Sample rate and channel info for the s24le demuxer is now good, but there
-// must be one or more invalidly set context options - perhaps for the decoder, rather than the demuxer.
+// Note: transcoding with OwnTone transcode module currently not working fully. It appears that this use-case
+// is beyond the design capabilities of the transcode module. After applying fixes to transcode.c to ensure
+// valid demuxer options are supplied and that zero size read packets are ignored, the decoding started to work
+// but gave the followig warnings/errors:
+// ffmpeg: Multiple frames in a packet.
+// ffmpeg: Invalid PCM packet, data has size 4 but at least a size of 6 was expected
+// fifo: play:Unexpected transcoding mismatch. From 4096 raw bytes, expected to transcode 5461 bytes, but actually decoded 4092 bytes.
+// CONCLUSION: Stick with local demuxer
 #define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
-#define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
-#define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
+#define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing.
+#define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing.
 
 #define DEBUG_MASS 0
 #define DEBUG_DEMUX 0
@@ -1790,9 +1794,9 @@ play(struct input_source *source)
       ret = demuxed_bytes;
     }
 #elif DEMUX_TRANSCODE_DECODE
-    transcode_frame *frame = NULL;
+    transcode_frame *frame;
     int decode_ret;
-    while ((decode_ret = transcode_decode(frame, ctx->decode_ctx)) != 0) {
+    while ((decode_ret = transcode_decode(&frame, ctx->decode_ctx)) != 0) {
       if (decode_ret < 0) {
         DPRINTF(E_LOG, L_FIFO, "%s:Error decoding raw audio input data.\n", __func__);
         input_write(NULL, NULL, INPUT_FLAG_ERROR);
