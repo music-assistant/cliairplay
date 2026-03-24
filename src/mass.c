@@ -101,10 +101,13 @@
 
 #define STDIN_FILENAME  "-"
 
-// The below three options are in descending priority
+// Select one of the three below options for 24-bit demuxing solution
+// Note: transcoding with OwnTone transcode module currently not working. There is something not correct
+// with the establishment of the decoding context, resulting in Invalid Argument errors when
+// avcodec_send_packet() is called.
 #define DEMUX_LOCAL            0 // Set to 1 to use local demux_24_to_32() 
-#define DEMUX_TRANSCODE_DECODE 1 // Set to 1 to use transcode_decode() for 24-bit demuxing
-#define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing
+#define DEMUX_TRANSCODE_DECODE 1 // Set to 1 to use transcode_decode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
+#define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
 
 #define DEBUG_MASS 0
 #define DEBUG_DEMUX 0
@@ -1692,6 +1695,7 @@ setup(struct input_source *source)
   }
 
   source->input_ctx = ctx;
+  DPRINTF(E_DBG, L_FIFO, "%s:source->evbuf:%p, source->input_ctx->evbuf:%p\n", __func__, source->evbuf, ctx->evbuf);
 
   // In the Music Assistant use case, we stream input at the same quality as we want playback
   // therefore, our input quality will be the same as our output quality
