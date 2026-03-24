@@ -104,14 +104,11 @@
 // Select one of the three below options for 24-bit demuxing solution
 // Note: transcoding with OwnTone transcode module currently not working fully. It appears that this use-case
 // is beyond the design capabilities of the transcode module. After applying fixes to transcode.c to ensure
-// valid demuxer options are supplied and that zero size read packets are ignored, the decoding started to work
+// valid demuxer options are supplied and that zero size read packets are ignored, and also ensuring that an integral
+// number of raw unmuxed stero samples are supply to transcode functions the decoding started to work
 // but gave the followig warnings/errors:
-// ffmpeg: Multiple frames in a packet.
-// ffmpeg: Invalid PCM packet, data has size 4 but at least a size of 6 was expected
-// fifo: play:Unexpected transcoding mismatch. From 4096 raw bytes, expected to transcode 5461 bytes, but actually decoded 4092 bytes.
+// xcode: Bug! Currently no support for multiple calls to transcode_decode()
 // CONCLUSION: Stick with local demuxer
-// SUGGESTION: It might be that the transcoding module should be fed with a single unmuxed frame at a time i.e. 3 (r 6?) bytes and then it might work
-// but then the overhead is huge compared to our local demuxer.
 #define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
 #define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing.
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing.
@@ -153,6 +150,9 @@ struct mass_ctx
   struct decode_ctx *decode_ctx; // optional context if demuxing/decoding is required
 #elif DEMUX_TRANSCODE
   struct transcode_ctx *transcode_ctx; // optional context if transcoding is required
+#endif
+#if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+  struct evbuffer *unmuxed_samples; // an integral number of unmuxed raw audio samples
 #endif
   struct evbuffer *evbuf;  // the evbuffer to read raw audio into
 };
@@ -1671,10 +1671,11 @@ setup(struct input_source *source)
     // create an evbuffer for raw audio input to be read into
     CHECK_NULL(L_FIFO, ctx->evbuf = evbuffer_new());
 #if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    CHECK_NULL(L_FIFO, ctx->unmuxed_samples = evbuffer_new());
     decode_args.quality = &ap_device_info.quality;
     decode_args.profile = quality_to_xcode(&ap_device_info.quality);
     CHECK_NULL(L_FIFO, decode_args.evbuf_io = calloc(1, sizeof(struct transcode_evbuf_io)));
-    decode_args.evbuf_io->evbuf = ctx->evbuf;
+    decode_args.evbuf_io->evbuf = ctx->unmuxed_samples;
     decode_args.evbuf_io->seekfn = NULL;
 #endif
 #if DEMUX_TRANSCODE_DECODE
@@ -1729,6 +1730,9 @@ stop(struct input_source *source)
 #elif DEMUX_TRANSCODE
     transcode_cleanup(&ctx->transcode_ctx);
 #endif
+#if DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    evbuffer_free(ctx->unmuxed_samples);
+#endif
     evbuffer_free(ctx->evbuf);
   }
 
@@ -1762,7 +1766,7 @@ stop(struct input_source *source)
 static int
 play(struct input_source *source)
 {
-  struct mass_ctx *ctx = source->input_ctx;
+  struct mass_ctx *mass_ctx = source->input_ctx;
   short flags;
   int ret;
   static size_t read_count = 0;
@@ -1786,19 +1790,39 @@ play(struct input_source *source)
   }
   pthread_mutex_unlock(&audio_command_lock);
 
-  ret = evbuffer_read(ctx->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
+  ret = evbuffer_read(mass_ctx->evbuf, mass_ctx->pipe->fd, PIPE_READ_MAX);
   if (demux_flag && ret > 0) {
     // We have raw audio data that requires demuxing
 #if DEMUX_LOCAL
-    int demuxed_bytes = demux_to_24_in_32(source->evbuf, ctx->evbuf);
+    int demuxed_bytes = demux_to_24_in_32(source->evbuf, mass_ctx->evbuf);
     if (demuxed_bytes < 0) {
       DPRINTF(E_WARN, L_FIFO, "%s:Error demuxing. Playback will not work.\n", __func__);
       ret = demuxed_bytes;
     }
-#elif DEMUX_TRANSCODE_DECODE
+#elif DEMUX_TRANSCODE_DECODE | DEMUX_TRANSCODE
+    // Move an integral number of stereo samples from input buffer to the unmuxed_samples buffer
+    // Partial samples remain in the input buffer in readiness for next read cycle
+    size_t n_samples;
+    n_samples = evbuffer_get_length(mass_ctx->evbuf) / 6; // Get the integral number of 24-bit stereo samples
+    if (n_samples == 0) {
+      // We don't have enough raw data for at least one sample. Loop the read cycle
+      input_wait();
+      return 0; // Loop
+    }
+    if (evbuffer_remove_buffer(mass_ctx->evbuf, mass_ctx->unmuxed_samples, n_samples * 6) != (n_samples * 6)) {
+      DPRINTF(E_LOG, L_FIFO, "%s:Error attempting to drain %ld 24-bit samples from input buffer to unmuxed sample buffer. %s\n",
+        __func__, n_samples, strerror(errno)
+      );
+      input_write(NULL, NULL, INPUT_FLAG_ERROR);
+      stop(source);
+      return -1;
+    }
+    DPRINTF(E_DBG, L_FIFO, "%s:Attempting to demux %ld samples\n", __func__, n_samples);
+#endif
+#if DEMUX_TRANSCODE_DECODE
     transcode_frame *frame;
-    int decode_ret;
-    while ((decode_ret = transcode_decode(&frame, ctx->decode_ctx)) != 0) {
+    int decode_ret; 
+    while ((decode_ret = transcode_decode(&frame, mass_ctx->decode_ctx)) != 0) {
       if (decode_ret < 0) {
         DPRINTF(E_LOG, L_FIFO, "%s:Error decoding raw audio input data.\n", __func__);
         input_write(NULL, NULL, INPUT_FLAG_ERROR);
@@ -1810,7 +1834,7 @@ play(struct input_source *source)
     }
 #elif DEMUX_TRANSCODE
     int want_bytes = ret * 32 / source->quality.bits_per_sample;
-    int transcode_ret = transcode(source->evbuf, NULL, ctx->transcode_ctx, want_bytes);
+    int transcode_ret = transcode(source->evbuf, NULL, mass_ctx->transcode_ctx, want_bytes);
     DPRINTF(E_DBG, L_FIFO, "%s:%d raw bytes, wanted %d transcoded bytes, transcoded %d bytes\n", __func__, ret, want_bytes, transcode_ret);
     if (transcode_ret > 0 && transcode_ret != want_bytes) {
       DPRINTF(E_WARN, L_FIFO, "%s:Unexpected transcoding mismatch. From %d raw bytes, expected to transcode %d bytes, but actually decoded %d bytes.\n",
