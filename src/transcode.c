@@ -761,8 +761,8 @@ decode_interrupt_cb(void *arg)
  * seek in which case the most recent packet found by transcode_seek() will be
  * returned. The packet will be put in ctx->packet.
  *
- * @out type      Media type of packet
- * @in  ctx       Decode context
+ * @param[out] type      Media type of packet
+ * @param[in]  ctx       Decode context
  * @return        0 if OK, < 0 on error or end of file
  */
 static int
@@ -794,7 +794,7 @@ read_packet(enum AVMediaType *type, struct decode_ctx *dec_ctx)
 
       *type = stream_find(dec_ctx, dec_ctx->packet->stream_index);
     }
-  while (*type == AVMEDIA_TYPE_UNKNOWN);
+  while (*type == AVMEDIA_TYPE_UNKNOWN || dec_ctx->packet->size == 0);
 
   return 0;
 }

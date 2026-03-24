@@ -129,10 +129,10 @@ transcode_cleanup(struct transcode_ctx **ctx);
 
 /* Demuxes and decodes the next packet from the input.
  *
- * @out frame      A pointer to the frame. Caller should not free it, that will
+ * @param[out] frame      A pointer to the frame. Caller should not free it, that will
  *                 be done by the next call to the function or by the cleanup
  *                 function.
- * @in  ctx        Decode context
+ * @param[in]  ctx        Decode context
  * @return         Positive if OK, negative if error, 0 if EOF
  */
 int
