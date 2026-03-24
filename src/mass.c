@@ -105,8 +105,8 @@
 // Note: transcoding with OwnTone transcode module currently not working. There is something not correct
 // with the establishment of the decoding context, resulting in Invalid Argument errors when
 // avcodec_send_packet() is called.
-#define DEMUX_LOCAL            0 // Set to 1 to use local demux_24_to_32() 
-#define DEMUX_TRANSCODE_DECODE 1 // Set to 1 to use transcode_decode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
+#define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
+#define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing. Invalid argument error on avcodec_send_packet()
 
 #define DEBUG_MASS 0
