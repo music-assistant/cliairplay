@@ -110,6 +110,8 @@
 // ffmpeg: Invalid PCM packet, data has size 4 but at least a size of 6 was expected
 // fifo: play:Unexpected transcoding mismatch. From 4096 raw bytes, expected to transcode 5461 bytes, but actually decoded 4092 bytes.
 // CONCLUSION: Stick with local demuxer
+// SUGGESTION: It might be that the transcoding module should be fed with a single unmuxed frame at a time i.e. 3 bytes and then it might work
+// but then the overhead is huge compared to our local demuxer.
 #define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
 #define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing.
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing.
