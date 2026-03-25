@@ -109,6 +109,8 @@
 // but gave the followig warnings/errors:
 // xcode: Bug! Currently no support for multiple calls to transcode_decode()
 // CONCLUSION: Stick with local demuxer
+// SUGGESTION: Maybe need to seperate out the evbuffers used between the transcode output and the source input. Thet would then permit
+// the clearing of the AVFrame before the next decoding attempt.
 #define DEMUX_LOCAL            1 // Set to 1 to use local demux_24_to_32() 
 #define DEMUX_TRANSCODE_DECODE 0 // Set to 1 to use transcode_decode() for 24-bit demuxing.
 #define DEMUX_TRANSCODE        0 // Set to 1 to do full transcode() for 24-bit demuxing.
