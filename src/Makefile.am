@@ -45,8 +45,10 @@ PTP_SRC = \
 LOCAL_PATCHED_SRC = \
     airplay.c \
     input.c \
+    misc.c \
     outputs.c \
     player.c \
+    rtp_common.c \
     timer.c \
     transcode.c
 
@@ -61,11 +63,9 @@ OWNTONE_SRC = \
     ../owntone-server/src/listener.c \
     ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
-    ../owntone-server/src/misc.c \
     ../owntone-server/src/misc_xml.c \
     ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/raop.c \
-    ../owntone-server/src/outputs/rtp_common.c \
     ../owntone-server/src/ptpd.c \
     ../owntone-server/src/worker.c \
 	$(GPERF_SRC) \

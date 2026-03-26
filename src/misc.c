@@ -54,6 +54,13 @@
 #include <arpa/inet.h>
 #include <ifaddrs.h> // getifaddrs
 
+#if defined(__linux__)
+# include <sys/ioctl.h>
+# include <net/if.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+# include <net/if_dl.h>
+#endif
+
 #include <event2/http.h> // evhttp_bind
 
 #include <unistr.h>
@@ -277,8 +284,31 @@ net_address_get(char *addr, size_t addr_len, union net_sockaddr *naddr)
   return 0;
 }
 
+// Maybe use getaddrinfo instead?
 int
-net_port_get(short unsigned *port, union net_sockaddr *naddr)
+net_sockaddr_get(union net_sockaddr *naddr, const char *addr, unsigned short port)
+{
+  memset(naddr, 0, sizeof(union net_sockaddr));
+
+  if (inet_pton(AF_INET, addr, &naddr->sin.sin_addr) == 1)
+    {
+      naddr->sin.sin_family = AF_INET;
+      naddr->sin.sin_port = htons(port);
+      return 0;
+    }
+
+  if (cfg_getbool(cfg_getsec(cfg, "general"), "ipv6") && inet_pton(AF_INET6, addr, &naddr->sin6.sin6_addr) == 1)
+    {
+      naddr->sin6.sin6_family = AF_INET6;
+      naddr->sin6.sin6_port = htons(port);
+      return 0;
+    }
+
+  return -1;
+}
+
+int
+net_port_get(unsigned short *port, union net_sockaddr *naddr)
 {
   if (naddr->sa.sa_family == AF_INET6)
      *port = ntohs(naddr->sin6.sin6_port);
@@ -319,6 +349,59 @@ net_if_get(char *ifname, size_t ifname_len, const char *addr)
   freeifaddrs(ifaddrs);
 
   return (ifname[0] != 0) ? 0 : -1;
+}
+
+int
+net_mac_get(uint8_t *mac, size_t mac_size, const char *ifname)
+{
+#define MAC_LENGTH 6
+  if (mac_size < MAC_LENGTH || !ifname)
+    return -1;
+
+#if defined(__linux__)
+  struct ifreq ifr;
+  int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+  if (sockfd < 0)
+    return -1;
+
+  strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+  ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+  if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) < 0)
+    {
+      close(sockfd);
+      return -1;
+    }
+
+  memcpy(mac, ifr.ifr_hwaddr.sa_data, MAC_LENGTH);
+  close(sockfd);
+  return 0;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  struct ifaddrs *ifap, *ifaptr;
+  struct sockaddr_dl *sdl;
+
+  if (getifaddrs(&ifap) != 0)
+    return -1;
+
+  for (ifaptr = ifap; ifaptr != NULL; ifaptr = ifaptr->ifa_next)
+    {
+      if (strcmp(ifaptr->ifa_name, ifname) == 0 && ifaptr->ifa_addr->sa_family == AF_LINK)
+	{
+	  sdl = (struct sockaddr_dl *)ifaptr->ifa_addr;
+          memcpy(mac, LLADDR(sdl), MAC_LENGTH);
+          freeifaddrs(ifap);
+          return 0;
+        }
+    }
+
+  freeifaddrs(ifap);
+  return -1;
+#else
+  return -1;
+#endif
+
+#undef MAC_LENGTH
 }
 
 static int
@@ -461,7 +544,7 @@ net_connect(const char *addr, unsigned short port, int type, const char *log_ser
 // with the port number. SOCK_STREAM type services are set to use non-blocking
 // sockets.
 static int
-net_bind_impl(short unsigned *port, int type, const char *log_service_name, bool reuseport)
+net_bind_impl(unsigned short *port, int type, const char *log_service_name, bool reuseport)
 {
   struct addrinfo hints = { 0 };
   struct addrinfo *servinfo;
@@ -525,7 +608,13 @@ net_bind_impl(short unsigned *port, int type, const char *log_service_name, bool
       if (ret < 0)
 	continue;
 
-      ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+      // For tcp, SO_REUSE_ADDR means the server can restart quickly. For udp,
+      // the setting would mean that multiple sockets could bind to the same
+      // port, but only one would get the messages.
+      if (type == SOCK_STREAM)
+	ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+      else
+	ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &no, sizeof(no));
       if (ret < 0)
 	continue;
 
@@ -580,13 +669,13 @@ net_bind_impl(short unsigned *port, int type, const char *log_service_name, bool
 }
 
 int
-net_bind(short unsigned *port, int type, const char *log_service_name)
+net_bind(unsigned short *port, int type, const char *log_service_name)
 {
   return net_bind_impl(port, type, log_service_name, false);
 }
 
 int
-net_bind_with_reuseport(short unsigned *port, int type, const char *log_service_name)
+net_bind_with_reuseport(unsigned short *port, int type, const char *log_service_name)
 {
   return net_bind_impl(port, type, log_service_name, true);
 }
@@ -1066,6 +1155,30 @@ atrim(const char *str)
   memcpy(result, str + start, size);
   result[size - 1] = '\0';
 
+  return result;
+}
+
+int
+constant_time_strcmp(const char *a, const char *b)
+{
+  size_t len_a = strlen(a);
+  size_t len_b = strlen(b);
+  size_t max_len;
+  volatile int result = 0;
+  volatile char ca;
+  volatile char cb;
+  size_t i;
+
+  // Always compare full length to prevent timing leak
+  max_len = MAX(len_a, len_b);
+  for (i = 0; i < max_len; i++)
+    {
+      ca = (i < len_a) ? a[i] : 0;
+      cb = (i < len_b) ? b[i] : 0;
+      result |= ca ^ cb;
+    }
+
+  result |= len_a ^ len_b;
   return result;
 }
 
@@ -1620,6 +1733,21 @@ timespec_add(struct timespec time1, struct timespec time2)
   return result;
 }
 
+struct timespec
+timespec_sub(struct timespec time1, struct timespec time2)
+{
+  struct timespec result;
+
+  result.tv_sec = time1.tv_sec - time2.tv_sec;
+  result.tv_nsec = time1.tv_nsec - time2.tv_nsec;
+  if (result.tv_nsec < 0)
+    {
+      result.tv_sec--;
+      result.tv_nsec += 1000000000L;
+    }
+  return result;
+}
+
 int
 timespec_cmp(struct timespec time1, struct timespec time2)
 {
@@ -1793,6 +1921,19 @@ bool
 quality_is_equal(struct media_quality *a, struct media_quality *b)
 {
   return (a->sample_rate == b->sample_rate && a->bits_per_sample == b->bits_per_sample && a->channels == b->channels && a->bit_rate == b->bit_rate);
+}
+
+/**
+ * Determines if the RTP type must be buffered for the supplied quality
+ * 
+ * @param[in] q the quality to be checked
+ * 
+ * @return true if quality requires buffered audio streaming, false otherwise
+ */
+bool
+quality_is_buffered(struct media_quality *q)
+{
+  return (q->sample_rate == 48000 && q->bits_per_sample == 24 && q->channels == 2);
 }
 
 enum media_format
@@ -2036,21 +2177,21 @@ void
 log_fatal_err(int domain, const char *func, int line, int err)
 {
   DPRINTF(E_FATAL, domain, "%s failed at line %d, error %d (%s)\n", func, line, err, strerror(err));
-  _exit(1);
+  abort();
 }
 
 void
 log_fatal_errno(int domain, const char *func, int line)
 {
   DPRINTF(E_FATAL, domain, "%s failed at line %d, error %d (%s)\n", func, line, errno, strerror(errno));
-  _exit(1);
+  abort();
 }
 
 void
 log_fatal_null(int domain, const char *func, int line)
 {
   DPRINTF(E_FATAL, domain, "%s returned NULL at line %d\n", func, line);
-  _exit(1);
+  abort();
 }
 
 

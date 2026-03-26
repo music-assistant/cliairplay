@@ -90,9 +90,6 @@
 // alignment, which improves performance of some encoders
 #define AIRPLAY_SAMPLES_PER_PACKET              352
 
-// 0x60 Real Time Audio, 0x67 Buffered
-#define AIRPLAY_RTP_PAYLOADTYPE                 0x60
-
 // Quoting shairport-sync's rtp.c:
 // The value of 11025 (0.25 seconds) is a guess based on the "Audio-Latency"
 // parameter returned by an AE. Sigh, it would be nice to have a published
@@ -315,6 +312,8 @@ struct airplay_session
   struct airplay_service *control_svc;
 
   uint32_t ptpd_slave_id;
+
+  uint64_t buffer_size;
 
   struct airplay_session *next;
 };
@@ -2117,7 +2116,7 @@ packets_send(struct airplay_master_session *ams)
   if (len < 0)
     return -1;
 
-  pkt = rtp_packet_next(ams->rtp_session, len, ams->samples_per_packet, AIRPLAY_RTP_PAYLOADTYPE);
+  pkt = rtp_packet_next(ams->rtp_session, len, ams->samples_per_packet);
 
   evbuffer_remove(ams->encoded_buffer, pkt->payload, pkt->payload_len);
 
@@ -2644,56 +2643,48 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *se
   uint64_t audioFormat = 0x40000; // 0x40000 ALAC/44100/16/2
   uint64_t latencyMin = 11025;    // Default for 44100/16/2 to achieve AIRPLAY_AUDIO_LATENCY_MS in samples
   uint64_t ct = 2;                // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
+  uint64_t type = RTP_REALTIME;
 
-  if (session->master_session->quality.sample_rate == 44100) {
-    if (session->master_session->quality.bits_per_sample == 16) {
+  if (session->master_session->quality.bits_per_sample == 16) {
+    if (session->master_session->quality.sample_rate == 44100) {
       audioFormat = 0x40000; // 0x40000 	ALAC/44100/16/2
-#if AIRPLAY_PCM_OVERRIDE
-      audioFormat = 0x800; // 0x800 	PCM/44100/16/2
-      ct = 1;
-#endif
     }
-    else if (session->master_session->quality.bits_per_sample == 24 || session->master_session->quality.bits_per_sample == 32) {
-      audioFormat = 0x80000; // 0x80000 	ALAC/44100/24/2
-#if AIRPLAY_PCM_OVERRIDE
-      audioFormat = 0x2000; // 0x2000 	PCM/44100/24/2
-      ct = 1;
-#endif
-    }
-  }
-  else if (session->master_session->quality.sample_rate == 48000) {
-    if (session->master_session->quality.bits_per_sample == 16) {
+    else if (session->master_session->quality.sample_rate == 48000) {
       audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
-#if AIRPLAY_PCM_OVERRIDE
-      audioFormat = 0x8000; // 0x8000 	PCM/48000/16/2
-      ct = 1;
-#endif
-    }
-    else if (session->master_session->quality.bits_per_sample == 24 || session->master_session->quality.bits_per_sample == 32) {
-      audioFormat = 0x200000; // 0x200000 	ALAC/48000/24/2
-#if AIRPLAY_PCM_OVERRIDE
-      audioFormat = 0x20000; // 0x20000 	PCM/48000/24/2
-      ct = 1;
-#endif
     }
   }
+  else if (quality_is_buffered(&(session->master_session->quality))) {
+      type = RTP_BUFFERRED;
+      audioFormat = 0x200000; // 0x200000 	ALAC/48000/24/2
+  }
+  else {
+    DPRINTF(E_LOG, L_AIRPLAY, "%s:Bug! Quality %d/%d/%d not supported\n", __func__,
+      session->master_session->quality.sample_rate, 
+      session->master_session->quality.bits_per_sample,
+      session->master_session->quality.channels
+    );
+    return -1;
+  }
+
   latencyMin = session->master_session->quality.sample_rate * AIRPLAY_AUDIO_LATENCY_MS / 1000;
   DPRINTF(E_DBG, L_AIRPLAY, "%s:audioFormat:0x%" PRIX64 ", ct:%" PRIu64 ", latencyMin:%" PRIu64 "\n", __func__, audioFormat, ct, latencyMin);
 
   stream = plist_new_dict();
-  wplist_dict_add_uint(stream, "audioFormat", audioFormat);
-  wplist_dict_add_string(stream, "audioMode", "default");
-  wplist_dict_add_uint(stream, "controlPort", session->control_svc->port);
-  wplist_dict_add_uint(stream, "ct", ct); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
-  wplist_dict_add_bool(stream, "isMedia", true); // ?
-  wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
-  wplist_dict_add_uint(stream, "latencyMin", latencyMin); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
   wplist_dict_add_data(stream, "shk", session->shared_secret, AIRPLAY_AUDIO_KEY_LEN);
+  wplist_dict_add_uint(stream, "ct", ct); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
   wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
-  wplist_dict_add_uint(stream, "sr", session->master_session->quality.sample_rate); // sample rate
-  wplist_dict_add_uint(stream, "type", AIRPLAY_RTP_PAYLOADTYPE); // RTP type, 0x60 = 96 real time, 103 buffered
-  wplist_dict_add_bool(stream, "supportsDynamicStreamID", false);
-  wplist_dict_add_uint(stream, "streamConnectionID", session->session_id); // Hopefully fine since we have one stream per session
+  wplist_dict_add_uint(stream, "type", type); // RTP type, 0x60 = 96 real time, 103 buffered, 130 remote control only
+  if (!quality_is_buffered(&(session->master_session->quality))) {
+    wplist_dict_add_uint(stream, "audioFormat", audioFormat);
+    wplist_dict_add_string(stream, "audioMode", "default");
+    wplist_dict_add_uint(stream, "controlPort", session->control_svc->port);
+    wplist_dict_add_bool(stream, "isMedia", true); // ?
+    wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
+    wplist_dict_add_uint(stream, "latencyMin", latencyMin); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
+    wplist_dict_add_uint(stream, "sr", session->master_session->quality.sample_rate); // sample rate
+    wplist_dict_add_bool(stream, "supportsDynamicStreamID", false);
+    wplist_dict_add_uint(stream, "streamConnectionID", session->session_id); // Hopefully fine since we have one stream per session
+  }
   streams = plist_new_array();
   plist_array_append_item(streams, stream);
 
@@ -3129,6 +3120,18 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
       goto error;
     }
 
+  item = plist_dict_get_item(stream, "type");
+  if (item)
+    {
+      plist_get_uint_val(item, &uintval);
+      if (session->master_session->rtp_session->type != uintval) {
+        DPRINTF(E_LOG, L_AIRPLAY, "Unexpected stream type (%zu) in respone from '%s'. Expected %d\n", uintval, 
+          session->devname, session->master_session->rtp_session->type
+        );
+        goto error;
+      }
+    }
+
   item = plist_dict_get_item(stream, "dataPort");
   if (item)
     {
@@ -3143,21 +3146,49 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
       session->control_port = uintval;
     }
 
-  if (session->data_port == 0 || session->control_port == 0)
+  item = plist_dict_get_item(stream, "audioBufferSize");
+  if (item)
     {
-      DPRINTF(E_LOG, L_AIRPLAY, "Missing port number in reply from '%s' (d=%u, c=%u)\n", session->devname, session->data_port, session->control_port);
-      goto error;
+      plist_get_uint_val(item, &uintval);
+      session->buffer_size = uintval;
     }
 
-  DPRINTF(E_DBG, L_AIRPLAY, "Negotiated UDP streaming session; ports d=%u c=%u e=%u\n", session->data_port, session->control_port, session->events_port);
+  if (session->master_session->rtp_session->type == RTP_REALTIME) {
+    if (session->data_port == 0 || session->control_port == 0)
+      {
+        DPRINTF(E_LOG, L_AIRPLAY, "Missing port number in reply from '%s' (d=%u, c=%u)\n", session->devname, session->data_port, session->control_port);
+        goto error;
+      }
 
-  session->server_fd = net_connect(session->address, session->data_port, SOCK_DGRAM, "AirPlay data");
-  if (session->server_fd < 0)
-    {
-      DPRINTF(E_LOG, L_AIRPLAY, "Could not connect to data port of '%s'\n", session->devname);
-      goto error;
-    }
+    DPRINTF(E_DBG, L_AIRPLAY, "Negotiated UDP streaming session; ports d=%u c=%u e=%u\n", session->data_port, session->control_port, session->events_port);
 
+    session->server_fd = net_connect(session->address, session->data_port, SOCK_DGRAM, "AirPlay data");
+    if (session->server_fd < 0)
+      {
+        DPRINTF(E_LOG, L_AIRPLAY, "Could not connect to data port of '%s'\n", session->devname);
+        goto error;
+      }
+  }
+  else if (session->master_session->rtp_session->type == RTP_BUFFERRED) {
+    if (session->control_port == 0)
+      {
+        DPRINTF(E_LOG, L_AIRPLAY, "Missing controlPort number in reply from '%s'\n", session->devname);
+        goto error;
+      }
+    if (session->buffer_size == 0)
+      {
+        DPRINTF(E_LOG, L_AIRPLAY, "Missing bufferSize number in reply from '%s'\n", session->devname);
+        goto error;
+      }
+
+    DPRINTF(E_DBG, L_AIRPLAY, "Negotiated Buffered Audio streaming session; ports c=%u e=%u, buffer_size=%" PRIu64 "\n",
+      session->control_port, session->events_port, session->buffer_size
+    );
+  }
+  else {
+    DPRINTF(E_LOG, L_AIRPLAY, "Bug! RTP type %d not supported.\n", session->master_session->rtp_session->type);
+    goto error;
+  }
   session->state = AIRPLAY_STATE_SETUP;
 
   plist_free(response);

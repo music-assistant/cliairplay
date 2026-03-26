@@ -364,7 +364,7 @@ static int
 validate_quality(void)
 {
   struct media_quality raop_qualities[] = { {44100, 16, 2, 0}, };
-  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, {44100, 24, 2, 0}, {48000, 24, 2, 0}, };
+  struct media_quality ap2_qualities[] = { {44100, 16, 2, 0}, {48000, 16, 2, 0}, {48000, 24, 2, 0}, };
   struct media_quality *qualities;
   int q_cnt = 0; // count of possible valid qualities
   int i;
