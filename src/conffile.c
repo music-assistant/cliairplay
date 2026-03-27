@@ -55,7 +55,7 @@ static cfg_opt_t sec_general[] =
     CFG_STR("logformat", "default", CFGF_NONE),
     CFG_STR_LIST("trusted_networks", "{lan}", CFGF_NONE),
 #ifdef __APPLE__
-    CFG_BOOL("ipv6", cfg_false, CFGF_NONE), // dual stack doesn't work with macos
+    CFG_BOOL("ipv6", cfg_false, CFGF_NONE), // OwnTone doesn't work with macos IPv6 yet
 #else
     CFG_BOOL("ipv6", cfg_true, CFGF_NONE),
 #endif
@@ -286,9 +286,6 @@ conffile_load(char *file)
       free(buf);
       goto out_fail;
     }
-    DPRINTF(E_DBG, L_CONF, "%s:start_buffer_ms overidden to %ld\n",
-      __func__, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
-    );
     free(buf);
   }
 
@@ -311,22 +308,12 @@ conffile_load(char *file)
       ap_device_info.quality.channels, (ap_device_info.version == RAOP) ? "false" : "true"
     );
   }
-  DPRINTF(E_DBG, L_CONF, "%s:%s\n", __func__, buf);
   if (cfg_parse_buf(cfg, buf) != 0) {
     DPRINTF(E_LOG, L_CONF, "%s:Error setting airplay device configuration with %s\n", __func__, buf);
     free(buf);
     goto out_fail;
   }
   free(buf);
-  DPRINTF(E_DBG, L_CONF, 
-    "%s:airplay %s config is {sample_rate = %ld, bits_per_sample = %ld, channels = %ld, raop_disable = %d, password = %s}\n",
-    __func__, ap_device_info.name, 
-    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "sample_rate"),
-    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "bits_per_sample"),
-    cfg_getint(cfg_gettsec(cfg, "airplay", ap_device_info.name), "channels"),
-    cfg_getbool(cfg_gettsec(cfg, "airplay", ap_device_info.name), "raop_disable"),
-    cfg_getstr(cfg_gettsec(cfg, "airplay", ap_device_info.name), "password")
-  );
   return 0;
 
  out_fail:
