@@ -76,10 +76,14 @@ rtp_session_new(struct media_quality *quality, int pktbuf_size, int sync_each_ns
   gcry_randomize(&session->seqnum, sizeof(session->seqnum), GCRY_STRONG_RANDOM);
 
   session->ptp_clock_id = ptp_clock_id;
-  if (quality_is_buffered(quality))
+  if (quality_is_buffered(quality)) {
+    session->type = RTP_BUFFERRED;
     session->ssrc_id = ALAC_48000_S24_2; // it's all we support for the moment
-  else
+  }
+  else {
+    session->type = RTP_REALTIME;
     gcry_randomize(&session->ssrc_id, sizeof(session->ssrc_id), GCRY_STRONG_RANDOM);
+  }
 
   if (quality)
     session->quality = *quality;
@@ -171,14 +175,6 @@ rtp_packet_next(struct rtp_session *session, size_t payload_len, int samples)
       // Marker bit set to 1, sequence number in remaining 23 bits
       uint32_t seq_32 = htobe32(0x8080 & (uint32_t)session->seqnum);
       memcpy(pkt->header, &seq_32, 4);
-      if (session->quality.sample_rate != 48000 ||
-          session->quality.bits_per_sample != 24 ||
-          session->quality.channels != 2) {
-        DPRINTF(E_LOG, L_PLAYER, "%s:Bug! Quality %d/%d/%d not supported, only 48000/24/2\n",
-          __func__, session->quality.sample_rate, session->quality.bits_per_sample,
-          session->quality.channels
-        );
-      }
       break;
     
     default:

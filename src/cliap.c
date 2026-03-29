@@ -70,6 +70,11 @@
 #include "cliap.h"
 #include "mass.h"
 
+#define ENFORCE_PTP 1 // enforce use of PTP timing service only
+#if ENFORCE_PTP
+#include "ptpd.h"
+#endif
+
 #define AIRPLAY2_CONNECT_TIME_MS (int32_t) 2500 // Minimum time we need to connect and buffer before starting playback
 
 /*
@@ -1017,6 +1022,11 @@ main(int argc, char **argv)
   gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
 
   DPRINTF(E_DBG, L_MAIN, "Initialized with gcrypt %s\n", gcry_version);
+
+#if ENFORCE_PTP
+  /* ptpd binds to priviliged ports 319 and 320 (if they are available) */
+  ptpd_find_or_bind();
+#endif
 
   /* Block signals for all threads except the main one */
   sigemptyset(&sigs);
