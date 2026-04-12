@@ -2882,7 +2882,7 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
   if (!session->master_session->use_ptp) // Skip for NTP timing
     return 0;
 
-  timespec_to_ntp(&ams->cur_stamp.ts, &ns);
+  timespec_to_ntp(&ams->cur_stamp.ts, &ns); // Check that this is a correct timestamp value to use
 
   root = plist_new_dict();
   wplist_dict_add_int(root, "rate", 1); // 1 to start playing at normal playback speed
@@ -2890,7 +2890,8 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
   wplist_dict_add_uint(root, "networkTimeSecs", ns.sec);
   wplist_dict_add_uint(root, "networkTimeFrac", ns.frac);
   wplist_dict_add_uint(root, "networkTimeFlags", 0);
-  wplist_dict_add_uint(root, "rtpTime", ams->cur_stamp.pos); // Check how this varies from ams->rtp_session->pos
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:ams->cur_stamp.pos=%" PRIu32 ", ams->rtp_session->pos=%" PRIu32 "\n", __func__, ams->cur_stamp.pos, ams->rtp_session->pos);
+  wplist_dict_add_uint(root, "rtpTime", ams->rtp_session->pos); // Check how this varies from ams->rtp_session->pos
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
