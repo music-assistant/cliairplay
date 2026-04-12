@@ -154,7 +154,7 @@ static cfg_opt_t sec_airplay[] =
     CFG_INT("channels", 2, CFGF_NONE),
     // Hidden options
     CFG_BOOL("exclusive", cfg_false, CFGF_NONE),
-    CFG_BOOL("ptp_disable", cfg_true, CFGF_NONE),
+    CFG_BOOL("ptp_disable", cfg_false, CFGF_NONE),
     CFG_END()
   };
 

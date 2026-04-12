@@ -44,11 +44,13 @@ PTP_SRC = \
 # to prevent hanging on pthread_mutex errors during shutdown
 LOCAL_PATCHED_SRC = \
     airplay.c \
+    airplay_events.c \
     input.c \
     misc.c \
     outputs.c \
     player.c \
     rtp_common.c \
+    rtsp.c \
     timer.c \
     transcode.c
 
@@ -56,7 +58,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/commands.c \
     ../owntone-server/src/dmap_common.c \
     ../owntone-server/src/evthr.c \
-    ../owntone-server/src/evrtsp/rtsp.c \
     ../owntone-server/src/http.c \
     ../owntone-server/src/inputs/file.c \
     ../owntone-server/src/inputs/http.c \
@@ -64,7 +65,6 @@ OWNTONE_SRC = \
     ../owntone-server/src/logger.c \
     ../owntone-server/src/misc_json.c \
     ../owntone-server/src/misc_xml.c \
-    ../owntone-server/src/outputs/airplay_events.c \
     ../owntone-server/src/outputs/raop.c \
     ../owntone-server/src/ptpd.c \
     ../owntone-server/src/worker.c \
@@ -87,6 +87,7 @@ cliap_CPPFLAGS = \
 	$(COMMON_CPPFLAGS) \
     -I../owntone-server/src \
     -I../owntone-server/src/outputs \
+    -I../owntone-server/src/evrtsp \
 	-D_GNU_SOURCE \
     -DCONFIG_GCRYPT \
     -DCONFDIR=\".\" \

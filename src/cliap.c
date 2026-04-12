@@ -70,7 +70,7 @@
 #include "cliap.h"
 #include "mass.h"
 
-#define ENFORCE_PTP 1 // enforce use of PTP timing service only
+#define ENFORCE_PTP 0 // enforce use of PTP timing service only
 #if ENFORCE_PTP
 #include "ptpd.h"
 #endif
@@ -219,7 +219,7 @@ usage(char *program)
   printf("  --pipe <audio_filename>                           Filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename>                 Filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                                             Print current NTP time and exit.\n");
-  printf("  --ntpstart <NTP>                                  Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --ntpstart <NTP>                                  Start playback at NTP. 0 = playback as soon as possible\n");
   printf("  --volume <volume>                                 Initial volume (0-100). Defaults to 0\n");
   printf("  --latency <latency>                               ms of data to buffer in the output buffer. Defaults to 2000\n");
   printf("  --version <airplay_version>                       Version of AirPlay protocol to use. 1 = RAOP, 2 = AirPlay 2. Default is AirPlay 2\n");
@@ -947,7 +947,7 @@ main(int argc, char **argv)
 
   // Improve this by moving it into mass.c and ignore audio that should be streamed before we can stream it
   // i.e. Replicate cliraop behaviour
-  if (get_start_ts(&ap_device_info.start_ts, ntpstart) < 0) {
+  if (ntpstart == 0 || get_start_ts(&ap_device_info.start_ts, ntpstart) < 0) {
     DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
     ap_device_info.start_ts.tv_sec = 0;
     ap_device_info.start_ts.tv_nsec = 0;
@@ -1025,6 +1025,7 @@ main(int argc, char **argv)
 
 #if ENFORCE_PTP
   /* ptpd binds to priviliged ports 319 and 320 (if they are available) */
+  DPRINTF(E_INFO, L_MAIN, "PTP timing enforced\n");
   ptpd_find_or_bind();
 #endif
 

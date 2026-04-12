@@ -327,9 +327,10 @@ struct airplay_metadata
 
 struct airplay_service
 {
-  int fd;
+  struct net_socket socket;
   unsigned short port;
-  struct event *ev;
+  struct event *ev4;
+  struct event *ev6;
 };
 
 /* NTP timestamp definitions */
@@ -2065,6 +2066,7 @@ static void
 control_packet_send(struct airplay_session *session, struct rtp_packet *pkt)
 {
   socklen_t addrlen;
+  int fd;
   int ret;
 
   switch (session->family)
@@ -2072,11 +2074,13 @@ control_packet_send(struct airplay_session *session, struct rtp_packet *pkt)
       case AF_INET:
 	session->naddr.sin.sin_port = htons(session->control_port);
 	addrlen = sizeof(session->naddr.sin);
+	fd = session->control_svc->socket.fd4;
 	break;
 
       case AF_INET6:
 	session->naddr.sin6.sin6_port = htons(session->control_port);
 	addrlen = sizeof(session->naddr.sin6);
+	fd = session->control_svc->socket.fd6;
 	break;
 
       default:
@@ -2084,7 +2088,7 @@ control_packet_send(struct airplay_session *session, struct rtp_packet *pkt)
 	return;
     }
 
-  ret = sendto(session->control_svc->fd, pkt->data, pkt->data_len, 0, &session->naddr.sa, addrlen);
+  ret = sendto(fd, pkt->data, pkt->data_len, 0, &session->naddr.sa, addrlen);
   if (ret < 0)
     DPRINTF(E_LOG, L_AIRPLAY, "Could not send playback sync to device '%s': %s\n", session->devname, strerror(errno));
 }
@@ -2262,37 +2266,51 @@ packets_sync_send(struct airplay_master_session *ams)
 static void
 service_stop(struct airplay_service *svc)
 {
-  if (svc->ev)
-    event_free(svc->ev);
+  if (svc->ev4)
+    event_free(svc->ev4);
+  if (svc->ev6)
+    event_free(svc->ev6);
 
-  if (svc->fd >= 0)
-    close(svc->fd);
+  svc->ev4 = NULL;
+  svc->ev6 = NULL;
 
-  svc->ev = NULL;
-  svc->fd = -1;
+  net_socket_close(&svc->socket);
+
   svc->port = 0;
 }
 
 static int
 service_start(struct airplay_service *svc, event_callback_fn cb, unsigned short port, const char *log_service_name)
 {
+  int ret;
+
   memset(svc, 0, sizeof(struct airplay_service));
 
-  svc->fd = net_bind(&port, SOCK_DGRAM, log_service_name);
-  if (svc->fd < 0)
+  svc->socket.fd4 = -1;
+  svc->socket.fd6 = -1;
+
+  ret = net_bind(&svc->socket, &port, SOCK_DGRAM, log_service_name);
+  if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Could not start '%s' service\n", log_service_name);
       goto error;
     }
 
-  svc->ev = event_new(evbase_player, svc->fd, EV_READ | EV_PERSIST, cb, svc);
-  if (!svc->ev)
-    {
-      DPRINTF(E_LOG, L_AIRPLAY, "Could not create event for '%s' service\n", log_service_name);
+  if (svc->socket.fd4 >= 0) {
+    svc->ev4 = event_new(evbase_player, svc->socket.fd4, EV_READ | EV_PERSIST, cb, svc);
+    if (!svc->ev4)
       goto error;
-    }
 
-  event_add(svc->ev, NULL);
+    event_add(svc->ev4, NULL);
+  }
+
+  if (svc->socket.fd6 >= 0) {
+    svc->ev6 = event_new(evbase_player, svc->socket.fd6, EV_READ | EV_PERSIST, cb, svc);
+    if (!svc->ev6)
+      goto error;
+
+    event_add(svc->ev6, NULL);
+  }
 
   svc->port = port;
 
@@ -2306,7 +2324,6 @@ service_start(struct airplay_service *svc, event_callback_fn cb, unsigned short 
 static void
 timing_svc_cb(int fd, short what, void *arg)
 {
-  struct airplay_service *svc = arg;
   union net_sockaddr peer_addr;
   socklen_t peer_addrlen = sizeof(peer_addr);
   char address[INET6_ADDRSTRLEN];
@@ -2324,7 +2341,7 @@ timing_svc_cb(int fd, short what, void *arg)
     }
 
   peer_addrlen = sizeof(peer_addr);
-  ret = recvfrom(svc->fd, req, sizeof(req), 0, &peer_addr.sa, &peer_addrlen);
+  ret = recvfrom(fd, req, sizeof(req), 0, &peer_addr.sa, &peer_addrlen);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_AIRPLAY, "Error reading timing request: %s\n", strerror(errno));
@@ -2381,7 +2398,7 @@ timing_svc_cb(int fd, short what, void *arg)
       memcpy(res + 28, &xmit_stamp.frac, 4);
     }
 
-  ret = sendto(svc->fd, res, sizeof(res), 0, &peer_addr.sa, peer_addrlen);
+  ret = sendto(fd, res, sizeof(res), 0, &peer_addr.sa, peer_addrlen);
   if (ret < 0)
     {
       net_address_get(address, sizeof(address), &peer_addr);
@@ -2393,7 +2410,6 @@ timing_svc_cb(int fd, short what, void *arg)
 static void
 control_svc_cb(int fd, short what, void *arg)
 {
-  struct airplay_service *svc = arg;
   union net_sockaddr peer_addr = { 0 };
   socklen_t peer_addrlen = sizeof(peer_addr);
   char address[INET6_ADDRSTRLEN];
@@ -2403,7 +2419,7 @@ control_svc_cb(int fd, short what, void *arg)
   uint16_t seq_len;
   int ret;
 
-  ret = recvfrom(svc->fd, req, sizeof(req), 0, &peer_addr.sa, &peer_addrlen);
+  ret = recvfrom(fd, req, sizeof(req), 0, &peer_addr.sa, &peer_addrlen);
   DPRINTF(E_DBG, L_AIRPLAY, "%s: ret=%d\n", __func__, ret);
   if (ret < 0)
     {
@@ -2679,20 +2695,21 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *se
   wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
   wplist_dict_add_uint(stream, "type", type); // RTP type, 0x60 = 96 real time, 103 buffered, 130 remote control only
   wplist_dict_add_uint(stream, "streamConnectionID", session->session_id); // Hopefully fine since we have one stream per session
+  if (quality->sample_rate == 48000 && quality->bits_per_sample == 16 && quality->channels == 2)
+    {
+  audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
+  latencyMin = quality->sample_rate * AIRPLAY_AUDIO_LATENCY_MS / 1000;
+    }
+  wplist_dict_add_uint(stream, "audioFormat", audioFormat);
+  wplist_dict_add_string(stream, "audioMode", "default");
+  wplist_dict_add_uint(stream, "sr", quality->sample_rate); // sample rate
+  
   if (type == RTP_REALTIME) 
     {
-      if (quality->sample_rate == 48000 && quality->bits_per_sample == 16 && quality->channels == 2)
-        {
-      audioFormat = 0x100000; // 0x100000 	ALAC/48000/16/2
-      latencyMin = quality->sample_rate * AIRPLAY_AUDIO_LATENCY_MS / 1000;
-        }
-      wplist_dict_add_uint(stream, "audioFormat", audioFormat);
-      wplist_dict_add_string(stream, "audioMode", "default");
       wplist_dict_add_uint(stream, "controlPort", session->control_svc->port);
       wplist_dict_add_bool(stream, "isMedia", true); // ?
       wplist_dict_add_uint(stream, "latencyMax", 88200); // TODO how do these latencys work?
       wplist_dict_add_uint(stream, "latencyMin", latencyMin); // AIRPLAY_AUDIO_LATENCY_MS in samples, see comment in rtp_sync_packet_next()
-      wplist_dict_add_uint(stream, "sr", quality->sample_rate); // sample rate
       wplist_dict_add_bool(stream, "supportsDynamicStreamID", false);
     }
   streams = plist_new_array();
@@ -2839,6 +2856,51 @@ payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *s
     return payload_make_setup_session_ntp(req, session, arg);
 
   return payload_make_setup_session_ptp(req, session, arg);
+}
+
+/*
+ * Accoridng to Google AI, this exchange:
+ * Establishes a Synchronization Anchor: It defines a common timeline anchor point, crucial for AirPlay 2's ability to
+ *  maintain sync across multiple devices in a multi-room setup.
+ * 
+ * Sets the Playback Rate: It dictates the speed of the stream, usually setting it to normal playback speed (rate = 1.0).
+ * 
+ * Initializes Timing: It connects a specific RTP packet timestamp (the anchor) to a specific network time or wall clock time,
+ *  allowing the receiver to buffer appropriately and play content at the precise moment required for tight synchronization,
+ *  minimizing audio lag. 
+ */
+static int
+payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session *session, void *arg)
+{
+  plist_t root;
+  uint8_t *data;
+  size_t len;
+  int ret;
+  struct airplay_master_session *ams = session->master_session;
+  struct ntp_stamp ns;
+
+  if (!session->master_session->use_ptp) // Skip for NTP timing
+    return 0;
+
+  timespec_to_ntp(&ams->cur_stamp.ts, &ns);
+
+  root = plist_new_dict();
+  wplist_dict_add_int(root, "rate", 1); // 1 to start playing at normal playback speed
+  wplist_dict_add_int(root, "networkTimeTimelineID", (int64_t)ptpd_clock_id_get()); // identifies Clock ID of the player - need to validate whether signed or unsigned
+  wplist_dict_add_uint(root, "networkTimeSecs", ns.sec);
+  wplist_dict_add_uint(root, "networkTimeFrac", ns.frac);
+  wplist_dict_add_uint(root, "networkTimeFlags", 0);
+  wplist_dict_add_uint(root, "rtpTime", ams->cur_stamp.pos); // Check how this varies from ams->rtp_session->pos
+
+  ret = wplist_to_bin(&data, &len, root);
+  plist_free(root);
+
+  if (ret < 0)
+    return -1;
+
+  evbuffer_add(req->output_buffer, data, len);
+
+  return 0;
 }
 
 /*
@@ -3197,6 +3259,18 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
  error:
   plist_free(response);
   return AIRPLAY_SEQ_ABORT;
+}
+
+static enum airplay_seq_type
+response_handler_setrateanchorti(struct evrtsp_request *req, struct airplay_session *session)
+{
+  struct airplay_master_session *ams = session->master_session;
+
+  if (!ams->use_ptp) // not relevant for NTP timing
+    return AIRPLAY_SEQ_CONTINUE;
+  
+  // TODO: Implement response handling logic - even if to just log response
+  return AIRPLAY_SEQ_CONTINUE;
 }
 
 static enum airplay_seq_type
@@ -3728,7 +3802,7 @@ static struct airplay_seq_definition airplay_seq_definition[] =
 
 // The size of the second array dimension MUST at least be the size of largest
 // sequence + 1, because then we can count on a zero terminator when iterating
-static struct airplay_seq_request airplay_seq_request[][7] =
+static struct airplay_seq_request airplay_seq_request[][8] =
 {
   {
     { AIRPLAY_SEQ_START, "GET /info", EVRTSP_REQ_GET, NULL, response_handler_info_start, NULL, "/info", false },
@@ -3743,6 +3817,7 @@ static struct airplay_seq_request airplay_seq_request[][7] =
     { AIRPLAY_SEQ_START_PLAYBACK, "RECORD", EVRTSP_REQ_RECORD, payload_make_record, response_handler_record, NULL, NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETPEERS", EVRTSP_REQ_SETPEERS, payload_make_setpeers, NULL, "/peer-list-changed", NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETUP (stream)", EVRTSP_REQ_SETUP, payload_make_setup_stream, response_handler_setup_stream, "application/x-apple-binary-plist", NULL, false },
+    { AIRPLAY_SEQ_START_PLAYBACK, "SETRATEANCHORTI", EVRTSP_REQ_SETRATEANCHORTI, payload_make_setrateanchorti, response_handler_setrateanchorti, "application/x-apple-binary-plist", NULL, false },
     // Some devices (e.g. Sonos Symfonisk) don't register the volume if it isn't last
     { AIRPLAY_SEQ_START_PLAYBACK, "SET_PARAMETER (volume)", EVRTSP_REQ_SET_PARAMETER, payload_make_set_volume, response_handler_volume_start, "text/parameters", NULL, true },
   },
