@@ -173,7 +173,7 @@ rtp_packet_next(struct rtp_session *session, size_t payload_len, int samples)
     case RTP_BUFFERRED:
       // Version = 2, P, X and CC are 0
       // Marker bit set to 1, sequence number in remaining 23 bits
-      uint32_t seq_32 = htobe32(0x8080 & (uint32_t)session->seqnum);
+      uint32_t seq_32 = htobe32(0x80800000 | (uint32_t)session->seqnum);
       memcpy(pkt->header, &seq_32, 4);
       break;
     
