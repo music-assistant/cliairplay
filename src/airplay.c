@@ -2015,7 +2015,7 @@ packet_send(struct airplay_session *session, struct rtp_packet *pkt)
 
       if (type == RTP_BUFFERRED)
         {
-  buf = malloc(pkt->data_len + 2);
+  buf = malloc(pkt->data_len + 2); // can we find a way to prevent a malloc/free cycle for every buffered packet?
   buf_len = sizeof(buf);
   uint16_t len = htons(buf_len);
   uint8_t *write_ptr;
@@ -2050,14 +2050,15 @@ packet_send(struct airplay_session *session, struct rtp_packet *pkt)
       return -1;
     }
 
-/*
+// /*
   DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
     session->master_session->rtp_session->seqnum,
     session->master_session->rtp_session->pos,
     pkt->header[1],
     session->master_session->rtp_session->pktbuf_len
     );
-*/
+  DPRINTF(E_DBG, L_AIRPLAY, "pkt->header[0-3]: 0x%X%X%X%X\n", pkt->header[0], pkt->header[1], pkt->header[2], pkt->header[3]);
+// */
 
   return 0;
 }
@@ -2883,6 +2884,7 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
     return 0;
 
   timespec_to_ntp(&ams->cur_stamp.ts, &ns); // Check that this is a correct timestamp value to use
+  DPRINTF(E_DBG, L_AIRPLAY, "%s:ts.tv_sec=%ld, ts.tv_nsec=%ld, ns.sec=%" PRIu32 ", ns.frac=%" PRIu32 "\n", __func__, ams->cur_stamp.ts.tv_sec, ams->cur_stamp.ts.tv_nsec, ns.sec, ns.frac);
 
   root = plist_new_dict();
   wplist_dict_add_int(root, "rate", 1); // 1 to start playing at normal playback speed
@@ -2890,7 +2892,6 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
   wplist_dict_add_uint(root, "networkTimeSecs", ns.sec);
   wplist_dict_add_uint(root, "networkTimeFrac", ns.frac);
   wplist_dict_add_uint(root, "networkTimeFlags", 0);
-  DPRINTF(E_DBG, L_AIRPLAY, "%s:ams->cur_stamp.pos=%" PRIu32 ", ams->rtp_session->pos=%" PRIu32 "\n", __func__, ams->cur_stamp.pos, ams->rtp_session->pos);
   wplist_dict_add_uint(root, "rtpTime", ams->rtp_session->pos); // Check how this varies from ams->rtp_session->pos
 
   ret = wplist_to_bin(&data, &len, root);
