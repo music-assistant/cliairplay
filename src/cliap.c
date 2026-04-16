@@ -951,6 +951,10 @@ main(int argc, char **argv)
     DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
     ap_device_info.start_ts.tv_sec = 0;
     ap_device_info.start_ts.tv_nsec = 0;
+
+    // temp for testing buffered RTP
+    clock_gettime(CLOCK_MONOTONIC, &ap_device_info.start_ts);
+    ap_device_info.start_ts.tv_sec += 3; // start plakyback in three seconds for the moment
   }
 
   if (validate_quality() < 0) {

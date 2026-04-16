@@ -304,11 +304,14 @@ init_settings(struct settings_ctx *settings, enum transcode_profile profile, str
 	settings->encode_audio = true;
 	settings->format = "data"; // Means we get the raw packet from the encoder, no muxing
 	settings->audio_codec = AV_CODEC_ID_ALAC;
-  if (quality->bits_per_sample == 16)
+  if (quality->bits_per_sample == 16) {
 	  settings->sample_format = AV_SAMPLE_FMT_S16P;
-  else if (quality->bits_per_sample == 24 || quality->bits_per_sample == 32)
+  	settings->frame_size = 352;
+  }
+  else if (quality->bits_per_sample == 24 || quality->bits_per_sample == 32) {
     settings->sample_format = AV_SAMPLE_FMT_S32P;
-	settings->frame_size = 352;
+  	settings->frame_size = 4096; // yuck - would be good find a way to not hardcode this and align with airplay master session value
+  }
 	break;
 
       case XCODE_MP4_ALAC:

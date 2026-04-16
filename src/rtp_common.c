@@ -88,6 +88,7 @@ rtp_session_new(struct media_quality *quality, int pktbuf_size, int sync_each_ns
   if (quality)
     session->quality = *quality;
 
+  // todo: retransmission buffer and syncing probably not required for buffered RTP
   session->pktbuf_size = pktbuf_size;
   CHECK_NULL(L_PLAYER, session->pktbuf = calloc(session->pktbuf_size, sizeof(struct rtp_packet)));
 

@@ -261,8 +261,8 @@ evrtsp_method(enum evrtsp_cmd_type type)
 	  method = "SETPEERS";
 	  break;
 
-	case EVRTSP_REQ_SETRATEANCHORTI:
-	  method = "SETRATEANCHORTI";
+	case EVRTSP_REQ_SETRATEANCHORTIME:
+	  method = "SETRATEANCHORTIME";
 	  break;
 
 	default:

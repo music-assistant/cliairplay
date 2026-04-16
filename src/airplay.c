@@ -89,6 +89,7 @@
 // Probably using this value because 44100/352 and 48000/352 has good 32 byte
 // alignment, which improves performance of some encoders
 #define AIRPLAY_SAMPLES_PER_PACKET              352
+#define AIRPLAY_BUFFERED_RTP_SAMPLES_PER_PACKET 4096
 
 // Quoting shairport-sync's rtp.c:
 // The value of 11025 (0.25 seconds) is a guess based on the "Audio-Latency"
@@ -175,6 +176,7 @@ enum airplay_seq_type
   AIRPLAY_SEQ_PAIR_VERIFY,
   AIRPLAY_SEQ_PAIR_TRANSIENT,
   AIRPLAY_SEQ_FEEDBACK,
+  AIRPLAY_SEQ_SYNC, // Relevant for Buffered RTP only
   AIRPLAY_SEQ_CONTINUE, // Must be last element
 };
 
@@ -313,7 +315,7 @@ struct airplay_session
 
   uint32_t ptpd_slave_id;
 
-  uint64_t buffer_size;
+  uint32_t buffer_size;
 
   struct airplay_session *next;
 };
@@ -563,6 +565,14 @@ timing_get_clock_ntp(struct ntp_stamp *ns)
   timespec_to_ntp(&ts, ns);
 
   return 0;
+}
+
+static inline void
+timespec_to_ptp(struct timespec *ts, struct ntp_stamp *ns)
+{
+  ns->sec = ts->tv_sec;
+
+  ns->frac = (uint32_t)((double)ts->tv_nsec * 1e-9 * FRAC);
 }
 
 // Converts uint64t libhash -> AA:BB:CC:DD:EE:FF:11:22
@@ -1233,10 +1243,18 @@ master_session_make(struct media_quality *quality, bool use_ptp)
 
   ams->quality = *quality;
   ams->use_ptp = use_ptp;
-  ams->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
+  if (ams->rtp_session->type == RTP_REALTIME)
+    {
+      ams->samples_per_packet = AIRPLAY_SAMPLES_PER_PACKET;
+      ams->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
+    }
+  else
+    {
+      ams->samples_per_packet = AIRPLAY_BUFFERED_RTP_SAMPLES_PER_PACKET;
+      ams->output_buffer_samples = 0; // Offload this responsibility to the AirPlay2 device when Buffered RTP
+    }
   // rawbuf is demuxed raw data - therefore s24le is 24-in-32 packed.
   ams->rawbuf_size = STOB(ams->samples_per_packet, (quality->bits_per_sample == 24) ? 32 : quality->bits_per_sample, quality->channels);
-  ams->output_buffer_samples = (buffer_duration_ms - AIRPLAY_AUDIO_LATENCY_MS) * quality->sample_rate / 1000;
 
   CHECK_NULL(L_AIRPLAY, ams->rawbuf = malloc(ams->rawbuf_size));
   CHECK_NULL(L_AIRPLAY, ams->input_buffer = evbuffer_new());
@@ -2050,15 +2068,14 @@ packet_send(struct airplay_session *session, struct rtp_packet *pkt)
       return -1;
     }
 
-// /*
+/*
   DPRINTF(E_DBG, L_AIRPLAY, "RTP PACKET seqnum %u, rtptime %u, payload 0x%x, pktbuf_s %zu\n",
     session->master_session->rtp_session->seqnum,
     session->master_session->rtp_session->pos,
     pkt->header[1],
     session->master_session->rtp_session->pktbuf_len
     );
-  DPRINTF(E_DBG, L_AIRPLAY, "pkt->header[0-3]: 0x%X%X%X%X\n", pkt->header[0], pkt->header[1], pkt->header[2], pkt->header[3]);
-// */
+*/
 
   return 0;
 }
@@ -2258,6 +2275,39 @@ packets_sync_send(struct airplay_master_session *ams)
 	  sync_pkt = rtp_sync_packet_next(ams->rtp_session, cur_stamp, 0x80);
 	  control_packet_send(session, sync_pkt);
 	}
+    }
+}
+
+/*
+ * Handles RTSP SETRATEANCHORTI exchange for buffered RTP. 
+ * This exchange controls the rate of playback and the timing of playback of specific packets.
+ * It appears to be the buffered RTP equivalent of RTP sync packets for realtime RTP.
+ * 
+ * @param [in] ams the airplay master session
+ */
+static void
+setrateanchortime(struct airplay_master_session *ams)
+{
+  struct airplay_session *session;
+  // bool is_sync_time;
+
+  // Check if it is time send a sync packet to sessions that are already running
+  // is_sync_time = rtp_sync_is_time(ams->rtp_session); // TODO: Determine what this frequency should be for buffered RTP - if any?
+
+  for (session = airplay_sessions; session; session = session->next)
+    {
+      if (session->master_session != ams)
+	continue;
+
+      // A device has joined and should get an initial SETRATEANCHORTI exchange
+      if (session->state == AIRPLAY_STATE_CONNECTED)
+	{
+    sequence_start(AIRPLAY_SEQ_SYNC, session, NULL, "setrateanchortime");
+	}
+  //     else if (is_sync_time && session->state == AIRPLAY_STATE_STREAMING)
+	// {
+  //   sequence_start(AIRPLAY_SEQ_SYNC, session, NULL, "setrateanchortime");
+	// }
     }
 }
 
@@ -2689,11 +2739,12 @@ payload_make_setup_stream(struct evrtsp_request *req, struct airplay_session *se
   uint64_t ct = 2;                // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
   uint64_t type = session->master_session->rtp_session->type;
   struct media_quality *quality = &(session->master_session->quality);
+  struct airplay_master_session *ams = session->master_session;
 
   stream = plist_new_dict();
   wplist_dict_add_data(stream, "shk", session->shared_secret, AIRPLAY_AUDIO_KEY_LEN);
   wplist_dict_add_uint(stream, "ct", ct); // Compression type, 1 LPCM, 2 ALAC, 3 AAC, 4 AAC ELD, 32 OPUS
-  wplist_dict_add_uint(stream, "spf", AIRPLAY_SAMPLES_PER_PACKET); // frames per packet
+  wplist_dict_add_uint(stream, "spf", ams->samples_per_packet); // frames per packet
   wplist_dict_add_uint(stream, "type", type); // RTP type, 0x60 = 96 real time, 103 buffered, 130 remote control only
   wplist_dict_add_uint(stream, "streamConnectionID", session->session_id); // Hopefully fine since we have one stream per session
   if (quality->sample_rate == 48000 && quality->bits_per_sample == 16 && quality->channels == 2)
@@ -2871,7 +2922,7 @@ payload_make_setup_session(struct evrtsp_request *req, struct airplay_session *s
  *  minimizing audio lag. 
  */
 static int
-payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session *session, void *arg)
+payload_make_setrateanchortime(struct evrtsp_request *req, struct airplay_session *session, void *arg)
 {
   plist_t root;
   uint8_t *data;
@@ -2880,10 +2931,11 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
   struct airplay_master_session *ams = session->master_session;
   struct ntp_stamp ns;
 
-  if (!session->master_session->use_ptp) // Skip for NTP timing
+  // Skip for NTP timing or Realtime RTP
+  if (!ams->use_ptp || ams->rtp_session->type == RTP_REALTIME)
     return 0;
 
-  timespec_to_ntp(&ams->cur_stamp.ts, &ns); // Check that this is a correct timestamp value to use
+  timespec_to_ptp(&ams->cur_stamp.ts, &ns); // Check that this is a correct timestamp value to use
   DPRINTF(E_DBG, L_AIRPLAY, "%s:ts.tv_sec=%ld, ts.tv_nsec=%ld, ns.sec=%" PRIu32 ", ns.frac=%" PRIu32 "\n", __func__, ams->cur_stamp.ts.tv_sec, ams->cur_stamp.ts.tv_nsec, ns.sec, ns.frac);
 
   root = plist_new_dict();
@@ -2892,7 +2944,7 @@ payload_make_setrateanchorti(struct evrtsp_request *req, struct airplay_session 
   wplist_dict_add_uint(root, "networkTimeSecs", ns.sec);
   wplist_dict_add_uint(root, "networkTimeFrac", ns.frac);
   wplist_dict_add_uint(root, "networkTimeFlags", 0);
-  wplist_dict_add_uint(root, "rtpTime", ams->rtp_session->pos); // Check how this varies from ams->rtp_session->pos
+  wplist_dict_add_uint(root, "rtpTime", ams->rtp_session->pos - session->offset_samples); // Include user configured offset
 
   ret = wplist_to_bin(&data, &len, root);
   plist_free(root);
@@ -3172,6 +3224,7 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
   uint64_t uintval;
   int ret;
   enum rtp_type rtp_type = session->master_session->rtp_session->type;
+  struct media_quality *q = &(session->master_session->quality);
 
   DPRINTF(E_INFO, L_AIRPLAY, "Setting up AirPlay session %u to %s\n", session->session_id, session->address);
 
@@ -3235,10 +3288,21 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
       goto error;
     }
 
-  if (rtp_type == RTP_BUFFERRED && session->buffer_size == 0)
+  if (rtp_type == RTP_BUFFERRED)
     {
-      DPRINTF(E_LOG, L_AIRPLAY, "Missing bufferSize number in reply from '%s'\n", session->devname);
-      goto error;
+      if (session->buffer_size == 0)
+        {
+    DPRINTF(E_LOG, L_AIRPLAY, "Missing bufferSize number in reply from '%s'\n", session->devname);
+    goto error;
+        }
+      if (session->buffer_size < (q->bits_per_sample / 8 * q->channels * AIRPLAY_BUFFERED_RTP_SAMPLES_PER_PACKET))
+        {
+    DPRINTF(E_LOG, L_AIRPLAY, "Device '%s' bufferSize of %u bytes is too small to handle %d samples per packet for quality %u/%u/%u\n",
+      session->devname, session->buffer_size, AIRPLAY_BUFFERED_RTP_SAMPLES_PER_PACKET, q->sample_rate, q->bits_per_sample, q->channels
+    );
+    DPRINTF(E_INFO, L_AIRPLAY, "Maximum samples per packet is %u\n", (uint32_t)(session->buffer_size / (q->bits_per_sample / 8 * q->channels)));
+    goto error;
+        }
     }
 
   session->server_fd = net_connect(session->address, session->data_port, (rtp_type == RTP_REALTIME) ? SOCK_DGRAM : SOCK_STREAM, "AirPlay data");
@@ -3249,8 +3313,9 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
       );
       goto error;
     }
-  DPRINTF(E_DBG, L_AIRPLAY, "Negotiated %s streaming session; ports d=%u c=%u e=%u\n", 
-    (rtp_type == RTP_REALTIME) ? "UDP" : "TCP", session->data_port, session->control_port, session->events_port
+  DPRINTF(E_DBG, L_AIRPLAY, "Negotiated %s streaming session; ports d=%u c=%u e=%u; buffer_size=%u\n", 
+    (rtp_type == RTP_REALTIME) ? "UDP" : "TCP", session->data_port, session->control_port, session->events_port,
+    session->buffer_size
   );
 
   session->state = AIRPLAY_STATE_SETUP;
@@ -3264,7 +3329,7 @@ response_handler_setup_stream(struct evrtsp_request *req, struct airplay_session
 }
 
 static enum airplay_seq_type
-response_handler_setrateanchorti(struct evrtsp_request *req, struct airplay_session *session)
+response_handler_setrateanchortime(struct evrtsp_request *req, struct airplay_session *session)
 {
   struct airplay_master_session *ams = session->master_session;
 
@@ -3800,11 +3865,12 @@ static struct airplay_seq_definition airplay_seq_definition[] =
   { AIRPLAY_SEQ_PAIR_VERIFY, session_pair_success, session_failure },
   { AIRPLAY_SEQ_PAIR_TRANSIENT, session_pair_success, session_failure },
   { AIRPLAY_SEQ_FEEDBACK, NULL, session_failure },
+  { AIRPLAY_SEQ_SYNC, session_status, session_failure },
 };
 
 // The size of the second array dimension MUST at least be the size of largest
 // sequence + 1, because then we can count on a zero terminator when iterating
-static struct airplay_seq_request airplay_seq_request[][8] =
+static struct airplay_seq_request airplay_seq_request[][7] =
 {
   {
     { AIRPLAY_SEQ_START, "GET /info", EVRTSP_REQ_GET, NULL, response_handler_info_start, NULL, "/info", false },
@@ -3819,7 +3885,6 @@ static struct airplay_seq_request airplay_seq_request[][8] =
     { AIRPLAY_SEQ_START_PLAYBACK, "RECORD", EVRTSP_REQ_RECORD, payload_make_record, response_handler_record, NULL, NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETPEERS", EVRTSP_REQ_SETPEERS, payload_make_setpeers, NULL, "/peer-list-changed", NULL, false },
     { AIRPLAY_SEQ_START_PLAYBACK, "SETUP (stream)", EVRTSP_REQ_SETUP, payload_make_setup_stream, response_handler_setup_stream, "application/x-apple-binary-plist", NULL, false },
-    { AIRPLAY_SEQ_START_PLAYBACK, "SETRATEANCHORTI", EVRTSP_REQ_SETRATEANCHORTI, payload_make_setrateanchorti, response_handler_setrateanchorti, "application/x-apple-binary-plist", NULL, false },
     // Some devices (e.g. Sonos Symfonisk) don't register the volume if it isn't last
     { AIRPLAY_SEQ_START_PLAYBACK, "SET_PARAMETER (volume)", EVRTSP_REQ_SET_PARAMETER, payload_make_set_volume, response_handler_volume_start, "text/parameters", NULL, true },
   },
@@ -3867,6 +3932,9 @@ static struct airplay_seq_request airplay_seq_request[][8] =
   },
   {
     { AIRPLAY_SEQ_FEEDBACK, "POST /feedback", EVRTSP_REQ_POST, NULL, NULL, NULL, "/feedback", true },
+  },
+  {
+    { AIRPLAY_SEQ_SYNC, "SETRATEANCHORTIME", EVRTSP_REQ_SETRATEANCHORTIME, payload_make_setrateanchortime, response_handler_setrateanchortime, "application/x-apple-binary-plist", NULL, false },
   },
 };
 
@@ -4414,7 +4482,15 @@ airplay_write(struct output_buffer *obuf)
 	  timestamp_set(ams, obuf->pts);
 
 	  // Sends sync packets to new sessions, and if it is sync time then also to old sessions
-	  packets_sync_send(ams);
+    if (ams->rtp_session->type == RTP_REALTIME)
+  	  packets_sync_send(ams);
+    else if (ams->rtp_session->type == RTP_BUFFERRED)
+      setrateanchortime(ams);
+    else
+      {
+  DPRINTF(E_WARN, L_AIRPLAY, "Unsupported RTP Session Type: %d\n", ams->rtp_session->type);
+  continue;
+      }
 
 	  // TODO avoid this copy
 	  evbuffer_add(ams->input_buffer, obuf->data[i].buffer, obuf->data[i].bufsize);
