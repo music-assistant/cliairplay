@@ -90,7 +90,7 @@ struct event_base *evbase_main;
 static struct event *sig_event;
 static int main_exit;
 ap2_device_info_t ap2_device_info;
-mass_named_pipes_t mass_named_pipes = {0, 0};
+mass_named_pipes_t mass_named_pipes = {"-", 0}; // force stdin only for audio input
 
 static inline void
 timespec_to_ntp(struct timespec *ts, struct ntp_timestamp *ns)
@@ -210,7 +210,6 @@ usage(char *program)
   printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
   printf("  --auth <auth_key>                 Authorization key.\n");
   printf("  --dacp_id <dacp_id>               DACP ID (hex string) for remote control callbacks.\n");
-  printf("  --pipe <audio_filename>           filename of named pipe to read streamed audio. - denotes stdin. Mandatory in absence of --ntp.\n");
   printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
   printf("  --ntp                             Print current NTP time and exit.\n");
   printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
@@ -510,7 +509,6 @@ main(int argc, char **argv)
 {
   int option;
   char *configfile = NULL; // default to no config file
-  bool metadata_pipe_defaulted = false;
   int loglevel = -1;
   char *logdomains = NULL;
   char *logfile = NULL;
@@ -560,6 +558,14 @@ main(int argc, char **argv)
 
   ap2_device_info.auth_key = (char *)NULL;
   ap2_device_info.password = (char *)NULL;
+
+  // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
+  ret = setvbuf(stderr, NULL, _IONBF, 0);
+  if (ret < 0) {
+    fprintf(stderr, "Error: Unable to set stderr to unbuffered. %s\n", strerror(errno));
+    fflush(stderr);
+    return EXIT_FAILURE;
+  }
 
   while ((option = getopt_long(argc, argv, "", option_map, NULL)) != -1) {
       switch (option) {
@@ -635,8 +641,7 @@ main(int argc, char **argv)
         return EXIT_SUCCESS;
         break;
 
-      case 513: // named pipe filename
-        mass_named_pipes.audio_pipe = optarg;
+      case 513: // named pipe filename - now obsolete. We use stdin only
         break;
 
       case 514: // command/metadata named pipe filename
@@ -685,10 +690,9 @@ main(int argc, char **argv)
       hostname == (char *)NULL ||
       address == (char*)NULL ||
       txt == (char*)NULL ||
-      mass_named_pipes.audio_pipe == (char*)NULL
+      mass_named_pipes.metadata_pipe == (char*)NULL
      ) {
       usage(argv[0]);
-      sleep(1); // Provide time for MA logging to capture exit reason
       return EXIT_FAILURE;
   }
   
@@ -702,17 +706,13 @@ main(int argc, char **argv)
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
     fprintf(stderr, "Could not initialize log facility\n");
-
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
   ret = conffile_load(configfile);
   if (ret != 0) {
     DPRINTF(E_FATAL, L_MAIN, "Config file errors; please fix your config\n");
-
     logger_deinit();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -727,32 +727,13 @@ main(int argc, char **argv)
   ret = logger_init(logfile, logdomains, loglevel, logformat);
   if (ret != 0) {
     fprintf(stderr, "Could not reinitialize log facility with config file settings\n");
-
     conffile_unload();
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
-  // Check that named pipes exist for audio streaming and metadata
-  ret = check_pipe(mass_named_pipes.audio_pipe);
-  if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
-    return EXIT_FAILURE;
-  }
-  if (!mass_named_pipes.metadata_pipe) {
-    // Adopt the default
-    metadata_pipe_defaulted = true;
-    ret = asprintf(&mass_named_pipes.metadata_pipe, "%s%s", 
-      mass_named_pipes.audio_pipe, METADATA_NAMED_PIPE_DEFAULT_SUFFIX
-    );
-    if (ret < 0) {
-      sleep(1); // Provide time for MA logging to capture exit reason
-      return EXIT_FAILURE;
-    }
-  }
+  // Check that named pipe exists for metadata/commands
   ret = check_pipe(mass_named_pipes.metadata_pipe);
   if (ret < 0) {
-    sleep(1); // Provide time for MA logging to capture exit reason
     return EXIT_FAILURE;
   }
 
@@ -960,14 +941,9 @@ main(int argc, char **argv)
  txt_fail:
   if (txt_kv) keyval_clear(txt_kv);
 
-  if (metadata_pipe_defaulted) {
-    free(mass_named_pipes.metadata_pipe);
-  }
-
   DPRINTF(E_INFO, L_MAIN, "Exiting.\n");
   conffile_unload();
   logger_deinit();
 
-  sleep(1); // Provide time for MA logging to capture exit reason
   return ret;
 }
