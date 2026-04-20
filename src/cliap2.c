@@ -215,6 +215,7 @@ usage(char *program)
   printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
   printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
   printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
+  printf("  --pairing_ms <pairing_ms>         Anticipated duration, in ms, of the time taken to pair with the AirPlay device and conduct the RTSP negotiation. Defaults to 2500\n");
   printf("  --password <password>             Device password.\n");
   printf("  -v, --version                     Display version information and exit\n");
   printf("\n\n");
@@ -496,8 +497,9 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   if (lag_ms < AIRPLAY2_CONNECT_TIME_MS) {
     // Give ourselves enough time to get connected and build our buffer
     int32_t extra_ms = AIRPLAY2_CONNECT_TIME_MS - lag_ms;
-    DPRINTF(E_LOG, L_MAIN, "ntpstart time too soon. Increase it by at least %" PRId32 " ms. Trying to start audio in %ld sec, %ld nsec\n", 
-      extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
+    DPRINTF(E_LOG, L_MAIN, 
+      "%s:ntpstart time too soon. Increase it by at least %" PRId32 " ms to prevent loss of audio. Trying to start audio in %ld sec, %ld nsec\n", 
+      __func__, extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
     );
     return -1;
   }
@@ -530,6 +532,7 @@ main(int argc, char **argv)
   uint64_t ntpstart = 0;
   int volume = 0;
   uint64_t latency_ms = 0;
+  uint64_t pairing_ms = 0;
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
@@ -552,12 +555,15 @@ main(int argc, char **argv)
     { "dacp_id",       1, NULL, 516 },
     { "latency",       1, NULL, 517 },
     { "password",      1, NULL, 518 },
+    { "pairing_ms",    1, NULL, 519 },
 
     { NULL,            0, NULL, 0   }
   };
 
   ap2_device_info.auth_key = (char *)NULL;
   ap2_device_info.password = (char *)NULL;
+  ap2_device_info.pairing_latency.tv_sec = 2;
+  ap2_device_info.pairing_latency.tv_nsec = 500e6;
 
   // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
   ret = setvbuf(stderr, NULL, _IONBF, 0);
@@ -675,6 +681,17 @@ main(int argc, char **argv)
       case 518: // device password
         ap2_device_info.password = strdup(optarg);
         break;
+      
+      case 519: // pairing milliseconds
+        ret = safe_atou64(optarg, &pairing_ms);
+        if (ret < 0) {
+          fprintf(stderr, "Error: pairing_ms must be an integer in '--pairing_ms %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        ap2_device_info.pairing_latency.tv_sec = (time_t)(pairing_ms / 1000);
+        ap2_device_info.pairing_latency.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
+        break;
+        
 
       default:
       case '?':
@@ -748,11 +765,7 @@ main(int argc, char **argv)
   }
   ap2_device_info.txt = txt_kv;
 
-  if (get_start_ts(&ap2_device_info.start_ts, ntpstart) < 0) {
-    DPRINTF(E_WARN, L_MAIN, "Unable to obtain feasible playback start time. Ignoring ntpstart argument\n");
-    ap2_device_info.start_ts.tv_sec = 0;
-    ap2_device_info.start_ts.tv_nsec = 0;
-  }
+  get_start_ts(&ap2_device_info.start_ts, ntpstart);
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
