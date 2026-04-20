@@ -16,6 +16,7 @@ typedef struct ap2_device_info
   int volume;
   uint64_t latency_ms; // output buffer duration, inclusive of DAC latency
   char *password; // unencryptd device password
+  struct timespec pairing_latency; // anticipated duration of the RTSP pairing & session establishment process
 } ap2_device_info_t;
 
 typedef struct mass_named_pipes
