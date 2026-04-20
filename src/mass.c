@@ -1692,6 +1692,12 @@ play(struct input_source *source)
 
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
+
+  // If we have defined a playback commencement time, then check to see if it can be
+  // adhered to. If not, then ignore audio samples that are too early to play on time
+  // NOTE: There are limits to our capability of how much audio we can ignore. The limit is
+  // governed by the amount of data we read to prime the input buffer, because after we have primed
+  // the input buffer, we read data effectively at the rate of playback.
   if (read_count == 1 && ap2_device_info.start_ts.tv_sec != 0) {
     get_output_buffer_ts(&latency);
     ret = clock_gettime(CLOCK_MONOTONIC,&now);
@@ -1699,23 +1705,10 @@ play(struct input_source *source)
       DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining now timespec. %s\n", __func__, strerror(errno));
       return -1;
     }
-    DPRINTF(E_DBG, L_FIFO, "%s:latency = %ld.%09ld, now = %ld.%09ld\n", __func__,
-      latency.tv_sec, latency.tv_nsec,
-      now.tv_sec, now.tv_nsec
-    );
     earliest_possible_packet_ts = timespec_add(now, latency);
-    DPRINTF(E_DBG, L_FIFO, "%s:earliest_possible_packet_ts = %ld.%09ld, pairing_latency = %ld.%09ld\n", __func__,
-      earliest_possible_packet_ts.tv_sec, earliest_possible_packet_ts.tv_nsec,
-      ap2_device_info.pairing_latency.tv_sec, ap2_device_info.pairing_latency.tv_nsec
-    );
     earliest_possible_packet_ts = timespec_add(earliest_possible_packet_ts, ap2_device_info.pairing_latency);
-    DPRINTF(E_DBG, L_FIFO, "%s:earliest_possible_packet_ts=%ld.%09ld, start_ts=%ld.%09ld\n", __func__,
-      earliest_possible_packet_ts.tv_sec, earliest_possible_packet_ts.tv_nsec,
-      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec
-    );
     if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) > 0) {
-      DPRINTF(E_WARN, L_FIFO, "%s:Audio data received too late to play on time.\n", __func__);
-      // Remove some packets from the buffer
+      // Determine how much data we need to ignore
       uint64_t samples_to_remove = 0;
       uint64_t nsec_to_remove = 0;
       struct timespec duration_to_remove = timespec_sub(earliest_possible_packet_ts, ap2_device_info.start_ts);
@@ -1725,19 +1718,17 @@ play(struct input_source *source)
       nsec_to_remove = duration_to_remove.tv_sec * 1e9 + duration_to_remove.tv_nsec;
       samples_to_remove = source->quality.sample_rate * nsec_to_remove / 1e9;
       bytes_to_remove = (size_t)STOB(samples_to_remove, source->quality.bits_per_sample, source->quality.channels);
-      DPRINTF(E_DBG, L_FIFO, "%s:nsec_to_remove=%" PRIu64 ", samples_to_remove=%" PRIu64 ", bytes_to_remove=%" PRIu64 "\n",
+      DPRINTF(E_WARN, L_FIFO, 
+        "%s:Audio data received too late to play on time. Attempting to ignore %" PRIu64 " nsecs, %" PRIu64 " samples, %" PRIu64 " bytes\n",
         __func__, nsec_to_remove, samples_to_remove, bytes_to_remove
       );
     }
   }
 
   if (bytes_to_remove > bytes_removed) {
-    // We have audio data that is too early to be played on time and need to remove it
+    // We have audio data that is too early to be played on time and need to ignore it
     size_t buflen = evbuffer_get_length(source->evbuf);
     if ((bytes_to_remove - bytes_removed) > buflen) {
-      DPRINTF(E_SPAM, L_FIFO, "%s:Not enough bytes in the source evbuffer (%" PRIu64") to remove %" PRIu64" bytes.\n",
-        __func__, evbuffer_get_length(source->evbuf), (bytes_to_remove - bytes_removed)
-      );
       if (evbuffer_drain(source->evbuf, buflen) < 0) {
         DPRINTF(E_LOG, L_FIFO, "%s:Error draining %" PRIu64 " bytes from source evbuffer. %s\n",
           __func__, buflen, strerror(errno)
@@ -1770,10 +1761,6 @@ play(struct input_source *source)
 
   if (written == false && ap2_device_info.start_ts.tv_sec != 0) {
     // We want to control the time of playback of the first audio packet
-    DPRINTF(E_DBG, L_FIFO, "%s:INPUT_FLAG_SYNC set for timespec %ld.%09ld. Now is %ld.%09ld\n",
-      __func__, ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec,
-      now.tv_sec,  now.tv_nsec
-    );
     flags |= INPUT_FLAG_SYNC;
   }
 
