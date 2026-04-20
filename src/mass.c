@@ -1203,7 +1203,7 @@ mass_timer_cb(int fd, short what, void *arg)
     if (!player_started) {
       player_started = true;
     }
-    DPRINTF(E_DBG, L_FIFO, 
+    DPRINTF(E_SPAM, L_FIFO, 
       "%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
       __func__, status.volume, play_status_str(status.status), status.pos_ms
     );
@@ -1230,11 +1230,11 @@ mass_timer_cb(int fd, short what, void *arg)
     }
   }
   else if (player_started && status.status == PLAY_STOPPED) {
-    DPRINTF(E_DBG, L_FIFO, "%s:Time to exit gracefully\n", __func__);
+    DPRINTF(E_SPAM, L_FIFO, "%s:Time to exit gracefully\n", __func__);
     exit(0);
   }
   else { // this state can happen when audio has not yet been received on the named pipe
-    DPRINTF(E_DBG, L_FIFO, "%s:Player %sstarted. status:%s\n", __func__,
+    DPRINTF(E_SPAM, L_FIFO, "%s:Player %sstarted. status:%s\n", __func__,
       player_started ? "" : "not ", play_status_str(status.status)
     );
     // reset all
