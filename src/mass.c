@@ -1539,13 +1539,11 @@ command_pipe_thread_stop(void)
  * Input definition callback function to setup the mass (Music Assistant) module.
  * Called by the input module.
  * 
- * @note
- * We read raw audio data either from stdin. If the raw audio data
- * does not need demuxing, then it is passed directly to the input module as is. 24-bit
- * quality requires demuxing to get the data into the correct sample format of s32.
- * 
- * @param source  Input source to be setup
+ * @param [inout] source  Input source to be setup
  * @returns 0 on success, -1 on failure
+ * @note  An attempt is made to prime the source evbuffer with up to PRIMED_AUDIO_DURATION
+ *        seconds of audio. Some, or all, of this primed audio data may be subsequently ignored
+ *        by the play() function if it is too late to meet playback start time requirement.
  */
 static int
 setup(struct input_source *source)
@@ -1597,8 +1595,9 @@ setup(struct input_source *source)
 
 /**
  * Input definition callback function called when input is stopped.
- * @param source  Input source to stop
+ * @param [inout] source  Input source to stop
  * @returns 0
+ * @note Housekeeping duties are perfomed to free allocated memory items.
  */
 static int
 stop(struct input_source *source)
@@ -1624,10 +1623,13 @@ stop(struct input_source *source)
  * @param source  The input source to obtain audio data for
  * @returns 0 on success, -1 on failure
  * @note  We check (inside a mutex lock) if the player is paused, and if not, then we 
- *        read up to PIPE_READ_MAX bytes from the audio named pipe event buffer and
+ *        read up to PIPE_READ_MAX bytes from the audio input file descriptor and
  *        pass this to the input module.
  *        If the player is paused or there is no data to read, we wait for a period by 
  *        calling input_wait() and return.
+ *        If the audio received is to late to meet playback timing requirements, it is
+ *        ignored. However, there are limits to the duration of audio that can be ignored.
+ *        The limit depends upon how much audio is read during setup() as primed audio data.
  * 
  */
 static int
@@ -1800,8 +1802,8 @@ metadata_get(struct input_metadata *metadata, struct input_source *source)
 /**
  * Input definition callback function to obtain timespec for playback of first audio packet
  * in the data chunk passed to input
- * @param metadata  Pointer to the timespec structure
- * @param source    The input source to obtain timespec for
+ * @param [out] ts  Playback start time
+ * @param [in] source    The input source to obtain timespec for
  * @returns 0
  */
 static int
