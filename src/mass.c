@@ -1576,7 +1576,7 @@ setup(struct input_source *source)
                      source->quality.bits_per_sample / 8 * 
                      source->quality.channels;
 
-  // Read up to 4 seconds of audio data to prime the input evbuffer if its available
+  // Read PRIMED_AUDIO_DURATION seconds of audio data to prime the input evbuffer if its available
   ret = evbuffer_read(source->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
   while (ret > 0 && primed_bytes < max_primed_bytes) {
     primed_bytes += ret;
