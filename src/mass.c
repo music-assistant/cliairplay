@@ -94,9 +94,7 @@
 #define MASS_METADATA_PIN_KEY      "PIN"
 
 #define STDIN_FILENAME  "-"
-#define PRIMED_AUDIO_DURATION 4 // Maximum seconds of raw audio to read into input buffer at setup
-
-// #define DEBUG_MASS 1
+#define PRIMED_AUDIO_DURATION_MS 4500 // Maximum milliseconds of raw audio to read into input buffer at setup
 
 /* from cliap2.c */
 extern ap2_device_info_t ap2_device_info;
@@ -219,28 +217,6 @@ static struct pipe_metadata pipe_metadata;
 
 /* -------------------------------- HELPERS --------------------------------- */
 
-/**
- * Obtain the output buffer duration as a timespec
- * @param ts  Pointer to a timespec structure where the output buffer duration will be returned
- * @returns   void
- * @note      Output buffer duration includes the inherent DAC latency of the output device. 
- *            This is typically 250ms or 11025 frames at 44100 sample rate 
- */
-static void
-get_output_buffer_ts(struct timespec *ts)
-{
-  uint64_t buffer_duration_ms;
-
-  buffer_duration_ms = cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms");
-  DPRINTF(E_DBG, L_MAIN, "%s:buffer_duration_ms: %" PRIu64 " ms\n", __func__, buffer_duration_ms);
-
-  ts->tv_sec = (time_t)(buffer_duration_ms / 1000);
-  ts->tv_nsec = (long)((buffer_duration_ms % 1000) * 1000 * 1000);
-  DPRINTF(E_DBG, L_MAIN, "%s:Output buffer duration is %ld sec, %ld nsec\n", __func__, ts->tv_sec, ts->tv_nsec);
-
-  return;
-}
-
 /** Player status is human readable format
  *
  * @param  status  the player status
@@ -307,11 +283,8 @@ pipe_open(const char *path, bool silent)
 
   // Handle stdin special case
   if (strcmp(path, STDIN_FILENAME) == 0) {
-    DPRINTF(E_INFO, L_FIFO, "Using stdin for audio input\n");
     return STDIN_FILENO;
   }
-
-  DPRINTF(E_SPAM, L_FIFO, "(Re)opening pipe: '%s'\n", path);
 
   fd = open(path, O_RDONLY | O_NONBLOCK);
   if (fd < 0) {
@@ -369,20 +342,15 @@ is_stdin(const char *path)
 static int
 watch_add(struct pipe *pipe, struct event_base *evbase)
 {
-  int ret;
-
   pipe->fd = pipe_open(pipe->path, 0);
   if (pipe->fd < 0)
     return -1;
-
-  DPRINTF(E_DBG, L_FIFO, "%s: Opened pipe '%s' with fd %d\n", __func__, pipe->path, pipe->fd);
 
   // For stdin, don't use libevent - stdin is always "ready" which causes
   // the callback to fire continuously. Instead, just return success and
   // let the caller start playback directly.
   if (is_stdin(pipe->path))
     {
-      DPRINTF(E_INFO, L_FIFO, "%s: Using stdin - skipping libevent watch\n", __func__);
       pipe->ev = NULL;
       return 0;
     }
@@ -395,10 +363,7 @@ watch_add(struct pipe *pipe, struct event_base *evbase)
       return -1;
     }
 
-  ret = event_add(pipe->ev, NULL);
-  DPRINTF(E_DBG, L_FIFO, "%s: event_add returned %d for pipe '%s'\n", __func__, ret, pipe->path);
-
-  return 0;
+  return event_add(pipe->ev, NULL);
 }
 
 /** Delete the read event for the pipe and close the pipe
@@ -997,7 +962,6 @@ pipe_watch_update(void *arg, int *retval)
       if (!pipelist_find(pipe_watch_list, pipe->id))
 	{
 	  int ret = watch_add(pipe, evbase_audio_pipe);
-	  DPRINTF(E_DBG, L_FIFO, "pipe_watch_update: watch_add for '%s' returned %d\n", pipe->path, ret);
 	  if (ret == 0)
 	    {
 	      pipelist_add(&pipe_watch_list, pipe); // Changes pipe->next
@@ -1005,24 +969,23 @@ pipe_watch_update(void *arg, int *retval)
 	      // For named pipes, manually trigger the read callback to check for already-buffered data
 	      if (pipe->ev)
 	        {
-	          DPRINTF(E_DBG, L_FIFO, "pipe_watch_update: Manually triggering pipe_read_cb for '%s'\n", pipe->path);
+	          DPRINTF(E_DBG, L_FIFO, "%s: Manually triggering pipe_read_cb for '%s'\n", __func__, pipe->path);
 	          event_active(pipe->ev, EV_READ, 0);
 	        }
 	      else if (is_stdin(pipe->path))
 	        {
 	          // For stdin, start playback immediately - no libevent watch needed
-	          DPRINTF(E_INFO, L_FIFO, "pipe_watch_update: Starting playback for stdin\n");
 	          pipe_id = pipe->id;
 	          player_playback_stop();
 	          ret = player_playback_start_byid(pipe->id);
 	          if (ret < 0)
-	            DPRINTF(E_LOG, L_FIFO, "pipe_watch_update: Failed to start playback for stdin\n");
+	            DPRINTF(E_LOG, L_FIFO, "%s: Failed to start playback for stdin\n", __func__);
 	          else
-	            DPRINTF(E_INFO, L_FIFO, "restarting w/o pause\n");
+	            DPRINTF(E_INFO, L_FIFO, "%s: restarting w/o pause\n", __func__);
 	        }
 	    }
 	  else
-	    DPRINTF(E_LOG, L_FIFO, "pipe_watch_update: Failed to watch pipe '%s'\n", pipe->path);
+	    DPRINTF(E_LOG, L_FIFO, "%s: Failed to watch pipe '%s'\n", __func__, pipe->path);
 	}
       else
 	{
@@ -1045,7 +1008,6 @@ pipe_thread_run(void *arg)
 
   thread_setname("mass_aud");
   thread_getnametid(my_thread, sizeof(my_thread));
-  DPRINTF(E_DBG, L_FIFO, "%s:About to launch pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_audio_pipe);
 
   pthread_exit(NULL);
@@ -1063,8 +1025,6 @@ pipe_thread_run(void *arg)
 static void
 pipe_thread_start(void)
 {
-  DPRINTF(E_DBG, L_FIFO, "%s\n", __func__);
-
 #ifdef __APPLE__
   // On macOS, avoid kqueue for FIFO monitoring - it has issues detecting writes from other processes
   struct event_config *cfg;
@@ -1100,8 +1060,6 @@ pipe_thread_stop(void)
 {
   int ret;
 
-  DPRINTF(E_DBG, L_FIFO, "%s\n", __func__);
-
   if (!tid_audio_pipe)
     return;
 
@@ -1131,7 +1089,6 @@ pipelist_create(void)
   struct pipe *head;
   struct pipe *pipe;
 
-  DPRINTF(E_DBG, L_FIFO, "%s:Adding %s to the pipelist\n", __func__, mass_named_pipes.audio_pipe);
   head = NULL;
   pipe = pipe_create(mass_named_pipes.audio_pipe, 1, PIPE_PCM, pipe_read_cb);
   pipelist_add(&head, pipe);
@@ -1506,7 +1463,6 @@ command_pipe_thread_run(void *arg)
   // Create a persistent event timer to monitor and report playback status for logging and debugging purposes
   mass_timer_event = event_new(evbase_command_pipe, -1, EV_PERSIST | EV_TIMEOUT, mass_timer_cb, NULL);
   evtimer_add(mass_timer_event, &mass_tv);
-  DPRINTF(E_DBG, L_FIFO, "%s:About to launch command pipe event loop in thread %s\n", __func__, my_thread);
   event_base_dispatch(evbase_command_pipe);
 
   pthread_exit(NULL);
@@ -1568,11 +1524,9 @@ setup(struct input_source *source)
   source->quality.bits_per_sample = pipe_bits_per_sample;
   source->quality.channels = 2;
 
-  // PRIMED_AUDIO_DURATION seconds of raw audio
-  max_primed_bytes = PRIMED_AUDIO_DURATION * 
-                     source->quality.sample_rate * 
-                     source->quality.bits_per_sample / 8 * 
-                     source->quality.channels;
+  // PRIMED_AUDIO_DURATION_MS milliseconds of raw audio
+  max_primed_bytes = PRIMED_AUDIO_DURATION_MS * 
+    STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels) / 1000;
 
   // Read PRIMED_AUDIO_DURATION seconds of audio data to prime the input evbuffer if its available
   ret = evbuffer_read(source->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
@@ -1585,8 +1539,9 @@ setup(struct input_source *source)
     return -1;
   }
   if (primed_bytes > 0) {
-    DPRINTF(E_DBG, L_FIFO, "%s:Read %" PRIu64 "/%" PRIu64 " bytes to prime the input evbuffer.\n",
-      __func__, primed_bytes, max_primed_bytes
+    DPRINTF(E_DBG, L_FIFO, "%s:Read %zu bytes (%.3f secs) to prime the input evbuffer.\n",
+      __func__, primed_bytes, 
+      (double) primed_bytes / (double) (STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels))
     );
   }
 
@@ -1637,17 +1592,16 @@ play(struct input_source *source)
 {
   struct mass_ctx *ctx = source->input_ctx;
   short flags;
-  int ret;
-  struct timespec latency;
-  static struct timespec now;
-  static struct timespec earliest_possible_packet_ts;
-  static size_t read_count = 0;
-  static size_t bytes_to_remove = 0;
-  static size_t bytes_removed = 0;
-  static bool written = false;
-#ifdef DEBUG_MASS
-  static size_t read_bytes = 0;
-#endif
+  int ret, bytes_read;
+  struct timespec output_buffer_latency; // combination of player output buffer and the inherence DAC latency of device
+  static struct timespec now; // Initial now timespec when play() is first called
+  static struct timespec earliest_possible_packet_ts; // Our estimate of the earlist possible time we can commence playback
+  static size_t read_count = 0; // Count of read calls made
+  static size_t bytes_to_remove = 0; // for when requested playback is too soon to adhere to
+  static size_t bytes_removed = 0; // count of bytes removed to adhere to playback commencement time
+  static size_t bytes_to_add = 0; // for when we have the luxury of being too early for playback commencement time
+  static bool written = false; // boolean indicator of if we have written any data to the input module
+  static size_t bytes_added = 0; // count of bytes added if we have luxury of headroom before playback commencement time
 
   pthread_mutex_lock(&audio_command_lock);
   if (pause_flag) {
@@ -1664,18 +1618,18 @@ play(struct input_source *source)
   }
   pthread_mutex_unlock(&audio_command_lock);
 
-  ret = evbuffer_read(source->evbuf, ctx->pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
-  if (ret == 0) {
+  bytes_read = evbuffer_read(source->evbuf, ctx->pipe->fd, PIPE_READ_MAX); // read from the audio named pipe
+  if (bytes_read == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
     stop(source);
     DPRINTF(E_INFO, L_FIFO, "%s:end of stream reached\n", __func__);
     return -1;
   }
-  else if ((ret < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
+  else if ((bytes_read < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
     input_wait();
     return 0; // Loop
   }
-  else if (ret < 0) {
+  else if (bytes_read < 0) {
     DPRINTF(E_LOG, L_FIFO, "Could not read from pipe '%s' with fd %d: %s\n", source->path, ctx->pipe->fd, strerror(errno));
     input_write(NULL, NULL, INPUT_FLAG_ERROR);
     stop(source);
@@ -1688,9 +1642,6 @@ play(struct input_source *source)
   }
 
   read_count++;
-#ifdef DEBUG_MASS
-  read_bytes += ret;
-#endif
 
   flags = (pipe_metadata.is_new ? INPUT_FLAG_METADATA : 0);
   pipe_metadata.is_new = 0;
@@ -1701,74 +1652,93 @@ play(struct input_source *source)
   // governed by the amount of data we read to prime the input buffer, because after we have primed
   // the input buffer, we read data effectively at the rate of playback.
   if (read_count == 1 && ap2_device_info.start_ts.tv_sec != 0) {
-    get_output_buffer_ts(&latency);
+    get_output_buffer_ts(&output_buffer_latency);
     ret = clock_gettime(CLOCK_MONOTONIC,&now);
     if (ret < 0) {
       DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining now timespec. %s\n", __func__, strerror(errno));
       return -1;
     }
-    earliest_possible_packet_ts = timespec_add(now, latency);
+    earliest_possible_packet_ts = timespec_add(now, output_buffer_latency);
     earliest_possible_packet_ts = timespec_add(earliest_possible_packet_ts, ap2_device_info.pairing_latency);
     if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) > 0) {
       // Determine how much data we need to ignore
       uint64_t samples_to_remove = 0;
       uint64_t nsec_to_remove = 0;
       struct timespec duration_to_remove = timespec_sub(earliest_possible_packet_ts, ap2_device_info.start_ts);
-      DPRINTF(E_DBG, L_FIFO, "%s:duration_to_remove=%ld.%09ld\n", __func__,
-        duration_to_remove.tv_sec, duration_to_remove.tv_nsec
-      );
       nsec_to_remove = duration_to_remove.tv_sec * 1e9 + duration_to_remove.tv_nsec;
       samples_to_remove = source->quality.sample_rate * nsec_to_remove / 1e9;
       bytes_to_remove = (size_t)STOB(samples_to_remove, source->quality.bits_per_sample, source->quality.channels);
       DPRINTF(E_WARN, L_FIFO, 
-        "%s:Audio data received too late to play on time. Attempting to ignore %" PRIu64 " nsecs, %" PRIu64 " samples, %" PRIu64 " bytes\n",
-        __func__, nsec_to_remove, samples_to_remove, bytes_to_remove
+        "%s:Audio data received too late to play on time. Attempting to ignore %ld.%.9ld secs, %" PRIu64 " samples, %zu bytes\n",
+        __func__, duration_to_remove.tv_sec, duration_to_remove.tv_nsec, samples_to_remove, bytes_to_remove
+      );
+    }
+    else if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) < 0) {
+      // We might have spare time before playback required. If we are using realtime RTP
+      // then we can't send the audio too early, else we risk non-adherence to the start_ts or
+      // no audio, so we can use the excess time to keep building the source evbuffer
+      struct timespec early_ts; // timespec for how early we are
+      early_ts = timespec_sub(ap2_device_info.start_ts, earliest_possible_packet_ts);
+      bytes_to_add = early_ts.tv_sec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels);
+      bytes_to_add += early_ts.tv_nsec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels) / 1e9;
+      DPRINTF(E_DBG, L_FIFO, "%s:We have early headroom of %ld.%.9ld seconds, equating to %zu bytes.\n", __func__,
+        early_ts.tv_sec, early_ts.tv_nsec, bytes_to_add
       );
     }
   }
 
-  if (bytes_to_remove > bytes_removed) {
-    // We have audio data that is too early to be played on time and need to ignore it
-    size_t buflen = evbuffer_get_length(source->evbuf);
-    if ((bytes_to_remove - bytes_removed) > buflen) {
-      if (evbuffer_drain(source->evbuf, buflen) < 0) {
-        DPRINTF(E_LOG, L_FIFO, "%s:Error draining %" PRIu64 " bytes from source evbuffer. %s\n",
-          __func__, buflen, strerror(errno)
-        );
-        return -1;
-      }
-      bytes_removed += buflen;
-      return 0; // We have no data to write yet, so return
-    }
-    else {
-      if (evbuffer_drain(source->evbuf, bytes_to_remove - bytes_removed) < 0) {
-        DPRINTF(E_LOG, L_FIFO, "%s:Error draining %" PRIu64 " bytes from source evbuffer. %s\n",
-          __func__, bytes_to_remove - bytes_removed, strerror(errno)
-        );
-        return -1;
-      }
-      bytes_removed += (bytes_to_remove - bytes_removed);
-      if (evbuffer_get_length(source->evbuf) == 0) {
-        // bytes_to_remove was exactly the bytes in the evbuffer, so it is now empty
-        return 0;
-      }
-    }
-    DPRINTF(E_DBG, L_FIFO, "%s:bytes_removed=%" PRIu64 ", bytes_to_remove = %" PRIu64 "\n",
-      __func__, bytes_removed, bytes_to_remove
+  if (written == false) {
+    DPRINTF(E_SPAM, L_FIFO, 
+      "%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu, bytes_to_add:%zu, bytes_added:%zu, "
+      "evbuffer: length:%zu, duration:%.3f\n",
+      __func__, bytes_read, bytes_to_remove, bytes_removed, bytes_to_add, bytes_added, evbuffer_get_length(source->evbuf),
+      (double)evbuffer_get_length(source->evbuf) / (double)STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels)
     );
+    if (bytes_to_remove > 0 && bytes_to_remove > bytes_removed) {
+      // We have audio data that is too early to be played on time and need to ignore it
+      size_t buflen = evbuffer_get_length(source->evbuf);
+      if ((bytes_to_remove - bytes_removed) > buflen) {
+        if (evbuffer_drain(source->evbuf, buflen) < 0) {
+          DPRINTF(E_LOG, L_FIFO, "%s:Error draining %zu bytes from source evbuffer. %s\n",
+            __func__, buflen, strerror(errno)
+          );
+          return -1;
+        }
+        bytes_removed += buflen;
+        return 0; // We have no data to write yet, so return
+      }
+      else {
+        if (evbuffer_drain(source->evbuf, bytes_to_remove - bytes_removed) < 0) {
+          DPRINTF(E_LOG, L_FIFO, "%s:Error draining %zu bytes from source evbuffer. %s\n",
+            __func__, bytes_to_remove - bytes_removed, strerror(errno)
+          );
+          return -1;
+        }
+        bytes_removed += (bytes_to_remove - bytes_removed);
+        if (evbuffer_get_length(source->evbuf) == 0) {
+          // bytes_to_remove was exactly the bytes in the evbuffer, so it is now empty
+          return 0;
+        }
+      }
+      DPRINTF(E_DBG, L_FIFO, "%s:bytes_removed=%zu, bytes_to_remove = %zu\n",
+        __func__, bytes_removed, bytes_to_remove
+      );
 
-    // Finally, adjust the start time to reflect actual audio we now have
-    ap2_device_info.start_ts = earliest_possible_packet_ts;
+      // Finally, adjust the start time to reflect actual audio we now have
+      ap2_device_info.start_ts = earliest_possible_packet_ts;
+    }
+    else if (bytes_to_add > 0 && bytes_to_add > bytes_added) {
+      // We have luxury of being too early for playback. Call input_wait() to use some time and then return
+      bytes_added += bytes_read;
+      input_wait();
+      return 0;
+    }
+
+    if (ap2_device_info.start_ts.tv_sec != 0) {
+      // We want to control the time of playback of the first audio packet
+      flags |= INPUT_FLAG_SYNC;
+    }
   }
-
-  if (written == false && ap2_device_info.start_ts.tv_sec != 0) {
-    // We want to control the time of playback of the first audio packet
-    flags |= INPUT_FLAG_SYNC;
-  }
-
-#ifdef DEBUG_MASS
-  DPRINTF(E_DBG, L_FIFO, "%s:chunk_size:%d read_count:%zu total readbytes:%zu to input\n", __func__, ret, read_count, read_bytes);
-#endif
   input_write(source->evbuf, &source->quality, flags);
   written = true;
 
@@ -1841,7 +1811,6 @@ command_pipe_init(void)
 static void
 command_pipe_deinit()
 {
-  DPRINTF(E_DBG, L_FIFO, "%s\n", __func__);
   command_pipe_thread_stop();
 }
 
@@ -1890,7 +1859,6 @@ mass_init(void)
 void
 mass_deinit(void)
 {
-  DPRINTF(E_DBG, L_FIFO, "%s\n", __func__);
   command_pipe_deinit();
 
   listener_remove(pipe_listener_cb);

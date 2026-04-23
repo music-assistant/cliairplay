@@ -215,7 +215,7 @@ usage(char *program)
   printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
   printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
   printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
-  printf("  --pairing_ms <pairing_ms>         Anticipated duration, in ms, of the time taken to pair with the AirPlay device and conduct the RTSP negotiation. Defaults to 2500\n");
+  printf("  --pairing_latency <ms>            Anticipated duration, in ms, of the time taken to pair with the AirPlay device and negotiate session. Defaults to 2500\n");
   printf("  --password <password>             Device password.\n");
   printf("  -v, --version                     Display version information and exit\n");
   printf("\n\n");
@@ -402,7 +402,7 @@ int check_pipe(const char *pipe_path)
   if (stat(pipe_path, &st) == 0) {
       // File exists, now check if it's a FIFO (named pipe)
       if (S_ISFIFO(st.st_mode)) {
-          DPRINTF(E_INFO, L_MAIN, "%s:Using existing pipe '%s'\n", __func__, pipe_path);
+          DPRINTF(E_SPAM, L_MAIN, "%s:Using existing pipe '%s'\n", __func__, pipe_path);
           return 0;
       }
       else {
@@ -414,7 +414,7 @@ int check_pipe(const char *pipe_path)
       // File does not exist - create the pipe
       if (errno == ENOENT) {
           if (mkfifo(pipe_path, 0666) == 0) {
-              DPRINTF(E_INFO, L_MAIN, "%s:Created pipe '%s'\n", __func__, pipe_path);
+              DPRINTF(E_SPAM, L_MAIN, "%s:Created pipe '%s'\n", __func__, pipe_path);
               return 0;
           }
           DPRINTF(E_FATAL, L_MAIN, "%s:Failed to create pipe '%s': %s\n", __func__, pipe_path, strerror(errno));
@@ -431,22 +431,20 @@ int check_pipe(const char *pipe_path)
 
 /**
  * Obtain the output buffer duration as a timespec
- * @param ts  Pointer to a timespec structure where the output buffer duration will be returned
+ * @param [out] ts  Pointer to a timespec structure where the output buffer duration will be returned
  * @returns   void
  * @note      Output buffer duration includes the inherent DAC latency of the output device. 
  *            This is typically 250ms or 11025 frames at 44100 sample rate 
  */
-static void
+void
 get_output_buffer_ts(struct timespec *ts)
 {
   uint64_t buffer_duration_ms;
 
   buffer_duration_ms = cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms");
-  DPRINTF(E_DBG, L_MAIN, "%s:buffer_duration_ms: %" PRIu64 " ms\n", __func__, buffer_duration_ms);
 
   ts->tv_sec = (time_t)(buffer_duration_ms / 1000);
   ts->tv_nsec = (long)((buffer_duration_ms % 1000) * 1000 * 1000);
-  DPRINTF(E_DBG, L_MAIN, "%s:Output buffer duration is %ld sec, %ld nsec\n", __func__, ts->tv_sec, ts->tv_nsec);
 
   return;
 }
@@ -467,6 +465,7 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   struct timespec lag_ts;         // lag between now and start time
   struct timespec latency_ts;     // output buffer duration, inclusive of DAC latency
   int32_t lag_ms;                 // lag in milliseconds between now and start time
+  int32_t pairing_latency_ms = ap2_device_info.pairing_latency.tv_sec + (ap2_device_info.pairing_latency.tv_nsec / 1e6);
   int ret;
 
   ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
@@ -491,15 +490,15 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   timespec_subtract(ts, ts, &latency_ts);
   timespec_to_ntp(ts, &start_ns);
   timespec_subtract(&lag_ts, ts, &now_ts);
-  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld sec, %ld nsec\n", lag_ts.tv_sec, lag_ts.tv_nsec);
+  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld.%.9ld secs.\n", lag_ts.tv_sec, lag_ts.tv_nsec);
 
   lag_ms = (int32_t)(lag_ts.tv_sec * 1000) + (int32_t)(lag_ts.tv_nsec / 1e6);
-  if (lag_ms < AIRPLAY2_CONNECT_TIME_MS) {
+  if (lag_ms < pairing_latency_ms) {
     // Give ourselves enough time to get connected and build our buffer
-    int32_t extra_ms = AIRPLAY2_CONNECT_TIME_MS - lag_ms;
-    DPRINTF(E_LOG, L_MAIN, 
-      "%s:ntpstart time too soon. Increase it by at least %" PRId32 " ms to prevent loss of audio. Trying to start audio in %ld sec, %ld nsec\n", 
-      __func__, extra_ms, lag_ts.tv_sec, lag_ts.tv_nsec
+    int32_t extra_ms = pairing_latency_ms - lag_ms;
+    DPRINTF(E_WARN, L_MAIN, 
+      "%s:ntpstart time too soon. Adjust pairing_latency to align with device or increase ntpstart by at least %" PRId32
+      " ms to prevent loss of audio.\n", __func__, extra_ms
     );
     return -1;
   }
@@ -536,26 +535,26 @@ main(int argc, char **argv)
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
-    { "loglevel",      1, NULL, 500 },
-    { "logfile",       1, NULL, 501 },
-    { "config",        1, NULL, 502 },
-    { "name",          1, NULL, 503 },
-    { "hostname",      1, NULL, 504 },
-    { "address",       1, NULL, 505 },
-    { "port",          1, NULL, 506 },
-    { "txt",           1, NULL, 507 },
-    { "ntp",           0, NULL, 508 },
-    { "ntpstart",      1, NULL, 509 },
-    { "volume",        1, NULL, 510 },
-    { "version",       0, NULL, 511 },
-    { "testrun",       0, NULL, 512 }, // Used for CI, not documented to user
-    { "pipe",          1, NULL, 513 },
-    { "command_pipe",  1, NULL, 514 },
-    { "auth",          1, NULL, 515 },
-    { "dacp_id",       1, NULL, 516 },
-    { "latency",       1, NULL, 517 },
-    { "password",      1, NULL, 518 },
-    { "pairing_ms",    1, NULL, 519 },
+    { "loglevel",       1, NULL, 500 },
+    { "logfile",        1, NULL, 501 },
+    { "config",         1, NULL, 502 },
+    { "name",           1, NULL, 503 },
+    { "hostname",       1, NULL, 504 },
+    { "address",        1, NULL, 505 },
+    { "port",           1, NULL, 506 },
+    { "txt",            1, NULL, 507 },
+    { "ntp",            0, NULL, 508 },
+    { "ntpstart",       1, NULL, 509 },
+    { "volume",         1, NULL, 510 },
+    { "version",        0, NULL, 511 },
+    { "testrun",        0, NULL, 512 }, // Used for CI, not documented to user
+    { "pipe",           1, NULL, 513 },
+    { "command_pipe",   1, NULL, 514 },
+    { "auth",           1, NULL, 515 },
+    { "dacp_id",        1, NULL, 516 },
+    { "latency",        1, NULL, 517 },
+    { "password",       1, NULL, 518 },
+    { "pairing_latency",1, NULL, 519 },
 
     { NULL,            0, NULL, 0   }
   };
@@ -685,7 +684,7 @@ main(int argc, char **argv)
       case 519: // pairing milliseconds
         ret = safe_atou64(optarg, &pairing_ms);
         if (ret < 0) {
-          fprintf(stderr, "Error: pairing_ms must be an integer in '--pairing_ms %s'\n", optarg);
+          fprintf(stderr, "Error: value must be an integer in '--pairing_latency %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
         ap2_device_info.pairing_latency.tv_sec = (time_t)(pairing_ms / 1000);
