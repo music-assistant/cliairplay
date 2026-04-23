@@ -485,6 +485,9 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
     DPRINTF(E_FATAL, L_MAIN, "Unable to determine time basis delta\n");
     return -1;
   }
+  DPRINTF(E_SPAM, L_MAIN, "%s:%s:CLOCK_REALTIME - CLOCK_MONOTONIC = %ld.%09ld\n", 
+    __func__, ap2_device_info.name, delta_ts.tv_sec, delta_ts.tv_nsec
+  );
   timespec_subtract(ts, &start_ts, &delta_ts); // ts will now be the requested start time, excluding latency, in OwnTone time basis
   get_output_buffer_ts(&latency_ts);
   timespec_subtract(ts, ts, &latency_ts);
@@ -497,7 +500,7 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
     // Give ourselves enough time to get connected and build our buffer
     int32_t extra_ms = pairing_latency_ms - lag_ms;
     DPRINTF(E_WARN, L_MAIN, 
-      "%s:ntpstart time too soon. Adjust pairing_latency to align with device or increase ntpstart by at least %" PRId32
+      "%s:ntpstart time too soon. Adjust pairing_latency to align with device capability or increase ntpstart by at least %" PRId32
       " ms to prevent loss of audio.\n", __func__, extra_ms
     );
     return -1;
@@ -764,7 +767,7 @@ main(int argc, char **argv)
   }
   ap2_device_info.txt = txt_kv;
 
-  get_start_ts(&ap2_device_info.start_ts, ntpstart);
+  get_start_ts(&ap2_device_info.start_ts, ntpstart); // We no longer care about returned result
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);
