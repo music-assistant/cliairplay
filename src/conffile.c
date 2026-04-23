@@ -289,18 +289,9 @@ conffile_load(char *file)
 
   // Override defaults using values from cliap2 arguments
   if (ap2_device_info.latency_ms != 0) {
-    DPRINTF(E_DBG, L_CONF, "%s:Overriding default start_buffer_ms from %ld ms to %" PRIu64 " ms\n",
-      __func__,
-      cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms"),
-      ap2_device_info.latency_ms
-    );
-
     char *buf;
     asprintf(&buf, "general { start_buffer_ms = %" PRIu64 " }", ap2_device_info.latency_ms);
     cfg_parse_buf(cfg, buf);
-    DPRINTF(E_DBG, L_CONF, "%s:Parsed \"%s\" to derive new start_buffer_ms value of %ld\n",
-      __func__, buf, cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms")
-    );
     free(buf);
   }
 
