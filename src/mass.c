@@ -1593,8 +1593,9 @@ play(struct input_source *source)
   struct mass_ctx *ctx = source->input_ctx;
   short flags;
   int ret, bytes_read;
-  struct timespec output_buffer_latency; // combination of player output buffer and the inherence DAC latency of device
-  static struct timespec now; // Initial now timespec when play() is first called
+  struct timespec now_ts; // current time
+  struct timespec output_buffer_latency_ts; // combination of player output buffer and the inherence DAC latency of device
+  static struct timespec initial_play_ts; // Initial now timespec when play() is first called
   static struct timespec earliest_possible_packet_ts; // Our estimate of the earlist possible time we can commence playback
   static size_t read_count = 0; // Count of read calls made
   static size_t bytes_to_remove = 0; // for when requested playback is too soon to adhere to
@@ -1638,7 +1639,7 @@ play(struct input_source *source)
 
   // Update Music Assistant that playback is commencing
   if (read_count == 0) {
-    DPRINTF(E_INFO, L_FIFO, "%s:Starting at 0ms\n", __func__);
+    DPRINTF(E_INFO, L_FIFO, "%s:%s starting at 0ms\n", __func__, ap2_device_info.name);
   }
 
   read_count++;
@@ -1650,15 +1651,17 @@ play(struct input_source *source)
   // adhered to. If not, then ignore audio samples that are too early to play on time
   // NOTE: There are limits to our capability of how much audio we can ignore. The limit is
   // governed by the amount of data we read to prime the input buffer, because after we have primed
-  // the input buffer, we read data effectively at the rate of playback.
+  // the input buffer, we cannot be sure of the rate at which we can read more audio - it might
+  // be constrained to align with the rate of playback. In which case, we cannot build up a data 
+  // buffer
   if (read_count == 1 && ap2_device_info.start_ts.tv_sec != 0) {
-    get_output_buffer_ts(&output_buffer_latency);
-    ret = clock_gettime(CLOCK_MONOTONIC,&now);
+    get_output_buffer_ts(&output_buffer_latency_ts);
+    ret = clock_gettime(CLOCK_MONOTONIC,&initial_play_ts);
     if (ret < 0) {
-      DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining now timespec. %s\n", __func__, strerror(errno));
+      DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining initial_play_ts timespec. %s\n", __func__, strerror(errno));
       return -1;
     }
-    earliest_possible_packet_ts = timespec_add(now, output_buffer_latency);
+    earliest_possible_packet_ts = timespec_add(initial_play_ts, output_buffer_latency_ts);
     earliest_possible_packet_ts = timespec_add(earliest_possible_packet_ts, ap2_device_info.pairing_latency);
     if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) > 0) {
       // Determine how much data we need to ignore
@@ -1669,7 +1672,7 @@ play(struct input_source *source)
       samples_to_remove = source->quality.sample_rate * nsec_to_remove / 1e9;
       bytes_to_remove = (size_t)STOB(samples_to_remove, source->quality.bits_per_sample, source->quality.channels);
       DPRINTF(E_WARN, L_FIFO, 
-        "%s:Audio data received too late to play on time. Attempting to ignore %ld.%.9ld secs, %" PRIu64 " samples, %zu bytes\n",
+        "%s:Audio data received too late to play on time. Attempting to ignore %ld.%09ld secs, %" PRIu64 " samples, %zu bytes\n",
         __func__, duration_to_remove.tv_sec, duration_to_remove.tv_nsec, samples_to_remove, bytes_to_remove
       );
     }
@@ -1677,17 +1680,19 @@ play(struct input_source *source)
       // We might have spare time before playback required. If we are using realtime RTP
       // then we can't send the audio too early, else we risk non-adherence to the start_ts or
       // no audio, so we can use the excess time to keep building the source evbuffer
+      // However, we cannot assume what the read rate will be, so ultimately we must check the
+      // current time against the start_ts value to determine when to call input_write()
       struct timespec early_ts; // timespec for how early we are
       early_ts = timespec_sub(ap2_device_info.start_ts, earliest_possible_packet_ts);
       bytes_to_add = early_ts.tv_sec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels);
       bytes_to_add += early_ts.tv_nsec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels) / 1e9;
-      DPRINTF(E_DBG, L_FIFO, "%s:We have early headroom of %ld.%.9ld seconds, equating to %zu bytes.\n", __func__,
+      DPRINTF(E_DBG, L_FIFO, "%s:We have early headroom of %ld.%09ld seconds, equating to %zu bytes.\n", __func__,
         early_ts.tv_sec, early_ts.tv_nsec, bytes_to_add
       );
     }
   }
 
-  if (written == false) {
+  if (written == false && ap2_device_info.start_ts.tv_sec != 0) {
     DPRINTF(E_SPAM, L_FIFO, 
       "%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu, bytes_to_add:%zu, bytes_added:%zu, "
       "evbuffer: length:%zu, duration:%.3f\n",
@@ -1734,11 +1739,32 @@ play(struct input_source *source)
       return 0;
     }
 
-    if (ap2_device_info.start_ts.tv_sec != 0) {
-      // We want to control the time of playback of the first audio packet
-      flags |= INPUT_FLAG_SYNC;
+    // We are on the verge of calling input_write() for the first time, but let's check to ensure we are
+    // not going to call it too early and issue a warning if we are too late
+    ret = clock_gettime(CLOCK_MONOTONIC,&now_ts);
+    if (ret < 0) {
+      DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining now_ts timespec. %s\n", __func__, strerror(errno));
+      return -1;
     }
+    struct timespec delta_ts = timespec_sub(ap2_device_info.start_ts, now_ts);
+    int64_t delta_ms = (delta_ts.tv_sec * 1000) + (delta_ts.tv_nsec / 1e6);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s delta_ms = %" PRId64 " ms, latency_ms=%" PRIu64 " ms, delta_ts=%ld.%09ld\n", __func__, 
+      ap2_device_info.name, delta_ms, ap2_device_info.latency_ms, delta_ts.tv_sec, delta_ts.tv_nsec
+    );
+    if (delta_ms > (ap2_device_info.latency_ms + 50)) {
+      input_wait();
+      return 0;
+    }
+    else if (delta_ms < ap2_device_info.latency_ms) {
+      DPRINTF(E_WARN, L_FIFO, "%s:%s is late to commence playback. Sync or playback is unlikely. delta_ms = %" PRId64 " ms.\n",
+        __func__, ap2_device_info.name, delta_ms
+      );
+    }
+
+    // We want to control the time of playback of the first audio packet
+    flags |= INPUT_FLAG_SYNC;
   }
+
   input_write(source->evbuf, &source->quality, flags);
   written = true;
 
