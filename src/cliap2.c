@@ -493,15 +493,15 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   timespec_subtract(ts, ts, &latency_ts);
   timespec_to_ntp(ts, &start_ns);
   timespec_subtract(&lag_ts, ts, &now_ts);
-  DPRINTF(E_INFO, L_MAIN, "Audio starts in %ld.%.9ld secs.\n", lag_ts.tv_sec, lag_ts.tv_nsec);
+  DPRINTF(E_INFO, L_MAIN, "%s:%s:Audio starts in %ld.%.9ld secs.\n", __func__, ap2_device_info.name, lag_ts.tv_sec, lag_ts.tv_nsec);
 
   lag_ms = (int32_t)(lag_ts.tv_sec * 1000) + (int32_t)(lag_ts.tv_nsec / 1e6);
   if (lag_ms < pairing_latency_ms) {
     // Give ourselves enough time to get connected and build our buffer
     int32_t extra_ms = pairing_latency_ms - lag_ms;
     DPRINTF(E_WARN, L_MAIN, 
-      "%s:ntpstart time too soon. Adjust pairing_latency to align with device capability or increase ntpstart by at least %" PRId32
-      " ms to prevent loss of audio.\n", __func__, extra_ms
+      "%s:%s:ntpstart time too soon. Adjust pairing_latency to align with device capability or increase ntpstart by at least %" PRId32
+      " ms to prevent loss of audio.\n", __func__, ap2_device_info.name, extra_ms
     );
     return -1;
   }
@@ -535,6 +535,7 @@ main(int argc, char **argv)
   int volume = 0;
   uint64_t latency_ms = 0;
   uint64_t pairing_ms = 0;
+  int64_t input_write_ms = 0;
   struct keyval *txt_kv = NULL;
 
   struct option option_map[] = {
@@ -558,14 +559,17 @@ main(int argc, char **argv)
     { "latency",        1, NULL, 517 },
     { "password",       1, NULL, 518 },
     { "pairing_latency",1, NULL, 519 },
+    { "input_write_ms", 1, NULL, 520 }, // Used to test/validate logic in mass.c play(). Not documented to user
 
     { NULL,            0, NULL, 0   }
   };
 
+  // Default some values
   ap2_device_info.auth_key = (char *)NULL;
   ap2_device_info.password = (char *)NULL;
   ap2_device_info.pairing_latency.tv_sec = 2;
   ap2_device_info.pairing_latency.tv_nsec = 500e6;
+  ap2_device_info.input_write_ms = 15;
 
   // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
   ret = setvbuf(stderr, NULL, _IONBF, 0);
@@ -693,8 +697,16 @@ main(int argc, char **argv)
         ap2_device_info.pairing_latency.tv_sec = (time_t)(pairing_ms / 1000);
         ap2_device_info.pairing_latency.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
         break;
+      
+      case 520: // input_write milliseconds
+        ret = safe_atoi64(optarg, &input_write_ms);
+        if (ret < 0) {
+          fprintf(stderr, "Error: value must be an integer in '--input_write_ms %s'\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        ap2_device_info.input_write_ms = input_write_ms;
+        break;
         
-
       default:
       case '?':
         usage(argv[0]);
