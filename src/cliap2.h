@@ -12,10 +12,11 @@ typedef struct ap2_device_info
   struct keyval *txt;
   char pin[5];
   char *auth_key;
-  struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_MONOTONIC)
-  int volume;
-  uint64_t latency_ms; // output buffer duration, inclusive of DAC latency
   char *password; // unencryptd device password
+  int volume; // initial volume
+  struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_MONOTONIC)
+  uint64_t latency_ms; // output buffer duration in milliseconds, inclusive of DAC latency
+  int64_t input_write_ms; // Number of milliseconds margin to use to determine timing of initial call to input_write(). Can be negative
   struct timespec pairing_latency; // anticipated duration of the RTSP pairing & session establishment process
 } ap2_device_info_t;
 

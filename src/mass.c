@@ -288,18 +288,18 @@ pipe_open(const char *path, bool silent)
 
   fd = open(path, O_RDONLY | O_NONBLOCK);
   if (fd < 0) {
-    DPRINTF(E_LOG, L_FIFO, "Could not open pipe for reading '%s': %s\n", path, strerror(errno));
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not open pipe for reading '%s': %s\n", __func__, ap2_device_info.name, path, strerror(errno));
     goto error;
   }
 
   if (fstat(fd, &sb) < 0) {
     if (!silent)
-      DPRINTF(E_LOG, L_FIFO, "Could not fstat() '%s': %s\n", path, strerror(errno));
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not fstat() '%s': %s\n", __func__, ap2_device_info.name, path, strerror(errno));
     goto error;
   }
 
   if (!S_ISFIFO(sb.st_mode)) {
-    DPRINTF(E_LOG, L_FIFO, "Source type is pipe, but path is not a fifo: %s\n", path);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Source type is pipe, but path is not a fifo: %s\n", __func__, ap2_device_info.name, path);
     goto error;
   }
 
@@ -358,7 +358,7 @@ watch_add(struct pipe *pipe, struct event_base *evbase)
   pipe->ev = event_new(evbase, pipe->fd, EV_READ | EV_PERSIST, pipe->cb, pipe);
   if (!pipe->ev)
     {
-      DPRINTF(E_LOG, L_FIFO, "Could not watch pipe for new data '%s'\n", pipe->path);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not watch pipe for new data '%s'\n", __func__, ap2_device_info.name, pipe->path);
       pipe_close(pipe->fd);
       return -1;
     }
@@ -486,13 +486,13 @@ pict_tmpfile_recreate(char *path, size_t path_size, int fd, const char *ext)
 
   if (strlen(ext) > PIPE_TMPFILE_TEMPLATE_EXTLEN)
     {
-      DPRINTF(E_LOG, L_FIFO, "Invalid extension provided to pict_tmpfile_recreate: '%s'\n", ext);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid extension provided to pict_tmpfile_recreate: '%s'\n", __func__, ap2_device_info.name, ext);
       return -1;
     }
 
   if (path_size < sizeof(PIPE_TMPFILE_TEMPLATE))
     {
-      DPRINTF(E_LOG, L_FIFO, "Invalid path buffer provided to pict_tmpfile_recreate\n");
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid path buffer provided to pict_tmpfile_recreate\n", __func__, ap2_device_info.name);
       return -1;
     }
 
@@ -529,19 +529,19 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
 
   format = artwork_read_byurl(raw, m->artwork_url);
   if (format <= 0) {
-    DPRINTF(E_LOG, L_FIFO, "Could not read artwork from URL '%s'\n", m->artwork_url);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not read artwork from URL '%s'\n", __func__, ap2_device_info.name, m->artwork_url);
     goto error;
   }
 
   artwork_image_size = evbuffer_get_length(raw);
   artwork_image = malloc(artwork_image_size);
   if (!artwork_image) {
-    DPRINTF(E_LOG, L_FIFO, "Could not allocate memory for artwork from URL '%s'\n", m->artwork_url);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not allocate memory for artwork from URL '%s'\n", __func__, ap2_device_info.name, m->artwork_url);
     goto error;
   }
   ret = evbuffer_remove(raw, artwork_image, artwork_image_size);
   if (ret < 0 || (size_t)ret != artwork_image_size) {
-    DPRINTF(E_LOG, L_FIFO, "Could not extract artwork from evbuffer for URL '%s'\n", m->artwork_url);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not extract artwork from evbuffer for URL '%s'\n", __func__, ap2_device_info.name, m->artwork_url);
     goto error;
   }
   evbuffer_free(raw);
@@ -552,7 +552,7 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
   else if (format == ART_FMT_PNG)
     ext = ".png";
   else {
-    DPRINTF(E_LOG, L_FIFO, "Unsupported picture format from artwork URL '%s'\n", m->artwork_url);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Unsupported picture format from artwork URL '%s'\n", __func__, ap2_device_info.name, m->artwork_url);
     goto error;
   }
 
@@ -563,27 +563,27 @@ parse_artwork_url(struct pipe_metadata_prepared *prepared)
     prepared->pict_tmpfile_path, sizeof(prepared->pict_tmpfile_path), prepared->pict_tmpfile_fd, ext
   );
   if (prepared->pict_tmpfile_fd < 0) {
-    DPRINTF(E_LOG, L_FIFO, "Could not open tmpfile for pipe artwork '%s': %s\n",
-      prepared->pict_tmpfile_path, strerror(errno)
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not open tmpfile for pipe artwork '%s': %s\n",
+      __func__, ap2_device_info.name, prepared->pict_tmpfile_path, strerror(errno)
     );
     goto error;
   }
 
   ret = write(prepared->pict_tmpfile_fd, artwork_image, artwork_image_size);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_FIFO, "Error writing artwork from metadata pipe to '%s': %s\n",
-      prepared->pict_tmpfile_path, strerror(errno)
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Error writing artwork from metadata pipe to '%s': %s\n",
+      __func__, ap2_device_info.name, prepared->pict_tmpfile_path, strerror(errno)
     );
     goto error;
   }
   else if (ret != artwork_image_size) {
-    DPRINTF(E_LOG, L_FIFO, "Incomplete write of artwork to '%s' (%zd/%ld)\n",
-      prepared->pict_tmpfile_path, ret, artwork_image_size
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Incomplete write of artwork to '%s' (%zd/%ld)\n",
+      __func__, ap2_device_info.name, prepared->pict_tmpfile_path, ret, artwork_image_size
     );
     goto error;
   }
 
-  DPRINTF(E_SPAM, L_FIFO, "Wrote pipe artwork to '%s'\n", prepared->pict_tmpfile_path);
+  DPRINTF(E_SPAM, L_FIFO, "%s:%s:Wrote pipe artwork to '%s'\n", __func__, ap2_device_info.name, prepared->pict_tmpfile_path);
 
   m->artwork_url = safe_asprintf("file:%s", prepared->pict_tmpfile_path);
   free(artwork_image);
@@ -663,13 +663,13 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
 
   extract_key_value(item, &key, &value);
   if (!key || !value) {
-      DPRINTF(E_LOG, L_FIFO, "%s:Invalid key-value pair in Music Assistant metadata: '%s'\n", __func__, item);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid key-value pair in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, item);
       if (key) free(key);
       if (value) free(value);
       return -1;
   }
 
-  DPRINTF(E_SPAM, L_FIFO, "%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, key, value);
+  DPRINTF(E_SPAM, L_FIFO, "%s:%s:Parsed Music Assistant metadata key='%s' value='%s'\n", __func__, ap2_device_info.name, key, value);
 
   if (!strncmp(key,MASS_METADATA_ALBUM_KEY, strlen(MASS_METADATA_ALBUM_KEY))) {
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
@@ -690,7 +690,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       message = PIPE_METADATA_MSG_PARTIAL_METADATA;
       ret = safe_atoi32(value, &duration_sec);
       if (ret < 0) {
-          DPRINTF(E_LOG, L_FIFO, "%s:Invalid duration value in Music Assistant metadata: '%s'\n", __func__, value);
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid duration value in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
           free(key);
           free(value);
           return -1;
@@ -703,15 +703,15 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       message = PIPE_METADATA_MSG_PROGRESS;
       ret = safe_atoi32(value, &progress_sec);
       if (ret < 0) {
-          DPRINTF(E_LOG, L_FIFO, "%s:Invalid progress value in Music Assistant metadata: '%s'\n", __func__, value);
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid progress value in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
           free(key);
           free(value);
           return -1;
       }
       prepared->input_metadata.pos_ms = progress_sec * 1000;
       prepared->input_metadata.pos_is_updated = true;
-      DPRINTF(E_DBG, L_FIFO, "%s:Progress metadata value of %s s received and processed as %d ms.\n", 
-        __func__, value, prepared->input_metadata.pos_ms
+      DPRINTF(E_DBG, L_FIFO, "%s:%s:Progress metadata value of %s s received and processed as %d ms.\n", 
+        __func__, ap2_device_info.name, value, prepared->input_metadata.pos_ms
       );
       free(key);
       free(value);
@@ -722,7 +722,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
       free(key);
       ret = parse_artwork_url(prepared);
       if (ret < 0) {
-          DPRINTF(E_LOG, L_FIFO, "%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, value);
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid artwork URL in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
           return -1;
       }
       message = PIPE_METADATA_MSG_PICTURE;
@@ -731,21 +731,21 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     message = PIPE_METADATA_MSG_VOLUME;
     ret = safe_atoi32(value, &prepared->volume);
     if (ret < 0) {
-        DPRINTF(E_LOG, L_FIFO, "%s:Invalid volume value in Music Assistant metadata: '%s'\n", __func__, value);
+        DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid volume value in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
         free(key);
         free(value);
         return -1;
     }
     free(key);
     free(value);
-    DPRINTF(E_SPAM, L_FIFO, "%s:Parsed Music Assistant volume: %d\n", __func__, prepared->volume);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Parsed Music Assistant volume: %d\n", __func__, ap2_device_info.name, prepared->volume);
   }
   else if (!strncmp(key,MASS_METADATA_PIN_KEY, strlen(MASS_METADATA_PIN_KEY))) {
     message = PIPE_METADATA_MSG_PIN;
     uint32_t pin;
     ret = safe_atou32(value, &pin);
     if (ret < 0 || ret > 9999) { // PIN's limited to 4 digits
-        DPRINTF(E_LOG, L_FIFO, "%s:Invalid PIN value in Music Assistant metadata: '%s'\n", __func__, value);
+        DPRINTF(E_LOG, L_FIFO, "%s:%s:Invalid PIN value in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
         free(key);
         free(value);
         return -1;
@@ -753,7 +753,7 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
     ret = asprintf(&prepared->pin, "%.4u", pin);
     free(key);
     free(value);
-    DPRINTF(E_SPAM, L_FIFO, "%s:Parsed Music Assistant PIN: %.4s\n", __func__, prepared->pin);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Parsed Music Assistant PIN: %.4s\n", __func__, ap2_device_info.name, prepared->pin);
   }
   else if (!strncmp(key,MASS_METADATA_ACTION_KEY, strlen(MASS_METADATA_ACTION_KEY))) {
       if (strncmp(value, "SENDMETA", strlen("SENDMETA")) == 0) {
@@ -777,14 +777,14 @@ parse_mass_item(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepared *
          free(value);
       }
       else {
-          DPRINTF(E_LOG, L_FIFO, "%s:Unsupported action value in Music Assistant metadata: '%s'\n", __func__, value);
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Unsupported action value in Music Assistant metadata: '%s'\n", __func__, ap2_device_info.name, value);
           free(key);
           free(value);
           return -1;
       }
   }
   else {
-      DPRINTF(E_LOG, L_FIFO, "%s:Unknown key in Music Assistant metadata: '%s=%s'\n", __func__, key, value);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Unknown key in Music Assistant metadata: '%s=%s'\n", __func__, ap2_device_info.name, key, value);
       free(key);
       free(value);
       return -1;
@@ -841,11 +841,11 @@ pipe_metadata_parse(enum pipe_metadata_msg *out_msg, struct pipe_metadata_prepar
 
   *out_msg = 0;
   while ((item = extract_item(evbuf))) {
-    DPRINTF(E_SPAM, L_FIFO, "%s:Parsed pipe metadata item: '%s'\n", __func__, item);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Parsed pipe metadata item: '%s'\n", __func__, ap2_device_info.name, item);
     ret = parse_mass_item(&message, prepared, item);
     free(item);
     if (ret < 0) {
-      DPRINTF(E_LOG, L_FIFO, "%s:parse_mass_item() failed to parse Music Assistant metadata item\n", __func__);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:parse_mass_item() failed to parse Music Assistant metadata item\n", __func__, ap2_device_info.name);
       return -1;
     }
 
@@ -878,37 +878,37 @@ pipe_read_cb(evutil_socket_t fd, short event, void *arg)
   // Initial read - can maybe use this to undertake any other required initialisation tasks
   if (pipe_id == 0) {
     pipe_id = pipe->id;
-    DPRINTF(E_DBG, L_FIFO, "%s:Initialised global pipe_id to %d\n", __func__, pipe_id);
+    DPRINTF(E_DBG, L_FIFO, "%s:%s:Initialised global pipe_id to %d\n", __func__, ap2_device_info.name, pipe_id);
   }
 
   ret = player_get_status(&status);
   if (status.id == pipe->id) {
-    DPRINTF(E_SPAM, L_FIFO, "%s:Pipe '%s' already playing with status %s\n",
-      __func__, pipe->path, play_status_str(status.status)
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Pipe '%s' already playing with status %s\n",
+      __func__, ap2_device_info.name, pipe->path, play_status_str(status.status)
     );
     return; // We are already playing the pipe
   }
   else if (ret < 0) {
     DPRINTF(E_LOG, L_FIFO, 
-      "%s:Playback start for audio from '%s' failed because state of player is unknown\n", 
-      __func__, pipe->path
+      "%s:%s:Playback start for audio from '%s' failed because state of player is unknown\n", 
+      __func__, ap2_device_info.name, pipe->path
     );
     return;
   }
 
   player_playback_stop(); // Not sure this is a good idea. Will flush data from the input buffer
 
-  DPRINTF(E_SPAM, L_FIFO, "%s:player_playback_start_byid(%d)\n", __func__, pipe->id);
+  DPRINTF(E_SPAM, L_FIFO, "%s:%s:player_playback_start_byid(%d)\n", __func__, ap2_device_info.name, pipe->id);
   ret = player_playback_start_byid(pipe->id);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_FIFO, "%s:Starting playback for data from pipe '%s' (fd %d) failed.\n", 
-      __func__, pipe->path, fd
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Starting playback for data from pipe '%s' (fd %d) failed.\n", 
+      __func__, ap2_device_info.name, pipe->path, fd
     );
     return;
   }
 
   /* Music Assistant looks for "restarting w/o pause" */
-  DPRINTF(E_INFO, L_FIFO, "%s: restarting w/o pause\n", __func__);
+  DPRINTF(E_INFO, L_FIFO, "%s:%s: restarting w/o pause\n", __func__, ap2_device_info.name);
 
 }
 
@@ -941,7 +941,7 @@ pipe_watch_update(void *arg, int *retval)
 
       if (!pipelist_find(pipelist, pipe->id))
 	{
-	  DPRINTF(E_SPAM, L_FIFO, "Pipe watch deleted: '%s'\n", pipe->path);
+	  DPRINTF(E_SPAM, L_FIFO, "%s:%s:Pipe watch deleted: '%s'\n", __func__, ap2_device_info.name, pipe->path);
 	  watch_del(pipe);
 	  pipelist_remove(&pipe_watch_list, pipe); // Will free pipe
 	}
@@ -954,7 +954,7 @@ pipe_watch_update(void *arg, int *retval)
 
       if (count > PIPE_MAX_WATCH)
 	{
-	  DPRINTF(E_LOG, L_FIFO, "Max open pipes reached (%d), will not watch '%s'\n", PIPE_MAX_WATCH, pipe->path);
+	  DPRINTF(E_LOG, L_FIFO, "%s:%s:Max open pipes reached (%d), will not watch '%s'\n", __func__, ap2_device_info.name, PIPE_MAX_WATCH, pipe->path);
 	  pipe_free(pipe);
 	  continue;
 	}
@@ -969,7 +969,7 @@ pipe_watch_update(void *arg, int *retval)
 	      // For named pipes, manually trigger the read callback to check for already-buffered data
 	      if (pipe->ev)
 	        {
-	          DPRINTF(E_DBG, L_FIFO, "%s: Manually triggering pipe_read_cb for '%s'\n", __func__, pipe->path);
+	          DPRINTF(E_DBG, L_FIFO, "%s:%s: Manually triggering pipe_read_cb for '%s'\n", __func__, ap2_device_info.name, pipe->path);
 	          event_active(pipe->ev, EV_READ, 0);
 	        }
 	      else if (is_stdin(pipe->path))
@@ -979,13 +979,13 @@ pipe_watch_update(void *arg, int *retval)
 	          player_playback_stop();
 	          ret = player_playback_start_byid(pipe->id);
 	          if (ret < 0)
-	            DPRINTF(E_LOG, L_FIFO, "%s: Failed to start playback for stdin\n", __func__);
+	            DPRINTF(E_LOG, L_FIFO, "%s:%s: Failed to start playback for stdin\n", __func__, ap2_device_info.name);
 	          else
-	            DPRINTF(E_INFO, L_FIFO, "%s: restarting w/o pause\n", __func__);
+	            DPRINTF(E_INFO, L_FIFO, "%s:%s: restarting w/o pause\n", __func__, ap2_device_info.name);
 	        }
 	    }
 	  else
-	    DPRINTF(E_LOG, L_FIFO, "%s: Failed to watch pipe '%s'\n", __func__, pipe->path);
+	    DPRINTF(E_LOG, L_FIFO, "%s:%s: Failed to watch pipe '%s'\n", __func__, ap2_device_info.name, pipe->path);
 	}
       else
 	{
@@ -1068,7 +1068,7 @@ pipe_thread_stop(void)
 
   ret = pthread_join(tid_audio_pipe, NULL);
   if (ret != 0)
-    DPRINTF(E_LOG, L_FIFO, "Could not join pipe thread: %s\n", strerror(errno));
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not join pipe thread: %s\n", __func__, ap2_device_info.name, strerror(errno));
 
   event_base_free(evbase_audio_pipe);
   tid_audio_pipe = 0;
@@ -1114,7 +1114,7 @@ pipe_listener_cb(short event_mask, void *ctx)
   cmdarg->pipelist = pipelist_create();
   if (!cmdarg->pipelist)
     {
-      DPRINTF(E_INFO, L_FIFO, "%s: No pipelist. Stopping thread.\n", __func__);
+      DPRINTF(E_INFO, L_FIFO, "%s:%s: No pipelist. Stopping thread.\n", __func__, ap2_device_info.name);
       pipe_thread_stop();
       free(cmdarg);
       return;
@@ -1147,13 +1147,13 @@ mass_timer_cb(int fd, short what, void *arg)
 
   ret = player_get_status(&status);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_FIFO, "%s:Could not get player status\n", __func__);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not get player status\n", __func__, ap2_device_info.name);
     return;
   }
 
   DPRINTF(E_SPAM, L_FIFO,
-    "%s: player status:%s, volume:%d, pos_ms:%" PRIu32 "\n", 
-    __func__, play_status_str(status.status), status.volume, status.pos_ms
+    "%s:%s: player status:%s, volume:%d, pos_ms:%" PRIu32 "\n", 
+    __func__, ap2_device_info.name, play_status_str(status.status), status.volume, status.pos_ms
   );
 
   if (status.status == PLAY_PLAYING) {
@@ -1161,8 +1161,8 @@ mass_timer_cb(int fd, short what, void *arg)
       player_started = true;
     }
     DPRINTF(E_SPAM, L_FIFO, 
-      "%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
-      __func__, status.volume, play_status_str(status.status), status.pos_ms
+      "%s:%s: volume:%d state:%s, position:%" PRIu32 " ms. \n",
+      __func__, ap2_device_info.name, status.volume, play_status_str(status.status), status.pos_ms
     );
   }
   else if (player_started && status.status == PLAY_PAUSED) {
@@ -1170,8 +1170,8 @@ mass_timer_cb(int fd, short what, void *arg)
       player_paused = true;
       clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
       /* Music Assistant looks for "set pause" or "Pause at" */
-      DPRINTF(E_INFO, L_FIFO, "%s: Pause at %" PRIu32 " ms\n",
-        __func__, status.pos_ms
+      DPRINTF(E_INFO, L_FIFO, "%s:%s: Pause at %" PRIu32 " ms\n",
+        __func__, ap2_device_info.name, status.pos_ms
       );
     }
     else {
@@ -1180,18 +1180,18 @@ mass_timer_cb(int fd, short what, void *arg)
       now_ms   = (uint64_t)now.tv_sec * 1000 + (uint64_t)(now.tv_nsec / 1000000);
       elapsed_ms = now_ms - begin_ms;
       DPRINTF(E_SPAM, L_FIFO, 
-        "%s: paused milliseconds:%" PRIu64 " ms at position %" PRIu32 "\n", 
-        __func__, elapsed_ms, status.pos_ms
+        "%s:%s: paused milliseconds:%" PRIu64 " ms at position %" PRIu32 "\n", 
+        __func__, ap2_device_info.name, elapsed_ms, status.pos_ms
       );
 
     }
   }
   else if (player_started && status.status == PLAY_STOPPED) {
-    DPRINTF(E_SPAM, L_FIFO, "%s:Time to exit gracefully\n", __func__);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Time to exit gracefully\n", __func__, ap2_device_info.name);
     exit(0);
   }
   else { // this state can happen when audio has not yet been received on the named pipe
-    DPRINTF(E_SPAM, L_FIFO, "%s:Player %sstarted. status:%s\n", __func__,
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Player %sstarted. status:%s\n", __func__, ap2_device_info.name,
       player_started ? "" : "not ", play_status_str(status.status)
     );
     // reset all
@@ -1270,10 +1270,10 @@ mass_speaker_authorize(void)
 {
   struct player_speaker_info spk;
 
-  DPRINTF(E_DBG, L_FIFO, "%s:Calling player_speaker_get_byindex(&spk, 0)\n", __func__);
+  DPRINTF(E_DBG, L_FIFO, "%s:%s:Calling player_speaker_get_byindex(&spk, 0)\n", __func__, ap2_device_info.name);
   player_speaker_get_byindex(&spk, 0); // We only ever have one speaker for Music Assistant
-  DPRINTF(E_DBG, L_FIFO, "%s:speaker name:%s, index:%" PRIu32 ", id:%" PRIu64 ", output_type:%s, requires_auth:%s, formats:0x%0x\n", 
-    __func__, spk.name, spk.index, spk.id, spk.output_type, spk.requires_auth ? "yes" : "no",
+  DPRINTF(E_DBG, L_FIFO, "%s:%s:speaker name:%s, index:%" PRIu32 ", id:%" PRIu64 ", output_type:%s, requires_auth:%s, formats:0x%0x\n", 
+    __func__, ap2_device_info.name, spk.name, spk.index, spk.id, spk.output_type, spk.requires_auth ? "yes" : "no",
     spk.supported_formats
   );
   
@@ -1316,12 +1316,12 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   len = evbuffer_get_length(pipe_metadata.evbuf);
   if (len > PIPE_METADATA_BUFLEN_MAX)
     {
-      DPRINTF(E_LOG, L_FIFO, "Buffer for command pipe '%s' is full, discarding %zu bytes\n", pipe_metadata.pipe->path, len);
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Buffer for command pipe '%s' is full, discarding %zu bytes\n", __func__, ap2_device_info.name, pipe_metadata.pipe->path, len);
       evbuffer_drain(pipe_metadata.evbuf, len);
       goto readd;
     }
   
-  DPRINTF(E_SPAM, L_FIFO, "%s:Received %zu bytes of metadata\n", __func__, len);
+  DPRINTF(E_SPAM, L_FIFO, "%s:%s:Received %zu bytes of metadata\n", __func__, ap2_device_info.name, len);
 
   // .parsed is shared with the input thread (see metadata_get), so use mutex.
   // Note that this means _parse() must not do anything that could cause a
@@ -1330,22 +1330,24 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   ret = pipe_metadata_parse(&message, &pipe_metadata.prepared, pipe_metadata.evbuf);
   pthread_mutex_unlock(&pipe_metadata.prepared.lock);
   if (ret < 0) {
-    DPRINTF(E_LOG, L_FIFO, "Error parsing incoming data on command pipe '%s', will stop reading\n", pipe_metadata.pipe->path);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Error parsing incoming data on command pipe '%s', will stop reading\n",
+      __func__, ap2_device_info.name, pipe_metadata.pipe->path
+    );
     pipe_metadata_watch_del(NULL);
     return;
   }
 
-  DPRINTF(E_SPAM, L_FIFO, "%s:Parsed command pipe message mask: 0x%x\n", __func__, message);
+  DPRINTF(E_SPAM, L_FIFO, "%s:%s:Parsed command pipe message mask: 0x%x\n", __func__, ap2_device_info.name, message);
 
   ret = player_get_status(&status);
   if (ret != COMMAND_END) {
-    DPRINTF(E_LOG, L_FIFO, "%s: Unable to obtain player status\n", __func__);
+    DPRINTF(E_LOG, L_FIFO, "%s:%s: Unable to obtain player status\n", __func__, ap2_device_info.name);
   }
   if (message & (PIPE_METADATA_MSG_METADATA | PIPE_METADATA_MSG_PICTURE)) {
     pipe_metadata.is_new = 1; // Trigger notification to player in playback loop
     DPRINTF(E_SPAM, L_FIFO, 
-      "%s:Triggered notification to player in the playback loop of new metadata available (message=0x%x)\n", 
-      __func__, message
+      "%s:%s:Triggered notification to player in the playback loop of new metadata available (message=0x%x)\n", 
+      __func__, ap2_device_info.name, message
     );
   }
   if (message & PIPE_METADATA_MSG_VOLUME) {
@@ -1353,7 +1355,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     player_volume_set(pipe_metadata.prepared.volume);
   }
   if (message & PIPE_METADATA_MSG_PIN) {
-    DPRINTF(E_DBG, L_FIFO, "%s:Setting PIN from command pipe to %s\n", __func__, pipe_metadata.prepared.pin);
+    DPRINTF(E_DBG, L_FIFO, "%s:%s:Setting PIN from command pipe to %s\n", __func__, ap2_device_info.name, pipe_metadata.prepared.pin);
     strncpy(ap2_device_info.pin, pipe_metadata.prepared.pin, sizeof(ap2_device_info.pin) - 1);
     mass_speaker_authorize();
     free(pipe_metadata.prepared.pin);
@@ -1361,60 +1363,60 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
   }
   if (message & PIPE_METADATA_MSG_FLUSH) {
     DPRINTF(E_DBG, L_FIFO, 
-      "%s:FLUSH:Flushing playback from command pipe. Current player status is %s\n", 
-      __func__, play_status_str(status.status)
+      "%s:%s:FLUSH:Flushing playback from command pipe. Current player status is %s\n", 
+      __func__, ap2_device_info.name, play_status_str(status.status)
     );
     player_playback_flush(); // results in FLUSH to the airplay device
   }
   if (message & PIPE_METADATA_MSG_PAUSE) {
     DPRINTF(E_DBG, L_FIFO, 
-      "%s:PAUSE:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
-      __func__, play_status_str(status.status), status.pos_ms
+      "%s:%s:PAUSE:Pausing playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      __func__, ap2_device_info.name, play_status_str(status.status), status.pos_ms
     );
     // We check the current state before confirming what input action to undertake (if any)
     if (status.status == PLAY_PLAYING) {
       self_pause();
       // Report status to Music Assistant
-      DPRINTF(E_INFO, L_FIFO, "%s:Pause at %" PRIu32 "\n", __func__, status.pos_ms);
+      DPRINTF(E_INFO, L_FIFO, "%s:%s:Pause at %" PRIu32 "\n", __func__, ap2_device_info.name, status.pos_ms);
     }
     else {
-      DPRINTF(E_WARN, L_FIFO, "%s:Command received to PAUSE playback, but current state is %s. Ignoring command.\n",
-        __func__, play_status_str(status.status)
+      DPRINTF(E_WARN, L_FIFO, "%s:%s:Command received to PAUSE playback, but current state is %s. Ignoring command.\n",
+        __func__, ap2_device_info.name, play_status_str(status.status)
       );
     }
   }
   if (message & PIPE_METADATA_MSG_PLAY) {
     DPRINTF(E_DBG, L_FIFO, 
-      "%s:PLAY:(Re)starting playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
-      __func__, play_status_str(status.status), status.pos_ms
+      "%s:%s:PLAY:(Re)starting playback from command pipe. Current player status is %s, %" PRIu32 "ms\n",
+      __func__, ap2_device_info.name, play_status_str(status.status), status.pos_ms
     );
     if (status.status != PLAY_PLAYING) {
       self_resume();
       // Report status to Music Assistant
-      DPRINTF(E_INFO, L_FIFO, "%s:Restarted at %" PRIu32 "\n", __func__, status.pos_ms);
+      DPRINTF(E_INFO, L_FIFO, "%s:%s:Restarted at %" PRIu32 "\n", __func__, ap2_device_info.name, status.pos_ms);
     }
     else {
-      DPRINTF(E_WARN, L_FIFO, "%s:Command received to PLAY, but current state is %s. Ignoring command.\n",
-        __func__, play_status_str(status.status)
+      DPRINTF(E_WARN, L_FIFO, "%s:%s:Command received to PLAY, but current state is %s. Ignoring command.\n",
+        __func__, ap2_device_info.name, play_status_str(status.status)
       );
     }
   }
   if (message & PIPE_METADATA_MSG_STOP) {
-    DPRINTF(E_DBG, L_FIFO, "%s:STOP:Stopping playback from command pipe command\n", __func__);
+    DPRINTF(E_DBG, L_FIFO, "%s:%s:STOP:Stopping playback from command pipe command\n", __func__, ap2_device_info.name);
     self_stop();
     input_flush(NULL); // we don't care about losing data for the input_buffer on stop.
     // Report status to Music Assistant
-    DPRINTF(E_INFO, L_FIFO, "%s:Stop at %" PRIu32 "\n", __func__, status.pos_ms);
+    DPRINTF(E_INFO, L_FIFO, "%s:%s:Stop at %" PRIu32 "\n", __func__, ap2_device_info.name, status.pos_ms);
   }
 
  readd:
   if (pipe_metadata.pipe && pipe_metadata.pipe->ev) {
-    DPRINTF(E_SPAM, L_FIFO, "%s:Re-adding event for command pipe '%s'\n", __func__, pipe_metadata.pipe->path);
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:Re-adding event for command pipe '%s'\n", __func__, ap2_device_info.name, pipe_metadata.pipe->path);
     event_add(pipe_metadata.pipe->ev, NULL);
   }
   else {
-    DPRINTF(E_DBG, L_FIFO, "%s:command pipe '%s' no longer valid, not re-adding event\n",
-      __func__, pipe_metadata.pipe->path
+    DPRINTF(E_DBG, L_FIFO, "%s:%s:command pipe '%s' no longer valid, not re-adding event\n",
+      __func__, ap2_device_info.name, pipe_metadata.pipe->path
     );
   }
 }
@@ -1535,12 +1537,12 @@ setup(struct input_source *source)
     ret = evbuffer_read(source->evbuf, ctx->pipe->fd, PIPE_READ_MAX);
   }
   if (ret < 0 && (errno != EAGAIN) && (errno != EWOULDBLOCK)) {
-    DPRINTF(E_LOG, L_FIFO, "%s:Error reading audio. %s\n", __func__, strerror(errno));
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Error reading audio. %s\n", __func__, ap2_device_info.name, strerror(errno));
     return -1;
   }
   if (primed_bytes > 0) {
-    DPRINTF(E_DBG, L_FIFO, "%s:Read %zu bytes (%.3f secs) to prime the input evbuffer.\n",
-      __func__, primed_bytes, 
+    DPRINTF(E_DBG, L_FIFO, "%s:%s:Read %zu bytes (%.9f secs) to prime the input evbuffer.\n",
+      __func__, ap2_device_info.name, primed_bytes, 
       (double) primed_bytes / (double) (STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels))
     );
   }
@@ -1614,7 +1616,7 @@ play(struct input_source *source)
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF);
     stop(source);
     pthread_mutex_unlock(&audio_command_lock);
-    DPRINTF(E_INFO, L_FIFO, "%s:STOP command initiated shutdown\n", __func__);
+    DPRINTF(E_INFO, L_FIFO, "%s:%s:STOP command initiated shutdown\n", __func__, ap2_device_info.name);
     return -1;
   }
   pthread_mutex_unlock(&audio_command_lock);
@@ -1623,7 +1625,7 @@ play(struct input_source *source)
   if (bytes_read == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
     stop(source);
-    DPRINTF(E_INFO, L_FIFO, "%s:end of stream reached\n", __func__);
+    DPRINTF(E_INFO, L_FIFO, "%s:%s:end of stream reached\n", __func__, ap2_device_info.name);
     return -1;
   }
   else if ((bytes_read < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
@@ -1631,7 +1633,9 @@ play(struct input_source *source)
     return 0; // Loop
   }
   else if (bytes_read < 0) {
-    DPRINTF(E_LOG, L_FIFO, "Could not read from pipe '%s' with fd %d: %s\n", source->path, ctx->pipe->fd, strerror(errno));
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Could not read from pipe '%s' with fd %d: %s\n",
+      __func__, ap2_device_info.name, source->path, ctx->pipe->fd, strerror(errno)
+  );
     input_write(NULL, NULL, INPUT_FLAG_ERROR);
     stop(source);
     return -1;
@@ -1658,7 +1662,7 @@ play(struct input_source *source)
     get_output_buffer_ts(&output_buffer_latency_ts);
     ret = clock_gettime(CLOCK_MONOTONIC,&initial_play_ts);
     if (ret < 0) {
-      DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining initial_play_ts timespec. %s\n", __func__, strerror(errno));
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Error obtaining initial_play_ts timespec. %s\n", __func__, ap2_device_info.name, strerror(errno));
       return -1;
     }
     earliest_possible_packet_ts = timespec_add(initial_play_ts, output_buffer_latency_ts);
@@ -1672,8 +1676,8 @@ play(struct input_source *source)
       samples_to_remove = source->quality.sample_rate * nsec_to_remove / 1e9;
       bytes_to_remove = (size_t)STOB(samples_to_remove, source->quality.bits_per_sample, source->quality.channels);
       DPRINTF(E_WARN, L_FIFO, 
-        "%s:Audio data received too late to play on time. Attempting to ignore %ld.%09ld secs, %" PRIu64 " samples, %zu bytes\n",
-        __func__, duration_to_remove.tv_sec, duration_to_remove.tv_nsec, samples_to_remove, bytes_to_remove
+        "%s:%s:Audio data received too late to play on time. Attempting to ignore %ld.%09ld secs, %" PRIu64 " samples, %zu bytes\n",
+        __func__, ap2_device_info.name, duration_to_remove.tv_sec, duration_to_remove.tv_nsec, samples_to_remove, bytes_to_remove
       );
     }
     else if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) < 0) {
@@ -1686,7 +1690,7 @@ play(struct input_source *source)
       early_ts = timespec_sub(ap2_device_info.start_ts, earliest_possible_packet_ts);
       bytes_to_add = early_ts.tv_sec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels);
       bytes_to_add += early_ts.tv_nsec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels) / 1e9;
-      DPRINTF(E_DBG, L_FIFO, "%s:We have early headroom of %ld.%09ld seconds, equating to %zu bytes.\n", __func__,
+      DPRINTF(E_DBG, L_FIFO, "%s:%s:We have early headroom of %ld.%09ld seconds, equating to %zu bytes.\n", __func__, ap2_device_info.name,
         early_ts.tv_sec, early_ts.tv_nsec, bytes_to_add
       );
     }
@@ -1694,9 +1698,9 @@ play(struct input_source *source)
 
   if (written == false && ap2_device_info.start_ts.tv_sec != 0) {
     DPRINTF(E_SPAM, L_FIFO, 
-      "%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu, bytes_to_add:%zu, bytes_added:%zu, "
+      "%s:%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu, bytes_to_add:%zu, bytes_added:%zu, "
       "evbuffer: length:%zu, duration:%.3f\n",
-      __func__, bytes_read, bytes_to_remove, bytes_removed, bytes_to_add, bytes_added, evbuffer_get_length(source->evbuf),
+      __func__, ap2_device_info.name, bytes_read, bytes_to_remove, bytes_removed, bytes_to_add, bytes_added, evbuffer_get_length(source->evbuf),
       (double)evbuffer_get_length(source->evbuf) / (double)STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels)
     );
     if (bytes_to_remove > 0 && bytes_to_remove > bytes_removed) {
@@ -1704,8 +1708,8 @@ play(struct input_source *source)
       size_t buflen = evbuffer_get_length(source->evbuf);
       if ((bytes_to_remove - bytes_removed) > buflen) {
         if (evbuffer_drain(source->evbuf, buflen) < 0) {
-          DPRINTF(E_LOG, L_FIFO, "%s:Error draining %zu bytes from source evbuffer. %s\n",
-            __func__, buflen, strerror(errno)
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Error draining %zu bytes from source evbuffer. %s\n",
+            __func__, ap2_device_info.name, buflen, strerror(errno)
           );
           return -1;
         }
@@ -1714,8 +1718,8 @@ play(struct input_source *source)
       }
       else {
         if (evbuffer_drain(source->evbuf, bytes_to_remove - bytes_removed) < 0) {
-          DPRINTF(E_LOG, L_FIFO, "%s:Error draining %zu bytes from source evbuffer. %s\n",
-            __func__, bytes_to_remove - bytes_removed, strerror(errno)
+          DPRINTF(E_LOG, L_FIFO, "%s:%s:Error draining %zu bytes from source evbuffer. %s\n",
+            __func__, ap2_device_info.name, bytes_to_remove - bytes_removed, strerror(errno)
           );
           return -1;
         }
@@ -1725,8 +1729,8 @@ play(struct input_source *source)
           return 0;
         }
       }
-      DPRINTF(E_DBG, L_FIFO, "%s:bytes_removed=%zu, bytes_to_remove = %zu\n",
-        __func__, bytes_removed, bytes_to_remove
+      DPRINTF(E_DBG, L_FIFO, "%s:%s:bytes_removed=%zu, bytes_to_remove = %zu\n",
+        __func__, ap2_device_info.name, bytes_removed, bytes_to_remove
       );
 
       // Finally, adjust the start time to reflect actual audio we now have
@@ -1743,7 +1747,7 @@ play(struct input_source *source)
     // not going to call it too early and issue a warning if we are too late
     ret = clock_gettime(CLOCK_MONOTONIC,&now_ts);
     if (ret < 0) {
-      DPRINTF(E_LOG, L_FIFO, "%s:Error obtaining now_ts timespec. %s\n", __func__, strerror(errno));
+      DPRINTF(E_LOG, L_FIFO, "%s:%s:Error obtaining now_ts timespec. %s\n", __func__, ap2_device_info.name, strerror(errno));
       return -1;
     }
     struct timespec delta_ts = timespec_sub(ap2_device_info.start_ts, now_ts);
@@ -1751,7 +1755,7 @@ play(struct input_source *source)
     DPRINTF(E_SPAM, L_FIFO, "%s:%s delta_ms = %" PRId64 " ms, latency_ms=%" PRIu64 " ms, delta_ts=%ld.%09ld\n", __func__, 
       ap2_device_info.name, delta_ms, ap2_device_info.latency_ms, delta_ts.tv_sec, delta_ts.tv_nsec
     );
-    if (delta_ms > (ap2_device_info.latency_ms + 50)) {
+    if (delta_ms > (ap2_device_info.latency_ms + ap2_device_info.input_write_ms)) {
       input_wait();
       return 0;
     }
@@ -1824,7 +1828,7 @@ command_pipe_init(void)
   evbase_command_pipe = event_base_new();
   ret = pthread_create(&tid_command_pipe, NULL, command_pipe_thread_run, NULL);
   if (ret !=0) {
-    DPRINTF(E_LOG, L_FIFO, "%s:Unable to create command thread. %s\n", __func__, strerror(errno));
+    DPRINTF(E_LOG, L_FIFO, "%s:%s:Unable to create command thread. %s\n", __func__, ap2_device_info.name, strerror(errno));
     return -1;
   }
   return 0;
@@ -1864,13 +1868,17 @@ mass_init(void)
 
   pipe_sample_rate = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_sample_rate");
   if (pipe_sample_rate != 44100 && pipe_sample_rate != 48000 && pipe_sample_rate != 88200 && pipe_sample_rate != 96000) {
-    DPRINTF(E_FATAL, L_FIFO, "The configuration of pcm_sample_rate is invalid: %d\n", pipe_sample_rate);
+    DPRINTF(E_FATAL, L_FIFO, "%s:%s:The configuration of pcm_sample_rate is invalid: %d\n",
+      __func__, ap2_device_info.name, pipe_sample_rate
+    );
     return -1;
   }
 
   pipe_bits_per_sample = cfg_getint(cfg_getsec(cfg, "mass"), "pcm_bits_per_sample");
   if (pipe_bits_per_sample != 16 && pipe_bits_per_sample != 32) {
-    DPRINTF(E_FATAL, L_FIFO, "The configuration of pipe_bits_per_sample is invalid: %d\n", pipe_bits_per_sample);
+    DPRINTF(E_FATAL, L_FIFO, "%s:%s:The configuration of pipe_bits_per_sample is invalid: %d\n",
+      __func__, ap2_device_info.name, pipe_bits_per_sample
+    );
     return -1;
   }
   
