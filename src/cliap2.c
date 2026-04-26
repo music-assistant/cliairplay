@@ -430,6 +430,18 @@ int check_pipe(const char *pipe_path)
 }
 
 /**
+ * Obtain the output buffer duration in milliseconds
+ * @returns   Output buffer duration in milliseconds
+ * @note      Output buffer duration includes the inherent DAC latency of the output device. 
+ *            This is typically 250ms or 11025 frames at 44100 sample rate 
+ */
+uint64_t
+get_output_buffer_ms(void)
+{
+  return cfg_getint(cfg_getsec(cfg, "general"), "start_buffer_ms");
+}
+
+/**
  * Obtain the output buffer duration as a timespec
  * @param [out] ts  Pointer to a timespec structure where the output buffer duration will be returned
  * @returns   void
@@ -465,7 +477,7 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   struct timespec lag_ts;         // lag between now and start time
   struct timespec latency_ts;     // output buffer duration, inclusive of DAC latency
   int32_t lag_ms;                 // lag in milliseconds between now and start time
-  int32_t pairing_latency_ms = ap2_device_info.pairing_latency.tv_sec + (ap2_device_info.pairing_latency.tv_nsec / 1e6);
+  int32_t pairing_latency_ms = ap2_device_info.pairing_latency_ts.tv_sec + (ap2_device_info.pairing_latency_ts.tv_nsec / 1e6);
   int ret;
 
   ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
@@ -567,8 +579,8 @@ main(int argc, char **argv)
   // Default some values
   ap2_device_info.auth_key = (char *)NULL;
   ap2_device_info.password = (char *)NULL;
-  ap2_device_info.pairing_latency.tv_sec = 2;
-  ap2_device_info.pairing_latency.tv_nsec = 500e6;
+  ap2_device_info.pairing_latency_ts.tv_sec = 2;
+  ap2_device_info.pairing_latency_ts.tv_nsec = 500e6;
   ap2_device_info.input_write_ms = 15;
 
   // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
@@ -694,8 +706,8 @@ main(int argc, char **argv)
           fprintf(stderr, "Error: value must be an integer in '--pairing_latency %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        ap2_device_info.pairing_latency.tv_sec = (time_t)(pairing_ms / 1000);
-        ap2_device_info.pairing_latency.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
+        ap2_device_info.pairing_latency_ts.tv_sec = (time_t)(pairing_ms / 1000);
+        ap2_device_info.pairing_latency_ts.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
         break;
       
       case 520: // input_write milliseconds

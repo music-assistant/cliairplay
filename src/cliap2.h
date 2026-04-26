@@ -17,7 +17,7 @@ typedef struct ap2_device_info
   struct timespec start_ts; // if non-zero, the time for commencement of playback of first packet in OwnTone time basis (i.e. CLOCK_MONOTONIC)
   uint64_t latency_ms; // output buffer duration in milliseconds, inclusive of DAC latency
   int64_t input_write_ms; // Number of milliseconds margin to use to determine timing of initial call to input_write(). Can be negative
-  struct timespec pairing_latency; // anticipated duration of the RTSP pairing & session establishment process
+  struct timespec pairing_latency_ts; // anticipated duration of the RTSP pairing & session establishment process
 } ap2_device_info_t;
 
 typedef struct mass_named_pipes
@@ -30,6 +30,7 @@ typedef struct mass_named_pipes
 #define FRAC             4294967296. /* 2^32 as a double */
 #define NTP_EPOCH_DELTA  0x83aa7e80  /* 2208988800 - that's 1970 - 1900 in seconds */
 
+uint64_t get_output_buffer_ms(void);
 void get_output_buffer_ts(struct timespec *ts);
 
 #endif /* !__CLIAP2_H__ */
