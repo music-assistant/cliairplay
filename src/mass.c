@@ -1171,8 +1171,8 @@ mass_timer_cb(int fd, short what, void *arg)
     if (!player_paused) {
       player_paused = true;
       clock_gettime(CLOCK_REALTIME, &paused_start_ts); // reset paused time
-      /* Music Assistant looks for "set pause" or "Pause at" */
-      DPRINTF(E_INFO, L_FIFO, "%s:%s: Pause at %" PRIu32 " ms\n",
+      /* Music Assistant looks for "Pause at" */
+      DPRINTF(E_INFO, L_FIFO, "%s:%s:Pause at %" PRIu32 " ms\n",
         __func__, ap2_device_info.name, status.pos_ms
       );
     }
@@ -1394,7 +1394,7 @@ pipe_metadata_read_cb(evutil_socket_t fd, short event, void *arg)
     );
     if (status.status != PLAY_PLAYING) {
       self_resume();
-      // Report status to Music Assistant
+      // Report status to Music Assistant. MA looks for "Restarted at"
       DPRINTF(E_INFO, L_FIFO, "%s:%s:Restarted at %" PRIu32 "\n", __func__, ap2_device_info.name, status.pos_ms);
     }
     else {
@@ -1629,6 +1629,7 @@ play(struct input_source *source)
   if (bytes_read == 0) {
     input_write(source->evbuf, NULL, INPUT_FLAG_EOF); // Autostop
     stop(source);
+    // MA looks for "end of stream reached"
     DPRINTF(E_INFO, L_FIFO, "%s:%s:end of stream reached\n", __func__, ap2_device_info.name);
     return -1;
   }
@@ -1645,9 +1646,9 @@ play(struct input_source *source)
     return -1;
   }
 
-  // Update Music Assistant that playback is commencing
+  // Update Music Assistant that playback is commencing. MA looks for "Starting at"
   if (read_count == 0) {
-    DPRINTF(E_INFO, L_FIFO, "%s:%s starting at 0ms\n", __func__, ap2_device_info.name);
+    DPRINTF(E_INFO, L_FIFO, "%s:%s:Starting at 0ms\n", __func__, ap2_device_info.name);
   }
 
   read_count++;
