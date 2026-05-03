@@ -39,6 +39,7 @@
 #include <grp.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <time.h>
 
 #ifdef HAVE_SIGNALFD
 # include <sys/signalfd.h>
@@ -69,22 +70,6 @@
 #include "wrappers.h"
 #include "cliap2.h"
 #include "mass.h"
-
-#define AIRPLAY2_CONNECT_TIME_MS (int32_t) 2500 // Minimum time we need to connect and buffer before starting playback
-
-/*
- * Below explanation is from libraop raop_client.h
- *
- * RAOP players have a latency which is usually 11025 frames.
- *
- * The precise time at the DAC is the time at the client plus the latency, so when
- * setting a start time, we must anticipate by the latency if we want the first
- * frame to be *exactly* played at that NTP value.
- * 
- * For Music Assistant, we will simply subtract 250ms (11025 frames at 44100 sample rate)
- * This approach may need to change when we implement higher quality streams
- */
-#define DAC_LATENCY_TS {0, 250e6}
 
 struct event_base *evbase_main;
 static struct event *sig_event;
@@ -200,24 +185,24 @@ usage(char *program)
   printf("\n");
   printf("Usage: %s [options]\n\n", program);
   printf("Options:\n");
-  printf("  --loglevel <number>               Log level (0-5)\n");
-  printf("  --logfile <filename>              Log filename. Not supplying this argument will result in logging to stderr only.\n");
-  printf("  --config <file>                   Use <file> for the configuration file. No config file used if omitted.\n");
-  printf("  --name <name>                     Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --hostname <hostname>             Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
-  printf("  --address <address>               IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --port <port>                     Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --txt <txt>                       txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
-  printf("  --auth <auth_key>                 Authorization key.\n");
-  printf("  --dacp_id <dacp_id>               DACP ID (hex string) for remote control callbacks.\n");
-  printf("  --command_pipe <command_filename> filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
-  printf("  --ntp                             Print current NTP time and exit.\n");
-  printf("  --ntpstart <NTP>                  Start playback at NTP. Mandatory in absence of --ntp.\n");
-  printf("  --volume <volume>                 Initial volume (0-100). Defaults to 0\n");
-  printf("  --latency <latency>               ms of data to buffer in the output buffer. Defaults to 2000\n");
-  printf("  --pairing_latency <ms>            Anticipated duration, in ms, of the time taken to pair with the AirPlay device and negotiate session. Defaults to 2500\n");
-  printf("  --password <password>             Device password.\n");
-  printf("  -v, --version                     Display version information and exit\n");
+  printf("  --loglevel <number>                   Log level (0-5)\n");
+  printf("  --logfile <filename>                  Log filename. Not supplying this argument will result in logging to stderr only.\n");
+  printf("  --config <file>                       Use <file> for the configuration file. No config file used if omitted.\n");
+  printf("  --name <name>                         Name of the airplay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --hostname <hostname>                 Hostname of AirPlay 2 device. Mandatory in absence of --ntp.\n");
+  printf("  --address <address>                   IP address to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --port <port>                         Port number to bind to for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --txt <txt>                           txt keyvals returned in mDNS for AirPlay 2 service. Mandatory in absence of --ntp.\n");
+  printf("  --auth <auth_key>                     Authorization key.\n");
+  printf("  --dacp_id <dacp_id>                   DACP ID (hex string) for remote control callbacks.\n");
+  printf("  --command_pipe <command_filename>     Filename of named pipe to read commands and metadata. Defaults to <audio_filename>.metadata\n");
+  printf("  --ntp                                 Print current NTP time and exit.\n");
+  printf("  --ntpstart <NTP>                      Start playback at NTP. Mandatory in absence of --ntp.\n");
+  printf("  --volume <volume>                     Initial volume (0-100). Defaults to 0\n");
+  printf("  --latency <latency>                   ms of data to buffer in the output buffer. Defaults to 2000\n");
+  printf("  --session_establishment_latency <ms>  Anticipated duration, in ms, of the time taken to establish session with the AirPlay device. Defaults to 2500\n");
+  printf("  --password <password>                 Device password.\n");
+  printf("  -v, --version                         Display version information and exit\n");
   printf("\n\n");
 }
 
@@ -477,7 +462,9 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   struct timespec lag_ts;         // lag between now and start time
   struct timespec latency_ts;     // output buffer duration, inclusive of DAC latency
   int32_t lag_ms;                 // lag in milliseconds between now and start time
-  int32_t pairing_latency_ms = ap2_device_info.pairing_latency_ts.tv_sec + (ap2_device_info.pairing_latency_ts.tv_nsec / 1e6);
+  int32_t session_establishment_latency_ms; // milliseconds expected to establish the streaming session with the AirPlay device
+  struct tm *start_tm;            // MA clock basis
+  char start_time[BUFSIZ];        // MA clock basis
   int ret;
 
   ret = clock_gettime(CLOCK_MONOTONIC, &now_ts); // Use OwnTone time basis
@@ -489,6 +476,15 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   start_ns.frac = (uint32_t)(ntpstart);
 
   ntp_to_timespec(&start_ns, &start_ts);
+  if ((start_tm = localtime(&start_ts.tv_sec)) == NULL) {
+    DPRINTF(E_LOG, L_MAIN, "%s:%s:Unable to obtain localtime for ntpstart. %s\n", __func__, ap2_device_info.name, strerror(errno));
+  }
+  else {
+    if (strftime(start_time, sizeof(start_time), "%H:%M:%S", start_tm) == 0) {
+      start_time[0] = '\0';
+    }
+  }
+  DPRINTF(E_DBG, L_MAIN, "%s:%s:Start time is %s.%03ld\n", __func__, ap2_device_info.name, start_time, (int64_t)(start_ts.tv_nsec / 1e6));
 
   // convert from Music Assistant time basis to OwnTone time basis
     // delta_ts is the epoch difference CLOCK_REALTIME-CLOCK_MONOTONIC = uptime - 1/1/1970
@@ -508,11 +504,14 @@ get_start_ts(struct timespec *ts, uint64_t ntpstart)
   DPRINTF(E_INFO, L_MAIN, "%s:%s:Audio starts in %ld.%.9ld secs.\n", __func__, ap2_device_info.name, lag_ts.tv_sec, lag_ts.tv_nsec);
 
   lag_ms = (int32_t)(lag_ts.tv_sec * 1000) + (int32_t)(lag_ts.tv_nsec / 1e6);
-  if (lag_ms < pairing_latency_ms) {
+  session_establishment_latency_ms = (int32_t)(ap2_device_info.session_establishment_latency_ts.tv_sec * 1000) + 
+                                     (int32_t)(ap2_device_info.session_establishment_latency_ts.tv_nsec / 1e6);
+  DPRINTF(E_DBG, L_MAIN, "%s:%s:lag_ms=%d, session_establishment_latency_ms=%d\n", __func__, ap2_device_info.name, lag_ms, session_establishment_latency_ms);
+  if (lag_ms < session_establishment_latency_ms) {
     // Give ourselves enough time to get connected and build our buffer
-    int32_t extra_ms = pairing_latency_ms - lag_ms;
+    int32_t extra_ms = session_establishment_latency_ms - lag_ms;
     DPRINTF(E_WARN, L_MAIN, 
-      "%s:%s:ntpstart time too soon. Adjust pairing_latency to align with device capability or increase ntpstart by at least %" PRId32
+      "%s:%s:ntpstart time too soon. Adjust session_establishment_latency to align with device capability or increase ntpstart by at least %" PRId32
       " ms to prevent loss of audio.\n", __func__, ap2_device_info.name, extra_ms
     );
     return -1;
@@ -570,23 +569,29 @@ main(int argc, char **argv)
     { "dacp_id",        1, NULL, 516 },
     { "latency",        1, NULL, 517 },
     { "password",       1, NULL, 518 },
-    { "pairing_latency",1, NULL, 519 },
+    { "session_establishment_latency",1, NULL, 519 },
     { "input_write_ms", 1, NULL, 520 }, // Used to test/validate logic in mass.c play(). Not documented to user
 
     { NULL,            0, NULL, 0   }
   };
 
-  // Default some values
-  ap2_device_info.auth_key = (char *)NULL;
-  ap2_device_info.password = (char *)NULL;
-  ap2_device_info.pairing_latency_ts.tv_sec = 2;
-  ap2_device_info.pairing_latency_ts.tv_nsec = 500e6;
-  ap2_device_info.input_write_ms = 15;
-
   // Ensure stderr is unbuffered. Python defaults to bufferred IO for all streams
   ret = setvbuf(stderr, NULL, _IONBF, 0);
   if (ret < 0) {
     fprintf(stderr, "Error: Unable to set stderr to unbuffered. %s\n", strerror(errno));
+    fflush(stderr);
+    return EXIT_FAILURE;
+  }
+
+  // Default some values
+  ap2_device_info.auth_key = (char *)NULL;
+  ap2_device_info.password = (char *)NULL;
+  ap2_device_info.session_establishment_latency_ts.tv_sec = 2;
+  ap2_device_info.session_establishment_latency_ts.tv_nsec = 500e6;
+  ap2_device_info.input_write_ms = 15;
+  ret = clock_gettime(CLOCK_MONOTONIC,&ap2_device_info.process_started_ts);
+  if (ret < 0) {
+    fprintf(stderr, "Error obtaining process_started_ts timespec. %s\n", strerror(errno));
     fflush(stderr);
     return EXIT_FAILURE;
   }
@@ -692,8 +697,8 @@ main(int argc, char **argv)
           fprintf(stderr, "Error: latency must be an integer in '--latency %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        latency_ms += 250; // Add the 250ms inherent latency of the device DAC
-        DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of 250ms DAC latency\n", latency_ms);
+        latency_ms += DAC_LATENCY_MS; // Add the 250ms inherent latency of the device DAC
+        DPRINTF(E_DBG, L_MAIN, "Latency set to %" PRIu64 " ms inclusive of %dms DAC latency\n", latency_ms, DAC_LATENCY_MS);
         break;
 
       case 518: // device password
@@ -703,11 +708,11 @@ main(int argc, char **argv)
       case 519: // pairing milliseconds
         ret = safe_atou64(optarg, &pairing_ms);
         if (ret < 0) {
-          fprintf(stderr, "Error: value must be an integer in '--pairing_latency %s'\n", optarg);
+          fprintf(stderr, "Error: value must be an integer in '--session_establishment_latency %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        ap2_device_info.pairing_latency_ts.tv_sec = (time_t)(pairing_ms / 1000);
-        ap2_device_info.pairing_latency_ts.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
+        ap2_device_info.session_establishment_latency_ts.tv_sec = (time_t)(pairing_ms / 1000);
+        ap2_device_info.session_establishment_latency_ts.tv_nsec = (long)((pairing_ms % 1000) * 1e6);
         break;
       
       case 520: // input_write milliseconds
@@ -716,7 +721,6 @@ main(int argc, char **argv)
           fprintf(stderr, "Error: value must be an integer in '--input_write_ms %s'\n", optarg);
           exit(EXIT_FAILURE);
         }
-        ap2_device_info.input_write_ms = input_write_ms;
         break;
         
       default:
@@ -745,6 +749,7 @@ main(int argc, char **argv)
   ap2_device_info.port = port;
   ap2_device_info.volume = volume;
   ap2_device_info.latency_ms = latency_ms;
+  ap2_device_info.input_write_ms = input_write_ms;
 
   ret = logger_init(NULL, NULL, (loglevel < 0) ? E_LOG : loglevel, NULL);
   if (ret != 0) {
@@ -791,7 +796,8 @@ main(int argc, char **argv)
   }
   ap2_device_info.txt = txt_kv;
 
-  get_start_ts(&ap2_device_info.start_ts, ntpstart); // We no longer care about returned result
+  DPRINTF(E_SPAM, L_MAIN, "%s:input_write_ms=%" PRId64 "ms\n", ap2_device_info.name, ap2_device_info.input_write_ms);
+  get_start_ts(&ap2_device_info.start_ts, ntpstart); // We don't care about returned result
 
   /* Set up libevent logging callback */
   event_set_log_callback(logger_libevent);

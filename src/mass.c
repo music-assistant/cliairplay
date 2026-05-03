@@ -1601,12 +1601,12 @@ play(struct input_source *source)
   int ret, bytes_read;
   struct timespec now_ts; // current time
   struct timespec output_buffer_latency_ts; // combination of player output buffer and the inherence DAC latency of device
+  struct timespec consumed_ts; // The time consumed from when process started till when play() is first called
   static struct timespec initial_play_ts; // Initial now timespec when play() is first called
   static struct timespec earliest_possible_packet_ts; // Our estimate of the earlist possible time we can commence playback
   static size_t read_count = 0; // Count of read calls made
   static size_t bytes_to_remove = 0; // for when requested playback is too soon to adhere to
   static size_t bytes_removed = 0; // count of bytes removed to adhere to playback commencement time
-  static size_t bytes_to_add = 0; // for when we have the luxury of being too early for playback commencement time
   static bool written = false; // boolean indicator of if we have written any data to the input module
   static size_t bytes_added = 0; // count of bytes added if we have luxury of headroom before playback commencement time
 
@@ -1669,14 +1669,16 @@ play(struct input_source *source)
       DPRINTF(E_LOG, L_FIFO, "%s:%s:Error obtaining initial_play_ts timespec. %s\n", __func__, ap2_device_info.name, strerror(errno));
       return -1;
     }
+    consumed_ts = timespec_sub(initial_play_ts, ap2_device_info.process_started_ts);
 
     // Determine the earliest possible time is that we could commence playback.
     // This will be governed by a combination of conditions. 
     // The conditions we need to consider are:
-    // 1. How long does it take to establish the AirPlay streaming session. The estimate of this is the pairing latency.
+    // 1. How long does it take to establish the AirPlay streaming session from when htis process is spawned. The estimate of this is the session establishment latency.
     // 2. The size of the output buffer, including the inherent DAC latency.
     // If we have already primed the input buffer with enough data to fulfil the output buffer duration and the inherent DAC latency,
     // then we do not need to consider that duration in our calculations.
+    // We also need to consider the duration of the session establishment latency that has already been consumed.
     if (evbuffer_get_length(source->evbuf) > (STOB(get_output_buffer_ms() * source->quality.sample_rate, 
                                                   source->quality.bits_per_sample, 
                                                   source->quality.channels) / 1000) ) {
@@ -1684,7 +1686,7 @@ play(struct input_source *source)
       DPRINTF(E_SPAM, L_FIFO, "%s:%s:We already have sufficient audio data to satisfy the output buffer requirements.\n",
         __func__, ap2_device_info.name
       );
-      earliest_possible_packet_ts = timespec_add(initial_play_ts, ap2_device_info.pairing_latency_ts);
+      earliest_possible_packet_ts = timespec_add(initial_play_ts, ap2_device_info.session_establishment_latency_ts);
     }
     else {
       DPRINTF(E_SPAM, L_FIFO, "%s:%s:We need to consider the output buffer requirements when "
@@ -1693,8 +1695,16 @@ play(struct input_source *source)
       );
       get_output_buffer_ts(&output_buffer_latency_ts);
       earliest_possible_packet_ts = timespec_add(initial_play_ts, output_buffer_latency_ts);
-      earliest_possible_packet_ts = timespec_add(earliest_possible_packet_ts, ap2_device_info.pairing_latency_ts);
+      earliest_possible_packet_ts = timespec_add(earliest_possible_packet_ts, ap2_device_info.session_establishment_latency_ts);
     }
+    earliest_possible_packet_ts = timespec_sub(earliest_possible_packet_ts, consumed_ts); // less how much of the session establishment latency we have already consumed
+
+    DPRINTF(E_SPAM, L_FIFO, "%s:%s:earliest_possible_packet_ts=%ld.%09ld, start_ts=%ld.%09ld, delta=%ld.%09ld\n", __func__, ap2_device_info.name,
+      earliest_possible_packet_ts.tv_sec, earliest_possible_packet_ts.tv_nsec,
+      ap2_device_info.start_ts.tv_sec, ap2_device_info.start_ts.tv_nsec,
+      earliest_possible_packet_ts.tv_sec - ap2_device_info.start_ts.tv_sec,
+      earliest_possible_packet_ts.tv_nsec - ap2_device_info.start_ts.tv_nsec
+    );
 
     if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) > 0) {
       // Determine how much data we need to ignore
@@ -1709,29 +1719,15 @@ play(struct input_source *source)
         __func__, ap2_device_info.name, duration_to_remove.tv_sec, duration_to_remove.tv_nsec, samples_to_remove, bytes_to_remove
       );
     }
-    else if (timespec_cmp(earliest_possible_packet_ts, ap2_device_info.start_ts) < 0) {
-      // We might have spare time before playback required. If we are using realtime RTP
-      // then we can't send the audio too early, else we risk non-adherence to the start_ts or
-      // no audio, but we can use the excess time to keep building the source evbuffer
-      // However, we cannot assume what the read rate will be, so ultimately we must check the
-      // current time against the start_ts value to determine when to call input_write()
-      struct timespec early_ts; // timespec for how early we are
-      early_ts = timespec_sub(ap2_device_info.start_ts, earliest_possible_packet_ts);
-      bytes_to_add = early_ts.tv_sec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels);
-      bytes_to_add += early_ts.tv_nsec * STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels) / 1e9;
-      DPRINTF(E_DBG, L_FIFO, "%s:%s:We have early headroom of %ld.%09ld seconds, equating to %zu bytes.\n", __func__, ap2_device_info.name,
-        early_ts.tv_sec, early_ts.tv_nsec, bytes_to_add
-      );
-    }
   }
 
   if (written == false && ap2_device_info.start_ts.tv_sec != 0) {
     // This block of code is executed on each call to play() until such time as we have met the
     // requirement to commence playback.
     DPRINTF(E_SPAM, L_FIFO, 
-      "%s:%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu, bytes_to_add:%zu, bytes_added:%zu, "
+      "%s:%s:bytes_read (this read):%d, bytes_to_remove:%zu, bytes_removed:%zu,, bytes_added:%zu, "
       "evbuffer: length:%zu, duration:%.3f\n",
-      __func__, ap2_device_info.name, bytes_read, bytes_to_remove, bytes_removed, bytes_to_add, bytes_added, evbuffer_get_length(source->evbuf),
+      __func__, ap2_device_info.name, bytes_read, bytes_to_remove, bytes_removed, bytes_added, evbuffer_get_length(source->evbuf),
       (double)evbuffer_get_length(source->evbuf) / (double)STOB(source->quality.sample_rate, source->quality.bits_per_sample, source->quality.channels)
     );
     if (bytes_to_remove > 0 && bytes_to_remove > bytes_removed) {
@@ -1785,7 +1781,7 @@ play(struct input_source *source)
         input_wait();
         return 0;
       }
-      else if (delta_ms < ap2_device_info.latency_ms) {
+      else if (delta_ms <= DAC_LATENCY_MS) {
         DPRINTF(E_WARN, L_FIFO, "%s:%s is late to commence playback. Sync or playback is unlikely. delta_ms = %" PRId64 " ms.\n",
           __func__, ap2_device_info.name, delta_ms
         );
