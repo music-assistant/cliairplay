@@ -1,14 +1,13 @@
 /**
- * @brief Reads raw PCM audio and commands/metadata from named pipes and streams to on OwnTone player
+ * @brief Reads raw PCM audio from stdin and commands/metadata a named pipe and streams to an AirPlay
  * 
  * About mass.c
  * ------------
  * This was copied from pipe.c from the OwnTone repo and adapted
  * to provide an interface between Music Assistant and the OwnTone codebase
- * using a pair of named pipes.
  * 
- * Raw PCM data is read from one named pipe and streamed to the player
- * Metadata and commands are read from a second named pipe and processed.
+ * Raw PCM data is read from stdin and streamed to the player
+ * Metadata and commands are read from a named pipe and processed.
  * Player status is reported back to Music Assistant on stderr
  * This module is considered to be an input backend module in OwnTone parlance.
  * It runs in two threads:
